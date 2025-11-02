@@ -5,9 +5,9 @@ using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Extensions;
 using System.Text;
-using PersonalFinance.Api.Models;
 using Microsoft.AspNetCore.Identity;
 using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Models.Entities;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -83,6 +83,9 @@ builder.Services.AddCustomCors(builder.Configuration);
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IIncomeService, IncomeService>();
+
 
 var app = builder.Build();
 

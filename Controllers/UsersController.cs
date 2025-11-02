@@ -2,7 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Services;
-using PersonalFinance.Api.Models;
+using PersonalFinance.Api.Models.Dtos.User;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -17,13 +17,13 @@ namespace PersonalFinance.Api.Controllers
             _userService = userService;
         }
 
-        private int? GetCurrentUserId()
+        private Guid? GetCurrentUserId()
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                               ?? User.FindFirst("id")?.Value;
 
             if (string.IsNullOrEmpty(userIdClaim)) return null;
-            if (!int.TryParse(userIdClaim, out var userId)) return null;
+            if (!Guid.TryParse(userIdClaim, out var userId)) return null;
             return userId;
         }
 
@@ -43,7 +43,7 @@ namespace PersonalFinance.Api.Controllers
 
         [HttpGet("{id:int}")]
         [Authorize]
-        public async Task<IActionResult> GetById(int id)
+        public async Task<IActionResult> GetById(Guid id)
         {
             var user = await _userService.GetByIdAsync(id);
             if (user == null) return NotFound();
@@ -83,7 +83,7 @@ namespace PersonalFinance.Api.Controllers
 
         [HttpPut("{id:int}")]
         [Authorize]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateUserDto dto)
+        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
@@ -109,7 +109,7 @@ namespace PersonalFinance.Api.Controllers
 
         [HttpDelete("{id:int}")]
         [Authorize]
-        public async Task<IActionResult> Delete(int id)
+        public async Task<IActionResult> Delete(Guid id)
         {
             var currentUserId = GetCurrentUserId();
             if (currentUserId == null) return Unauthorized();
@@ -128,7 +128,7 @@ namespace PersonalFinance.Api.Controllers
                               ?? User.FindFirst("id")?.Value;
 
             if (string.IsNullOrEmpty(userIdClaim)) return Unauthorized();
-            if (!int.TryParse(userIdClaim, out var userId)) return Unauthorized();
+            if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
             var user = await _userService.GetByIdAsync(userId);
             if (user == null) return NotFound();

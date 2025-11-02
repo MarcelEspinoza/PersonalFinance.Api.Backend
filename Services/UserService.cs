@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
-using PersonalFinance.Api.Models;
+using PersonalFinance.Api.Models.Dtos.User;
+using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 
 
@@ -23,7 +24,7 @@ public sealed class UserService : IUserService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<User?> GetByIdAsync(int id, CancellationToken cancellationToken = default)
+    public async Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         return await _context.Users
             .AsNoTracking()
@@ -50,7 +51,7 @@ public sealed class UserService : IUserService
         return user;
     }
 
-    public async Task<bool> UpdateAsync(int id, UpdateUserDto dto, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAsync(Guid id, UpdateUserDto dto, CancellationToken cancellationToken = default)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
         if (user == null) return false;
@@ -73,7 +74,7 @@ public sealed class UserService : IUserService
         return true;
     }
 
-    public async Task<bool> DeleteAsync(int id, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
         if (user == null) return false;

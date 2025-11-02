@@ -1,5 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using PersonalFinance.Api.Models;
+using PersonalFinance.Api.Models.Entities;
 
 namespace PersonalFinance.Api.Data
 {
@@ -8,5 +8,9 @@ namespace PersonalFinance.Api.Data
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
         public DbSet<User> Users => Set<User>();
-    }
+        public DbSet<Transaction> Transactions { get; set; }
+        public DbSet<Income> Incomes { get; set; }
+}
+
+
 }

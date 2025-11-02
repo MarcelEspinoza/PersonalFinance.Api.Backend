@@ -1,4 +1,4 @@
-using PersonalFinance.Api.Models; // RegisterRequestDto
+using PersonalFinance.Api.Models.Dtos.User; // RegisterRequestDto
 
 internal static class DtoMappings
 {

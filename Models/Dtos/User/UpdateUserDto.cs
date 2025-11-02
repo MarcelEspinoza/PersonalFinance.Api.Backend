@@ -1,4 +1,4 @@
-﻿namespace PersonalFinance.Api.Models
+﻿namespace PersonalFinance.Api.Models.Dtos.User
 {
     public class UpdateUserDto
     {
