@@ -5,6 +5,9 @@ using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Extensions;
 using System.Text;
+using PersonalFinance.Api.Models;
+using Microsoft.AspNetCore.Identity;
+using PersonalFinance.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,19 +15,30 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Read JWT settings safely
+var jwtSection = builder.Configuration.GetSection("Jwt");
+var jwtKey = jwtSection.GetValue<string>("Key");
+var jwtIssuer = jwtSection.GetValue<string>("Issuer");
+
+if (string.IsNullOrWhiteSpace(jwtKey) || string.IsNullOrWhiteSpace(jwtIssuer))
+{
+    throw new InvalidOperationException("JWT configuration is missing. Ensure 'Jwt:Key' and 'Jwt:Issuer' are set.");
+}
+
 // Add JWT Authentication
-var jwtSettings = builder.Configuration.GetSection("Jwt");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.SaveToken = true;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
-            ValidateAudience = false,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = false, // set to true and provide ValidAudience if you use audiences
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtSettings["Issuer"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.Zero // tighten expiration tolerance
         };
     });
 
@@ -32,14 +46,15 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
+    // Use HTTP bearer scheme for JWT (recommended)
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
+        Description = "Enter 'Bearer {token}'",
         Name = "Authorization",
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
-        BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Ingresa 'Bearer {token}'"
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -51,15 +66,23 @@ builder.Services.AddSwaggerGen(c =>
                 {
                     Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
-                }
+                },
+                Scheme = "bearer",
+                Name = "Authorization",
+                In = ParameterLocation.Header
             },
-            new string[] { }
+            Array.Empty<string>()
         }
     });
 });
 
-// Agregar CORS de manera limpia
+// Add CORS
 builder.Services.AddCustomCors(builder.Configuration);
+
+// Add application services
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
 
@@ -69,7 +92,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Aplicar CORS antes de Auth
+// Apply CORS before auth
 app.UseCustomCors();
 
 app.UseHttpsRedirection();

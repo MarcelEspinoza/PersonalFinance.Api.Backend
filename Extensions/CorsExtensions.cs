@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using System;
 
 namespace PersonalFinance.Api.Extensions
 {
@@ -14,9 +15,25 @@ namespace PersonalFinance.Api.Extensions
             {
                 options.AddPolicy("DefaultCorsPolicy", policy =>
                 {
-                    policy.WithOrigins(allowedOrigins ?? Array.Empty<string>())
-                          .AllowAnyHeader()
-                          .AllowAnyMethod();
+                    if (allowedOrigins == null || allowedOrigins.Length == 0)
+                    {
+                        // No origins configured -> allow any origin (or choose to throw instead)
+                        policy.AllowAnyOrigin()
+                              .AllowAnyHeader()
+                              .AllowAnyMethod();
+                    }
+                    else if (Array.Exists(allowedOrigins, o => o == "*"))
+                    {
+                        policy.AllowAnyOrigin()
+                              .AllowAnyHeader()
+                              .AllowAnyMethod();
+                    }
+                    else
+                    {
+                        policy.WithOrigins(allowedOrigins)
+                              .AllowAnyHeader()
+                              .AllowAnyMethod();
+                    }
                 });
             });
 
