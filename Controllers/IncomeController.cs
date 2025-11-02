@@ -2,6 +2,7 @@
 {
 
     using Microsoft.AspNetCore.Authorization;
+    using Microsoft.AspNetCore.Http.HttpResults;
     using Microsoft.AspNetCore.Mvc;
     using PersonalFinance.Api.Models.Dtos.Income;
     using PersonalFinance.Api.Services;
@@ -47,7 +48,11 @@
                 amount = i.Amount,
                 description = i.Description,
                 date = i.Date,
-                type = i.Type
+                type = i.Type,
+                start_date = i.Start_Date,
+                end_Date = i.End_Date,
+                notes = i.Notes
+
                 // Note: CategoryId not included here to avoid breaking if Income model isn't updated yet.
             });
 
@@ -71,7 +76,10 @@
                 amount = income.Amount,
                 description = income.Description,
                 date = income.Date,
-                type = income.Type
+                type = income.Type,
+                start_date = income.Start_Date,
+                end_Date = income.End_Date,
+                notes = income.Notes
             });
         }
 
@@ -94,7 +102,10 @@
                     amount = created.Amount,
                     description = created.Description,
                     date = created.Date,
-                    type = created.Type
+                    type = created.Type,
+                    start_date = created.Start_Date,
+                    end_Date = created.End_Date,
+                    notes = created.Notes
                 });
             }
             catch (ArgumentException ex)

@@ -30,12 +30,11 @@ namespace PersonalFinance.Api.Services
                 .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
         }
 
-        public async Task<Income> CreateAsync(Guid userId, CreateIncomeDto dto, CancellationToken cancellationToken = default)
+        public async Task<Income> CreateAsync(Guid userId, CreateIncomeDto dto, CancellationToken ct)
         {
             if (dto.Amount <= 0) throw new ArgumentException("Amount must be greater than zero", nameof(dto.Amount));
             if (dto.Date == default) throw new ArgumentException("Date is required", nameof(dto.Date));
             // CategoryId is required in DTO by design; if your model stores category relation, consider validating existence here.
-
             var income = new Income
             {
                 Amount = dto.Amount,
@@ -43,11 +42,14 @@ namespace PersonalFinance.Api.Services
                 Date = dto.Date,
                 Type = dto.Type,
                 CategoryId = dto.CategoryId,
-                UserId = userId
+                UserId = userId,
+                Start_Date = dto.Start_Date,
+                End_Date = dto.End_Date,
+                Notes = dto.Notes
             };
 
             _context.Incomes.Add(income);
-            await _context.SaveChangesAsync(cancellationToken);
+            await _context.SaveChangesAsync(ct);
             return income;
         }
 
@@ -68,7 +70,7 @@ namespace PersonalFinance.Api.Services
             // If your Income entity contains CategoryId, you can assign it when dto.CategoryId.HasValue
             if (dto.CategoryId.HasValue) income.CategoryId = dto.CategoryId.Value;
 
-            // Update type - dto.Type is present in DTO; assign unconditionally to reflect intent to update
+            if (dto.Type != null) 
             income.Type = dto.Type;
 
             _context.Incomes.Update(income);

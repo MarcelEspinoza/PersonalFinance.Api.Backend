@@ -10,6 +10,7 @@ namespace PersonalFinance.Api.Data
         public DbSet<User> Users => Set<User>();
         public DbSet<Transaction> Transactions { get; set; }
         public DbSet<Income> Incomes { get; set; }
+        public DbSet<Category> Categories { get; set; }
 }
 
 

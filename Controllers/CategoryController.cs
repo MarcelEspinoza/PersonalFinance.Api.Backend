@@ -82,26 +82,35 @@ namespace PersonalFinance.Api.Controllers
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            try
+            // Buscar si ya existe una categoría con ese nombre para este usuario
+            var existing = await _categoryService.FindByNameAsync(userId.Value, dto.Name, cancellationToken);
+
+            if (existing != null)
             {
-                var created = await _categoryService.CreateAsync(userId.Value, dto, cancellationToken);
-                return CreatedAtAction(nameof(GetById), new { id = created.Id }, new
+                // Opción 1: devolver la existente
+                return Ok(new
                 {
-                    id = created.Id,
-                    name = created.Name,
-                    description = created.Description,
-                    isActive = created.IsActive,
-                    createdAt = created.CreatedAt
+                    id = existing.Id,
+                    name = existing.Name,
+                    description = existing.Description,
+                    isActive = existing.IsActive,
+                    createdAt = existing.CreatedAt,
+                    updatedAt = existing.UpdatedAt
                 });
             }
-            catch (ArgumentException ex)
+
+            // Si no existe, crear una nueva
+            var created = await _categoryService.CreateAsync(userId.Value, dto, cancellationToken);
+
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, new
             {
-                return BadRequest(new { error = ex.Message });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Conflict(new { error = ex.Message });
-            }
+                id = created.Id,
+                name = created.Name,
+                description = created.Description,
+                isActive = created.IsActive,
+                createdAt = created.CreatedAt,
+                updatedAt = created.UpdatedAt
+            });
         }
 
         // PUT: api/category/5

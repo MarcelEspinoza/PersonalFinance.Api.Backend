@@ -5,19 +5,15 @@ namespace PersonalFinance.Api.Models.Dtos.Income
 {        // Income DTOs updated to reference Category by id (relation)
     public class CreateIncomeDto
     {
-        [Required]
         public decimal Amount { get; set; }
-
-        public string? Description { get; set; }
-
-        [Required]
+        public string Description { get; set; } = string.Empty;
         public DateTime Date { get; set; }
-
-        // now use CategoryId to reference the Category entity
-        [Required]
-        public int CategoryId { get; set; }
-
-        [Required]
-        public IncomeType Type { get; set; } = IncomeType.Fixed;
+        public string Type { get; set; } = string.Empty;
+        public int CategoryId { get; set; }   
+        public DateTime? Start_Date { get; set; }
+        public DateTime? End_Date { get; set; }
+        public string? Notes { get; set; }
     }
+
+
 }
