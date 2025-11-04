@@ -1,42 +1,42 @@
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
-using PersonalFinance.Api.Models.Dtos.Income;
+using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Services
 {
-    public class IncomeService : IIncomeService
+    public class ExpenseService : IExpenseService
     {
         private readonly AppDbContext _context;
 
-        public IncomeService(AppDbContext context)
+        public ExpenseService(AppDbContext context)
         {
             _context = context;
         }
 
-        public async Task<IEnumerable<Income>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
+        public async Task<IEnumerable<Expense>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
-            return await _context.Incomes
+            return await _context.Expenses
                 .AsNoTracking()
                 .Where(i => i.UserId == userId)
                 .ToListAsync(cancellationToken);
         }
 
-        public async Task<Income?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default)
+        public async Task<Expense?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default)
         {
-            return await _context.Incomes
+            return await _context.Expenses
                 .AsNoTracking()
                 .Where(i => i.UserId == userId)
                 .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
         }
 
-        public async Task<Income> CreateAsync(Guid userId, CreateIncomeDto dto, CancellationToken ct)
+        public async Task<Expense> CreateAsync(Guid userId, CreateExpenseDto dto, CancellationToken ct)
         {
             if (dto.Amount <= 0) throw new ArgumentException("Amount must be greater than zero", nameof(dto.Amount));
             if (dto.Date == default) throw new ArgumentException("Date is required", nameof(dto.Date));
             // CategoryId is required in DTO by design; if your model stores category relation, consider validating existence here.
-            var income = new Income
+            var Expense = new Expense
             {
                 Amount = dto.Amount,
                 Description = dto.Description,
@@ -49,42 +49,42 @@ namespace PersonalFinance.Api.Services
                 Notes = dto.Notes
             };
 
-            _context.Incomes.Add(income);
+            _context.Expenses.Add(Expense);
             await _context.SaveChangesAsync(ct);
-            return income;
+            return Expense;
         }
 
-        public async Task<bool> UpdateAsync(int id, Guid userId, UpdateIncomeDto dto, CancellationToken cancellationToken = default)
+        public async Task<bool> UpdateAsync(int id, Guid userId, UpdateExpenseDto dto, CancellationToken cancellationToken = default)
         {
-            var income = await _context.Incomes.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, cancellationToken);
-            if (income == null) return false;
+            var Expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, cancellationToken);
+            if (Expense == null) return false;
 
             if (dto.Amount.HasValue)
-                income.Amount = dto.Amount.Value;
+                Expense.Amount = dto.Amount.Value;
 
             if (dto.Description != null)
-                income.Description = dto.Description;
+                Expense.Description = dto.Description;
 
             if (dto.Date.HasValue)
-                income.Date = dto.Date.Value;
+                Expense.Date = dto.Date.Value;
 
-            // If your Income entity contains CategoryId, you can assign it when dto.CategoryId.HasValue
-            if (dto.CategoryId.HasValue) income.CategoryId = dto.CategoryId.Value;
+            // If your Expense entity contains CategoryId, you can assign it when dto.CategoryId.HasValue
+            if (dto.CategoryId.HasValue) Expense.CategoryId = dto.CategoryId.Value;
 
             if (dto.Type != null) 
-            income.Type = dto.Type;
+            Expense.Type = dto.Type;
 
-            _context.Incomes.Update(income);
+            _context.Expenses.Update(Expense);
             await _context.SaveChangesAsync(cancellationToken);
             return true;
         }
 
         public async Task<bool> DeleteAsync(int id, Guid userId, CancellationToken cancellationToken = default)
         {
-            var income = await _context.Incomes.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, cancellationToken);
-            if (income == null) return false;
+            var Expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, cancellationToken);
+            if (Expense == null) return false;
 
-            _context.Incomes.Remove(income);
+            _context.Expenses.Remove(Expense);
             await _context.SaveChangesAsync(cancellationToken);
             return true;
         }

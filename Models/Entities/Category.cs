@@ -23,6 +23,7 @@ namespace PersonalFinance.Api.Models.Entities
         public DateTime? UpdatedAt { get; set; }
 
         // Navigation property (optional)
-        public ICollection<Income>? Incomes { get; set; }
+        public ICollection<Income> Incomes { get; set; } = new List<Income>();
+        public ICollection<Expense> Expenses { get; set; } = new List<Expense>();
     }
 }

@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
 
 [ApiController]

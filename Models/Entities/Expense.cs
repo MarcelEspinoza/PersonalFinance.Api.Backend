@@ -3,7 +3,7 @@ using PersonalFinance.Api.Enums;
 
 namespace PersonalFinance.Api.Models.Entities
 {
-    public class Income
+    public class Expense
     {
         public int Id { get; set; }
         [Column(TypeName = "decimal(18,2)")]

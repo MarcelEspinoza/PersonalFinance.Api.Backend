@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.Category;
-using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
 
 namespace PersonalFinance.Api.Controllers

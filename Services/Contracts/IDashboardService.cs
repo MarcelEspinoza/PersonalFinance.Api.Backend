@@ -1,4 +1,4 @@
-﻿namespace PersonalFinance.Api.Services
+﻿namespace PersonalFinance.Api.Services.Contracts
 {
     using PersonalFinance.Api.Models.Dtos.Dashboard;
     using System;

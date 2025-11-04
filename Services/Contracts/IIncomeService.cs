@@ -1,7 +1,7 @@
 ﻿using PersonalFinance.Api.Models.Dtos.Income;
 using PersonalFinance.Api.Models.Entities;
 
-namespace PersonalFinance.Api.Services
+namespace PersonalFinance.Api.Services.Contracts
 {
     public interface IIncomeService
     {

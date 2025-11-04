@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.User;
 using PersonalFinance.Api.Models.Entities;
-using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 
 
 public sealed class UserService : IUserService

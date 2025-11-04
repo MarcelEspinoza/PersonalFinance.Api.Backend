@@ -2,6 +2,7 @@
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Category;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Services
 {

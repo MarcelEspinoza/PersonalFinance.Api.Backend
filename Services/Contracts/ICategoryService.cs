@@ -2,7 +2,7 @@
 using PersonalFinance.Api.Models.Dtos.Category;
 using PersonalFinance.Api.Models.Entities;
 
-namespace PersonalFinance.Api.Services
+namespace PersonalFinance.Api.Services.Contracts
 {
     // Category service interface
     public interface ICategoryService

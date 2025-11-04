@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.AspNetCore.Identity;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Api.Services.Contracts;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -85,7 +86,10 @@ builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IIncomeService, IncomeService>();
+builder.Services.AddScoped<IExpenseService, ExpenseService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
+builder.Services.AddScoped<IMonthlyService, MonthlyService>();
+builder.Services.AddScoped<IImportExcelService, ImportExcelService>();
 
 
 var app = builder.Build();

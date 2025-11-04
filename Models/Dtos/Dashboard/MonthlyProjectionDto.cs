@@ -13,14 +13,19 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         public string Month { get; set; } = string.Empty;
 
         /// <summary>
-        /// Projected total income for the month.
+        /// Total income for the month.
         /// </summary>
         public decimal Income { get; set; }
 
         /// <summary>
-        /// Projected total expense for the month.
+        /// Total expense for the month.
         /// </summary>
         public decimal Expense { get; set; }
+
+        /// <summary>
+        /// Balance = Income - Expense.
+        /// </summary>
+        public decimal Balance { get; set; }
 
         /// <summary>
         /// Indicates whether this projection corresponds to the current month.

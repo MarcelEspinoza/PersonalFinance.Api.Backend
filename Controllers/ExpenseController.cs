@@ -2,9 +2,8 @@
 {
 
     using Microsoft.AspNetCore.Authorization;
-    using Microsoft.AspNetCore.Http.HttpResults;
     using Microsoft.AspNetCore.Mvc;
-    using PersonalFinance.Api.Models.Dtos.Income;
+    using PersonalFinance.Api.Models.Dtos.Expense;
     using PersonalFinance.Api.Services.Contracts;
     using System;
     using System.Linq;
@@ -14,13 +13,13 @@
 
     [ApiController]
     [Route("api/[controller]")]
-    public class IncomeController : ControllerBase
+    public class ExpenseController : ControllerBase
     {
-        private readonly IIncomeService _incomeService;
+        private readonly IExpenseService _expenseService;
 
-        public IncomeController(IIncomeService incomeService)
+        public ExpenseController(IExpenseService expenseService)
         {
-            _incomeService = incomeService;
+            _expenseService = expenseService;
         }
 
         private Guid? GetCurrentUserId()
@@ -33,7 +32,7 @@
             return userId;
         }
 
-        // GET: api/income
+        // GET: api/expense
         [HttpGet]
         [Authorize]
         public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
@@ -41,8 +40,8 @@
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            var incomes = await _incomeService.GetAllAsync(userId.Value, cancellationToken);
-            var result = incomes.Select(i => new
+            var expense = await _expenseService.GetAllAsync(userId.Value, cancellationToken);
+            var result = expense.Select(i => new
             {
                 id = i.Id,
                 amount = i.Amount,
@@ -53,13 +52,13 @@
                 end_Date = i.End_Date,
                 notes = i.Notes
 
-                // Note: CategoryId not included here to avoid breaking if Income model isn't updated yet.
+                // Note: CategoryId not included here to avoid breaking if expense model isn't updated yet.
             });
 
             return Ok(result);
         }
 
-        // GET: api/income/5
+        // GET: api/expense/5
         [HttpGet("{id}")]
         [Authorize]
         public async Task<IActionResult> GetById(int id, CancellationToken cancellationToken = default)
@@ -67,26 +66,26 @@
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            var income = await _incomeService.GetByIdAsync(id, userId.Value, cancellationToken);
-            if (income == null) return NotFound();
+            var expense = await _expenseService.GetByIdAsync(id, userId.Value, cancellationToken);
+            if (expense == null) return NotFound();
 
             return Ok(new
             {
-                id = income.Id,
-                amount = income.Amount,
-                description = income.Description,
-                date = income.Date,
-                type = income.Type,
-                start_date = income.Start_Date,
-                end_Date = income.End_Date,
-                notes = income.Notes
+                id = expense.Id,
+                amount = expense.Amount,
+                description = expense.Description,
+                date = expense.Date,
+                type = expense.Type,
+                start_date = expense.Start_Date,
+                end_Date = expense.End_Date,
+                notes = expense.Notes
             });
         }
 
-        // POST: api/income
+        // POST: api/expense
         [HttpPost]
         [Authorize]
-        public async Task<IActionResult> Create([FromBody] CreateIncomeDto dto, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> Create([FromBody] CreateExpenseDto dto, CancellationToken cancellationToken = default)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
@@ -95,7 +94,7 @@
 
             try
             {
-                var created = await _incomeService.CreateAsync(userId.Value, dto, cancellationToken);
+                var created = await _expenseService.CreateAsync(userId.Value, dto, cancellationToken);
                 return CreatedAtAction(nameof(GetById), new { id = created.Id }, new
                 {
                     id = created.Id,
@@ -118,10 +117,10 @@
             }
         }
 
-        // PUT: api/income/5
+        // PUT: api/expense/5
         [HttpPut("{id}")]
         [Authorize]
-        public async Task<IActionResult> Update(int id, [FromBody] UpdateIncomeDto dto, CancellationToken cancellationToken = default)
+        public async Task<IActionResult> Update(int id, [FromBody] UpdateExpenseDto dto, CancellationToken cancellationToken = default)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
@@ -130,7 +129,7 @@
 
             try
             {
-                var updated = await _incomeService.UpdateAsync(id, userId.Value, dto, cancellationToken);
+                var updated = await _expenseService.UpdateAsync(id, userId.Value, dto, cancellationToken);
                 if (!updated) return NotFound();
                 return NoContent();
             }
@@ -144,7 +143,7 @@
             }
         }
 
-        // DELETE: api/income/5
+        // DELETE: api/expense/5
         [HttpDelete("{id}")]
         [Authorize]
         public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken = default)
@@ -152,7 +151,7 @@
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            var deleted = await _incomeService.DeleteAsync(id, userId.Value, cancellationToken);
+            var deleted = await _expenseService.DeleteAsync(id, userId.Value, cancellationToken);
             if (!deleted) return NotFound();
 
             return NoContent();
