@@ -31,5 +31,11 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// Indicates whether this projection corresponds to the current month.
         /// </summary>
         public bool IsCurrent { get; set; }
+
+        public decimal Savings { get; set; }
+
+        // Ahorro proyectado para meses futuros (y opcionalmente para el actual si quieres un objetivo)
+        public decimal ProjectedSavings { get; set; }
+        public decimal? PlannedBalance { get; set; }
     }
 }

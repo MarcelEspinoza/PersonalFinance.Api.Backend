@@ -13,6 +13,8 @@ namespace PersonalFinance.Api.Data
         public DbSet<Category> Categories { get; set; }
         public DbSet<Loan> Loans { get; set; }
         public DbSet<LoanPayment> LoanPayments { get; set; }
+        public DbSet<SavingAccount> SavingAccounts { get; set; }
+        public DbSet<SavingMovement> SavingMovements { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -34,6 +36,16 @@ namespace PersonalFinance.Api.Data
                     Id = 101,
                     Name = "Préstamo bancario",
                     Description = "Categoría de sistema",
+                    UserId = Guid.Empty,
+                    IsSystem = true,
+                    IsActive = true,
+                    CreatedAt = new DateTime(2025, 1, 1)
+                },
+                new Category
+                {
+                    Id = 200,
+                    Name = "Ahorro",
+                    Description = "Categoría de sistema para registrar aportes de ahorro",
                     UserId = Guid.Empty,
                     IsSystem = true,
                     IsActive = true,

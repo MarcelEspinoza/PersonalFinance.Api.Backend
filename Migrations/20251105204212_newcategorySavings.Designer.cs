@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PersonalFinance.Api.Data;
 
@@ -11,9 +12,11 @@ using PersonalFinance.Api.Data;
 namespace PersonalFinance.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251105204212_newcategorySavings")]
+    partial class newcategorySavings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -55,7 +58,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Categories", (string)null);
+                    b.ToTable("Categories");
 
                     b.HasData(
                         new
@@ -136,7 +139,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasIndex("LoanId");
 
-                    b.ToTable("Expenses", (string)null);
+                    b.ToTable("Expenses");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
@@ -180,7 +183,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasIndex("CategoryId");
 
-                    b.ToTable("Incomes", (string)null);
+                    b.ToTable("Incomes");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Loan", b =>
@@ -240,7 +243,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasIndex("CategoryId");
 
-                    b.ToTable("Loans", (string)null);
+                    b.ToTable("Loans");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.LoanPayment", b =>
@@ -270,7 +273,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasIndex("LoanId");
 
-                    b.ToTable("LoanPayments", (string)null);
+                    b.ToTable("LoanPayments");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.SavingAccount", b =>
@@ -289,7 +292,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("SavingAccounts", (string)null);
+                    b.ToTable("SavingAccounts");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.SavingMovement", b =>
@@ -316,7 +319,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasIndex("SavingAccountId");
 
-                    b.ToTable("SavingMovements", (string)null);
+                    b.ToTable("SavingMovements");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.User", b =>
@@ -339,7 +342,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Expense", b =>

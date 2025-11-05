@@ -100,6 +100,7 @@ builder.Services.AddScoped<IMonthlyService, MonthlyService>();
 builder.Services.AddScoped<IImportExcelService, ImportExcelService>();
 builder.Services.AddScoped<ILoanService, LoanService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ISavingService, SavingService>();
 
 
 var app = builder.Build();

@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
@@ -53,8 +54,8 @@ namespace PersonalFinance.Api.Services
             _context.Expenses.Add(expense);
             await _context.SaveChangesAsync(ct); // 👈 primero guardamos, ya tenemos Expense.Id
 
-            // Si está vinculado a préstamo, crear LoanPayment y actualizar el saldo
-            if (expense.LoanId.HasValue && (expense.CategoryId == 100 || expense.CategoryId == 101))
+            // === Caso 1: gasto vinculado a préstamo ===
+            if (expense.LoanId.HasValue && (expense.CategoryId == DefaultCategories.PersonalLoan || expense.CategoryId == DefaultCategories.BankLoan))
             {
                 var loan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == expense.LoanId.Value && l.UserId == userId, ct);
                 if (loan == null) throw new InvalidOperationException("Loan not found or not owned by user.");
@@ -76,9 +77,34 @@ namespace PersonalFinance.Api.Services
                 await _context.SaveChangesAsync(ct);
             }
 
+            // === Caso 2: gasto de ahorro (categoría especial 200) ===
+            if (expense.CategoryId == DefaultCategories.Savings)
+            {
+                var account = await _context.SavingAccounts.FirstOrDefaultAsync(a => a.UserId == userId, ct);
+                if (account == null)
+                {
+                    account = new SavingAccount { UserId = userId, Balance = 0 };
+                    _context.SavingAccounts.Add(account);
+                    await _context.SaveChangesAsync(ct);
+                }
+
+                var movement = new SavingMovement
+                {
+                    SavingAccountId = account.Id,
+                    Date = expense.Date,
+                    Amount = expense.Amount,
+                    Notes = expense.Description
+                };
+
+                account.Balance += expense.Amount;
+                _context.SavingMovements.Add(movement);
+                _context.SavingAccounts.Update(account);
+
+                await _context.SaveChangesAsync(ct);
+            }
+
             return expense;
         }
-
         public async Task<bool> UpdateAsync(int id, Guid userId, UpdateExpenseDto dto, CancellationToken ct = default)
         {
             var expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
@@ -86,7 +112,6 @@ namespace PersonalFinance.Api.Services
 
             var oldAmount = expense.Amount;
             var oldLoanId = expense.LoanId;
-            var oldDate = expense.Date;
 
             if (dto.Amount.HasValue) expense.Amount = dto.Amount.Value;
             if (dto.Description != null) expense.Description = dto.Description;
@@ -100,7 +125,7 @@ namespace PersonalFinance.Api.Services
 
             _context.Expenses.Update(expense);
 
-            // Sincronía LoanPayment por ExpenseId (evita ambigüedades)
+            // === Sincronía LoanPayment ===
             var payment = await _context.LoanPayments.FirstOrDefaultAsync(p => p.ExpenseId == id, ct);
 
             // Caso 1: desvinculado ahora
@@ -117,7 +142,7 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
-            // Caso 2: sigue vinculado (mismo préstamo) → actualizar payment + ajustar diferencia
+            // Caso 2: sigue vinculado (mismo préstamo)
             if (expense.LoanId.HasValue && oldLoanId == expense.LoanId)
             {
                 var loan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == expense.LoanId.Value && l.UserId == userId, ct);
@@ -150,10 +175,9 @@ namespace PersonalFinance.Api.Services
                 _context.Loans.Update(loan);
             }
 
-            // Caso 3: cambió de préstamo → eliminar payment anterior y crear uno nuevo
+            // Caso 3: cambió de préstamo
             if (oldLoanId.HasValue && expense.LoanId.HasValue && oldLoanId != expense.LoanId)
             {
-                // Restituir en préstamo anterior
                 var oldLoan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == oldLoanId.Value && l.UserId == userId, ct);
                 if (oldLoan != null)
                 {
@@ -163,7 +187,6 @@ namespace PersonalFinance.Api.Services
                     _context.Loans.Update(oldLoan);
                 }
 
-                // Crear nuevo payment en nuevo préstamo
                 var newLoan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == expense.LoanId.Value && l.UserId == userId, ct);
                 if (newLoan == null) throw new InvalidOperationException("New loan not found.");
 
@@ -191,7 +214,7 @@ namespace PersonalFinance.Api.Services
             var expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
             if (expense == null) return false;
 
-            // Si estaba vinculado a préstamo: eliminar payment y restaurar saldo
+            // Si estaba vinculado a préstamo
             var payment = await _context.LoanPayments.FirstOrDefaultAsync(p => p.ExpenseId == id, ct);
             if (payment != null)
             {
@@ -205,11 +228,27 @@ namespace PersonalFinance.Api.Services
                 _context.LoanPayments.Remove(payment);
             }
 
+            // Si era un gasto de ahorro, revertir el movimiento
+            if (expense.CategoryId == DefaultCategories.Savings)
+            {
+                var account = await _context.SavingAccounts.FirstOrDefaultAsync(a => a.UserId == userId, ct);
+                if (account != null)
+                {
+                    var movement = await _context.SavingMovements
+                        .FirstOrDefaultAsync(m => m.SavingAccountId == account.Id && m.Amount == expense.Amount && m.Date == expense.Date, ct);
+
+                    if (movement != null)
+                    {
+                        account.Balance -= movement.Amount;
+                        _context.SavingMovements.Remove(movement);
+                        _context.SavingAccounts.Update(account);
+                    }
+                }
+            }
+
             _context.Expenses.Remove(expense);
             await _context.SaveChangesAsync(ct);
             return true;
         }
-
-
     }
 }
