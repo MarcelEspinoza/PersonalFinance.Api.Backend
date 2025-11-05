@@ -1,6 +1,4 @@
-﻿using PersonalFinance.Api.Enums;
-
-namespace PersonalFinance.Api.Models.Dtos.Expense
+﻿namespace PersonalFinance.Api.Models.Dtos.Expense
 {
     public class UpdateExpenseDto
     {
@@ -15,6 +13,9 @@ namespace PersonalFinance.Api.Models.Dtos.Expense
         public DateTime? Start_Date { get; set; }
         public DateTime? End_Date { get; set; }
         public string? Notes { get; set; }
+
+        // Nuevo: permitir cambiar vínculo
+        public Guid? LoanId { get; set; }
     }
 
 }

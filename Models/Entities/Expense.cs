@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
-using PersonalFinance.Api.Enums;
 
 namespace PersonalFinance.Api.Models.Entities
 {
@@ -17,5 +16,9 @@ namespace PersonalFinance.Api.Models.Entities
         public DateTime? End_Date { get; set; }
         public string? Notes { get; set; }
         public Category Category { get; set; } = null!;
+
+        // Nuevo vínculo opcional al préstamo
+        public Guid? LoanId { get; set; }
+        public Loan? Loan { get; set; }
     }
 }

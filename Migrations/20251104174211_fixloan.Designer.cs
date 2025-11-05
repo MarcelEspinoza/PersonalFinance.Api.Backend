@@ -12,8 +12,8 @@ using PersonalFinance.Api.Data;
 namespace PersonalFinance.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20251103191119_expense")]
-    partial class expense
+    [Migration("20251104174211_fixloan")]
+    partial class fixloan
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -42,6 +42,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -56,6 +59,28 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Categories");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 100,
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            Description = "Categoría de sistema",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "Préstamo personal",
+                            UserId = new Guid("00000000-0000-0000-0000-000000000000")
+                        },
+                        new
+                        {
+                            Id = 101,
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            Description = "Categoría de sistema",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "Préstamo bancario",
+                            UserId = new Guid("00000000-0000-0000-0000-000000000000")
+                        });
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Expense", b =>
@@ -96,6 +121,8 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CategoryId");
 
                     b.ToTable("Expenses");
                 });
@@ -144,34 +171,89 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Incomes");
                 });
 
-            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Transaction", b =>
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Loan", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("CategoryId")
                         .HasColumnType("int");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<DateTime>("Date")
+                    b.Property<DateTime?>("DueDate")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("Description")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int?>("InstallmentsPaid")
+                        .HasColumnType("int");
 
-                    b.Property<string>("Type")
+                    b.Property<int?>("InstallmentsRemaining")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("InterestRate")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("NextPaymentAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("NextPaymentDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal>("OutstandingAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("PrincipalAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("StartDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("TAE")
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.ToTable("Transactions");
+                    b.HasIndex("CategoryId");
+
+                    b.ToTable("Loans");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.LoanPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("LoanId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("PaymentDate")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LoanId");
+
+                    b.ToTable("LoanPayments");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.User", b =>
@@ -197,18 +279,58 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Expense", b =>
+                {
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Category", "Category")
+                        .WithMany("Expenses")
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Category");
+                });
+
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
                 {
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Category", null)
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Category", "Category")
                         .WithMany("Incomes")
                         .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Category");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Loan", b =>
+                {
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Category", "Category")
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Category");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.LoanPayment", b =>
+                {
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Loan", null)
+                        .WithMany("Payments")
+                        .HasForeignKey("LoanId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Category", b =>
                 {
+                    b.Navigation("Expenses");
+
                     b.Navigation("Incomes");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Loan", b =>
+                {
+                    b.Navigation("Payments");
                 });
 #pragma warning restore 612, 618
         }

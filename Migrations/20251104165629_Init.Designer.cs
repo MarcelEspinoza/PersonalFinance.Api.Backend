@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PersonalFinance.Api.Data;
 
@@ -11,9 +12,11 @@ using PersonalFinance.Api.Data;
 namespace PersonalFinance.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251104165629_Init")]
+    partial class Init
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -104,9 +107,6 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateTime?>("End_Date")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid?>("LoanId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<string>("Notes")
                         .HasColumnType("nvarchar(max)");
 
@@ -123,8 +123,6 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId");
-
-                    b.HasIndex("LoanId");
 
                     b.ToTable("Expenses");
                 });
@@ -242,9 +240,6 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<int?>("ExpenseId")
-                        .HasColumnType("int");
-
                     b.Property<Guid>("LoanId")
                         .HasColumnType("uniqueidentifier");
 
@@ -255,8 +250,6 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("datetime2");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("ExpenseId");
 
                     b.HasIndex("LoanId");
 
@@ -294,14 +287,7 @@ namespace PersonalFinance.Api.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Loan", "Loan")
-                        .WithMany()
-                        .HasForeignKey("LoanId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.Navigation("Category");
-
-                    b.Navigation("Loan");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
@@ -328,20 +314,11 @@ namespace PersonalFinance.Api.Migrations
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.LoanPayment", b =>
                 {
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Expense", "Expense")
-                        .WithMany()
-                        .HasForeignKey("ExpenseId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Loan", "Loan")
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Loan", null)
                         .WithMany("Payments")
                         .HasForeignKey("LoanId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Expense");
-
-                    b.Navigation("Loan");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Category", b =>

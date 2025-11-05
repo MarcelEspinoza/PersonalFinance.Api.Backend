@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
-using PersonalFinance.Api.Enums;
 
 namespace PersonalFinance.Api.Models.Entities
 {

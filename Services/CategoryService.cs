@@ -19,7 +19,7 @@ namespace PersonalFinance.Api.Services
         {
             return await _context.Categories
                 .AsNoTracking()
-                .Where(c => c.UserId == userId)
+                .Where(c => c.UserId == userId || c.IsSystem)
                 .ToListAsync(cancellationToken);
         }
 

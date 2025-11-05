@@ -5,7 +5,7 @@
 namespace PersonalFinance.Api.Migrations
 {
     /// <inheritdoc />
-    public partial class income_fix_amount : Migration
+    public partial class fixloan : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

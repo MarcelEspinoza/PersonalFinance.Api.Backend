@@ -1,6 +1,4 @@
-﻿using PersonalFinance.Api.Enums;
-
-namespace PersonalFinance.Api.Models.Dtos.Income
+﻿namespace PersonalFinance.Api.Models.Dtos.Income
 {
     public class UpdateIncomeDto
     {
