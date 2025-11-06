@@ -37,7 +37,7 @@ namespace PersonalFinance.Api.Data
                     UserId = Guid.Empty,
                     IsSystem = true,
                     IsActive = true,
-                    CreatedAt = new DateTime(2025, 1, 1)
+                    CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
                 },
                 new Category
                 {
@@ -47,7 +47,7 @@ namespace PersonalFinance.Api.Data
                     UserId = Guid.Empty,
                     IsSystem = true,
                     IsActive = true,
-                    CreatedAt = new DateTime(2025, 1, 1)
+                    CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
                 },
                 new Category
                 {
@@ -57,7 +57,7 @@ namespace PersonalFinance.Api.Data
                     UserId = Guid.Empty,
                     IsSystem = true,
                     IsActive = true,
-                    CreatedAt = new DateTime(2025, 1, 1)
+                    CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
                 },
                 new Category
                 {
@@ -67,7 +67,7 @@ namespace PersonalFinance.Api.Data
                     UserId = Guid.Empty,
                     IsSystem = true,
                     IsActive = true,
-                    CreatedAt = new DateTime(2025, 1, 1)
+                    CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
                 }
             );
 
