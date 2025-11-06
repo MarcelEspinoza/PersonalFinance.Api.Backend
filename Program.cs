@@ -111,11 +111,10 @@ builder.Services.AddScoped<IPasanacoService, PasanacoService>();
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+
+app.UseSwagger();
+app.UseSwaggerUI();
+
 
 // Apply CORS before auth
 app.UseCustomCors();
@@ -126,4 +125,5 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+app.MapGet("/", () => Results.Ok("Personal Finance API is running"));
 app.Run();
