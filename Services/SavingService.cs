@@ -18,11 +18,15 @@
 
         public async Task PlanSavingsAsync(Guid userId, PlanSavingsDto dto, CancellationToken ct = default)
         {
-            var start = dto.StartDate ?? DateTime.UtcNow;
+            // Normalizar la fecha de inicio a UTC (si viene con Kind=Unspecified la convertimos)
+            var start = dto.StartDate.HasValue
+                ? DateTime.SpecifyKind(dto.StartDate.Value, DateTimeKind.Utc)
+                : DateTime.UtcNow;
 
             for (int i = 0; i < dto.Months; i++)
             {
-                var date = new DateTime(start.Year, start.Month, 1).AddMonths(i);
+                // Crear la fecha del primer día del mes con Kind=Utc
+                var date = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(i);
 
                 var expense = new Expense
                 {
@@ -42,7 +46,10 @@
 
         public async Task<decimal> GetSavingsForMonthAsync(Guid userId, DateTime month, CancellationToken ct = default)
         {
-            var start = new DateTime(month.Year, month.Month, 1);
+            // Asegurarnos que 'month' sea tratado/normalizado como UTC
+            var monthUtc = DateTime.SpecifyKind(month, DateTimeKind.Utc);
+
+            var start = new DateTime(monthUtc.Year, monthUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
             return await _context.SavingMovements
