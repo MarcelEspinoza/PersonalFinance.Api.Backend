@@ -40,22 +40,9 @@
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            var expense = await _expenseService.GetAllAsync(userId.Value, cancellationToken);
-            var result = expense.Select(i => new
-            {
-                id = i.Id,
-                amount = i.Amount,
-                description = i.Description,
-                date = i.Date,
-                type = i.Type,
-                start_date = i.Start_Date,
-                end_Date = i.End_Date,
-                notes = i.Notes
+            var expense = await _expenseService.GetAllAsync(userId.Value, cancellationToken);            
 
-                // Note: CategoryId not included here to avoid breaking if expense model isn't updated yet.
-            });
-
-            return Ok(result);
+            return Ok(expense);
         }
 
         // GET: api/expense/5
@@ -69,17 +56,7 @@
             var expense = await _expenseService.GetByIdAsync(id, userId.Value, cancellationToken);
             if (expense == null) return NotFound();
 
-            return Ok(new
-            {
-                id = expense.Id,
-                amount = expense.Amount,
-                description = expense.Description,
-                date = expense.Date,
-                type = expense.Type,
-                start_date = expense.Start_Date,
-                end_Date = expense.End_Date,
-                notes = expense.Notes
-            });
+            return Ok(expense);
         }
 
         // POST: api/expense

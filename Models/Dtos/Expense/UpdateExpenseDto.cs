@@ -16,6 +16,7 @@
 
         // Nuevo: permitir cambiar vínculo
         public Guid? LoanId { get; set; }
+        public bool? IsIndefinite { get; set; }
     }
 
 }

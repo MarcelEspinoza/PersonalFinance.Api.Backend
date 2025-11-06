@@ -42,21 +42,7 @@
             if (userId == null) return Unauthorized();
 
             var incomes = await _incomeService.GetAllAsync(userId.Value, cancellationToken);
-            var result = incomes.Select(i => new
-            {
-                id = i.Id,
-                amount = i.Amount,
-                description = i.Description,
-                date = i.Date,
-                type = i.Type,
-                start_date = i.Start_Date,
-                end_Date = i.End_Date,
-                notes = i.Notes
-
-                // Note: CategoryId not included here to avoid breaking if Income model isn't updated yet.
-            });
-
-            return Ok(result);
+            return Ok(incomes); // 👈 devuelve el DTO completo
         }
 
         // GET: api/income/5
@@ -70,17 +56,7 @@
             var income = await _incomeService.GetByIdAsync(id, userId.Value, cancellationToken);
             if (income == null) return NotFound();
 
-            return Ok(new
-            {
-                id = income.Id,
-                amount = income.Amount,
-                description = income.Description,
-                date = income.Date,
-                type = income.Type,
-                start_date = income.Start_Date,
-                end_Date = income.End_Date,
-                notes = income.Notes
-            });
+            return Ok(income);
         }
 
         // POST: api/income
@@ -105,7 +81,9 @@
                     type = created.Type,
                     start_date = created.Start_Date,
                     end_Date = created.End_Date,
-                    notes = created.Notes
+                    notes = created.Notes,
+                    categoryId = created.CategoryId,
+                    loanId = created.LoanId
                 });
             }
             catch (ArgumentException ex)

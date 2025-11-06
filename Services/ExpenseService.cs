@@ -16,20 +16,50 @@ namespace PersonalFinance.Api.Services
             _context = context;
         }
 
-        public async Task<IEnumerable<Expense>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
+        public async Task<IEnumerable<ExpenseDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
             return await _context.Expenses
                 .AsNoTracking()
-                .Where(i => i.UserId == userId)
+                .Where(e => e.UserId == userId)
+                .Include(e => e.Category)
+                .Select(e => new ExpenseDto
+                {
+                    Id = e.Id,
+                    Amount = e.Amount,
+                    Description = e.Description,
+                    Date = e.Date,
+                    Type = e.Type,
+                    CategoryId = e.CategoryId,
+                    CategoryName = e.Category.Name,
+                    Start_Date = e.Start_Date,
+                    End_Date = e.End_Date,
+                    Notes = e.Notes,
+                    LoanId = e.LoanId
+                })
                 .ToListAsync(cancellationToken);
         }
 
-        public async Task<Expense?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default)
+        public async Task<ExpenseDto?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default)
         {
             return await _context.Expenses
                 .AsNoTracking()
-                .Where(i => i.UserId == userId)
-                .FirstOrDefaultAsync(i => i.Id == id, cancellationToken);
+                .Where(e => e.UserId == userId && e.Id == id)
+                .Include(e => e.Category)
+                .Select(e => new ExpenseDto
+                {
+                    Id = e.Id,
+                    Amount = e.Amount,
+                    Description = e.Description,
+                    Date = e.Date,
+                    Type = e.Type,
+                    CategoryId = e.CategoryId,
+                    CategoryName = e.Category.Name,
+                    Start_Date = e.Start_Date,
+                    End_Date = e.End_Date,
+                    Notes = e.Notes,
+                    LoanId = e.LoanId
+                })
+                .FirstOrDefaultAsync(cancellationToken);
         }
 
         public async Task<Expense> CreateAsync(Guid userId, CreateExpenseDto dto, CancellationToken ct)
@@ -48,7 +78,8 @@ namespace PersonalFinance.Api.Services
                 Start_Date = dto.Start_Date,
                 End_Date = dto.End_Date,
                 Notes = dto.Notes,
-                LoanId = dto.LoanId
+                LoanId = dto.LoanId,
+                IsIndefinite = dto.IsIndefinite ?? false
             };
 
             _context.Expenses.Add(expense);
@@ -122,6 +153,7 @@ namespace PersonalFinance.Api.Services
             expense.End_Date = dto.End_Date;
             expense.Notes = dto.Notes;
             expense.LoanId = dto.LoanId;
+            if (dto.IsIndefinite.HasValue) expense.IsIndefinite = dto.IsIndefinite.Value;
 
             _context.Expenses.Update(expense);
 

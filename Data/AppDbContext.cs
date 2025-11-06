@@ -20,6 +20,10 @@ namespace PersonalFinance.Api.Data
         {
             base.OnModelCreating(modelBuilder);
 
+            modelBuilder.Entity<Category>()
+                .Property(c => c.Id)
+                .ValueGeneratedOnAdd(); // normal para usuarios
+
             modelBuilder.Entity<Category>().HasData(
                 new Category
                 {

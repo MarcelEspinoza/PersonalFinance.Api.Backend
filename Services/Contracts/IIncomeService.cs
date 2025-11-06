@@ -5,8 +5,8 @@ namespace PersonalFinance.Api.Services.Contracts
 {
     public interface IIncomeService
     {
-        Task<IEnumerable<Income>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default);
-        Task<Income?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default);
+        Task<IEnumerable<IncomeDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default);
+        Task<IncomeDto?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default);
         Task<Income> CreateAsync(Guid userId, CreateIncomeDto dto, CancellationToken cancellationToken = default);
         Task<bool> UpdateAsync(int id, Guid userId, UpdateIncomeDto dto, CancellationToken cancellationToken = default);
         Task<bool> DeleteAsync(int id, Guid userId, CancellationToken cancellationToken = default);

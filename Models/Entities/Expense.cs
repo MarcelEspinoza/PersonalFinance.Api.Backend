@@ -20,5 +20,8 @@ namespace PersonalFinance.Api.Models.Entities
         // Nuevo vínculo opcional al préstamo
         public Guid? LoanId { get; set; }
         public Loan? Loan { get; set; }
+
+        public bool IsIndefinite { get; set; } = false;
+
     }
 }
