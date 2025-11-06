@@ -15,6 +15,10 @@ namespace PersonalFinance.Api.Data
         public DbSet<LoanPayment> LoanPayments { get; set; }
         public DbSet<SavingAccount> SavingAccounts { get; set; }
         public DbSet<SavingMovement> SavingMovements { get; set; }
+        public DbSet<Pasanaco> Pasanacos { get; set; }
+        public DbSet<Participant> Participants { get; set; }
+        public DbSet<PasanacoPayment> PasanacoPayments { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -54,8 +58,19 @@ namespace PersonalFinance.Api.Data
                     IsSystem = true,
                     IsActive = true,
                     CreatedAt = new DateTime(2025, 1, 1)
+                },
+                new Category
+                {
+                    Id = 300,
+                    Name = "Pasanaco",
+                    Description = "Pagos mensuales del juego Pasanaco",
+                    UserId = Guid.Empty,
+                    IsSystem = true,
+                    IsActive = true,
+                    CreatedAt = new DateTime(2025, 1, 1)
                 }
             );
+
 
             modelBuilder.Entity<Expense>()
                 .HasOne(e => e.Loan)
@@ -74,6 +89,33 @@ namespace PersonalFinance.Api.Data
                 .WithMany() // relación opcional y unidireccional
                 .HasForeignKey(lp => lp.ExpenseId)
                 .OnDelete(DeleteBehavior.Restrict); // 👈 evita cascadas múltiples
+
+            modelBuilder.Entity<Pasanaco>()
+                .HasMany(p => p.Participants)
+                .WithOne(p => p.Pasanaco)
+                .HasForeignKey(p => p.PasanacoId);
+
+            modelBuilder.Entity<Pasanaco>()
+                .HasMany(p => p.Payments)
+                .WithOne(p => p.Pasanaco)
+                .HasForeignKey(p => p.PasanacoId);
+
+            modelBuilder.Entity<Participant>()
+                .HasMany(p => p.Payments)
+                .WithOne(p => p.Participant)
+                .HasForeignKey(p => p.ParticipantId);
+
+            modelBuilder.Entity<PasanacoPayment>()
+                .HasOne(p => p.Participant)
+                .WithMany(p => p.Payments)
+                .HasForeignKey(p => p.ParticipantId);
+
+            modelBuilder.Entity<PasanacoPayment>()
+                .HasOne(p => p.Pasanaco)
+                .WithMany(p => p.Payments)
+                .HasForeignKey(p => p.PasanacoId)
+                .OnDelete(DeleteBehavior.Restrict);
+
 
 
         }
