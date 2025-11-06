@@ -3,6 +3,7 @@ using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
+using System.ComponentModel.DataAnnotations;
 
 namespace PersonalFinance.Api.Services
 {
@@ -50,6 +51,22 @@ namespace PersonalFinance.Api.Services
 
         public async Task<PasanacoDto> CreateAsync(CreatePasanacoDto dto)
         {
+            if (string.IsNullOrWhiteSpace(dto.Name))
+                throw new ValidationException("El nombre es obligatorio");
+
+            if (dto.MonthlyAmount <= 0)
+                throw new ValidationException("El monto mensual debe ser mayor a 0");
+
+            if (dto.TotalParticipants < 2)
+                throw new ValidationException("Debe haber al menos 2 participantes");
+
+            if (dto.StartMonth < 1 || dto.StartMonth > 12)
+                throw new ValidationException("Mes de inicio inválido");
+
+            if (dto.StartYear < 2000)
+                throw new ValidationException("Año de inicio inválido");
+
+
             var entity = new Pasanaco
             {
                 Name = dto.Name,
@@ -106,6 +123,13 @@ namespace PersonalFinance.Api.Services
 
         public async Task AddParticipantAsync(string pasanacoId, CreateParticipantDto dto)
         {
+            if (string.IsNullOrWhiteSpace(dto.Name))
+                throw new ValidationException("El nombre es obligatorio");
+
+            if (dto.AssignedNumber < 1)
+                throw new ValidationException("El número asignado debe ser mayor a 0");
+
+
             var participant = new Participant
             {
                 Name = dto.Name,
@@ -191,6 +215,61 @@ namespace PersonalFinance.Api.Services
 
             await _context.SaveChangesAsync();
         }
+
+        public async Task<bool> AdvanceRoundAsync(string pasanacoId)
+        {
+            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
+            if (pasanaco == null) throw new Exception("Pasanaco no encontrado");
+
+            var currentMonth = pasanaco.StartMonth;
+            var currentYear = pasanaco.StartYear;
+
+            var date = new DateTime(currentYear, currentMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
+            var month = date.Month;
+            var year = date.Year;
+
+            var allPaid = await _context.PasanacoPayments
+                .Where(p => p.PasanacoId == pasanacoId && p.Month == month && p.Year == year)
+                .AllAsync(p => p.Paid);
+
+            if (!allPaid) return false;
+
+            pasanaco.CurrentRound++;
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> MarkPaymentAsPaidAsync(Guid paymentId, Guid userId)
+        {
+            var payment = await _context.PasanacoPayments.FindAsync(paymentId.ToString());
+            if (payment == null || payment.Paid) return false;
+
+            var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
+            var participant = await _context.Participants.FindAsync(payment.ParticipantId);
+
+            payment.Paid = true;
+            payment.PaymentDate = DateTime.UtcNow;
+
+            _context.Incomes.Add(new Income
+            {
+                Amount = pasanaco!.MonthlyAmount,
+                Date = payment.PaymentDate.Value,
+                Description = $"Pago de {participant!.Name} en pasanaco {pasanaco.Name}",
+                Type = "Fixed",
+                CategoryId = 300, // categoría "Pasanaco" ya existente
+                UserId = userId,
+                IsIndefinite = false,
+                Start_Date = DateTime.UtcNow,
+                End_Date = DateTime.UtcNow,
+                
+            });
+
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
     }
+
+
 
 }

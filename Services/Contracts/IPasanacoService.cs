@@ -17,6 +17,8 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<IEnumerable<PasanacoPaymentDto>> GetPaymentsAsync(string pasanacoId, int month, int year);
         Task GeneratePaymentsAsync(string pasanacoId, int month, int year);
         Task MarkPaymentAsPaidAsync(string paymentId, int? transactionId);
+        Task<bool> AdvanceRoundAsync(string pasanacoId);
+        Task<bool> MarkPaymentAsPaidAsync(Guid paymentId, Guid userId);
     }
 
 }

@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Services.Contracts;
+using System.Security.Claims;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -85,12 +86,35 @@ namespace PersonalFinance.Api.Controllers
             return Ok();
         }
 
-        [HttpPost("payments/{paymentId}/mark-paid")]
-        public async Task<IActionResult> MarkPaymentAsPaid(string paymentId, [FromBody] MarkPaymentDto dto)
+        [HttpPost("{id}/advance")]
+        public async Task<IActionResult> AdvanceRound(string id)
         {
-            await _service.MarkPaymentAsPaidAsync(paymentId, dto.TransactionId);
-            return Ok();
+            var success = await _service.AdvanceRoundAsync(id);
+            if (!success)
+                return BadRequest("No se puede avanzar: hay pagos pendientes");
+
+            return Ok("Ronda avanzada correctamente");
         }
+
+        [HttpPost("payments/{paymentId}/mark-paid")]
+        public async Task<IActionResult> MarkPaymentAsPaid(Guid paymentId)
+        {
+            var userId = GetCurrentUserId();
+            var success = await _service.MarkPaymentAsPaidAsync(paymentId, userId!.Value);
+            if (!success) return BadRequest("No se pudo marcar como pagado");
+            return Ok("Pago registrado y ingreso creado");
+        }
+
+        private Guid? GetCurrentUserId()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                              ?? User.FindFirst("id")?.Value;
+
+            if (string.IsNullOrEmpty(userIdClaim)) return null;
+            if (!Guid.TryParse(userIdClaim, out var userId)) return null;
+            return userId;
+        }
+
     }
 
 }
