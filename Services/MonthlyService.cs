@@ -14,26 +14,30 @@ public class MonthlyService : IMonthlyService
 
     public async Task<MonthlyDataResponseDto> GetMonthDataAsync(Guid userId, DateTime startDate, DateTime endDate, CancellationToken ct = default)
     {
+        // Normalizar entradas a UTC
+        var startUtc = DateTime.SpecifyKind(startDate, DateTimeKind.Utc);
+        var endUtc = DateTime.SpecifyKind(endDate, DateTimeKind.Utc);
+
         // Incomes
         var incomes = await _context.Incomes
-        .Include(i => i.Category) 
-        .Where(i => i.UserId == userId && i.Date >= startDate && i.Date <= endDate)
-        .Select(i => new MonthlyTransactionDto   
-        {
-            Id = i.Id.ToString(),
-            Name = i.Description,
-            Amount = i.Amount,
-            Date = i.Date,
-            CategoryId = i.CategoryId,                
-            CategoryName = i.Category != null ? i.Category.Name : "", 
-            Type = "income",
-            Source = i.Type.ToLower()
-        })
-        .ToListAsync(ct);
+            .Include(i => i.Category)
+            .Where(i => i.UserId == userId && i.Date >= startUtc && i.Date <= endUtc)
+            .Select(i => new MonthlyTransactionDto
+            {
+                Id = i.Id.ToString(),
+                Name = i.Description,
+                Amount = i.Amount,
+                Date = i.Date,
+                CategoryId = i.CategoryId,
+                CategoryName = i.Category != null ? i.Category.Name : "",
+                Type = "income",
+                Source = i.Type.ToLower()
+            })
+            .ToListAsync(ct);
 
         var expenses = await _context.Expenses
             .Include(e => e.Category)
-            .Where(e => e.UserId == userId && e.Date >= startDate && e.Date <= endDate)
+            .Where(e => e.UserId == userId && e.Date >= startUtc && e.Date <= endUtc)
             .Select(e => new MonthlyTransactionDto
             {
                 Id = e.Id.ToString(),
@@ -46,7 +50,6 @@ public class MonthlyService : IMonthlyService
                 Source = e.Type.ToLower()
             })
             .ToListAsync(ct);
-
 
         var all = incomes.Concat(expenses)
                          .OrderByDescending(t => t.Date)

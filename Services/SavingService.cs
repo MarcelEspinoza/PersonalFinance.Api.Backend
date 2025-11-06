@@ -34,7 +34,7 @@
                     Amount = dto.MonthlyAmount,
                     Description = "Ahorro planificado",
                     Date = date,
-                    Type = "Temporary", // 👈 marca como temporal
+                    Type = "Temporary",
                     CategoryId = DefaultCategories.Savings
                 };
 

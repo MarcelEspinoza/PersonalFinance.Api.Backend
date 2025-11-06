@@ -224,7 +224,7 @@ namespace PersonalFinance.Api.Services
             var currentMonth = pasanaco.StartMonth;
             var currentYear = pasanaco.StartYear;
 
-            var date = new DateTime(currentYear, currentMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
+            var date = new DateTime(currentYear, currentMonth, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(pasanaco.CurrentRound - 1);
             var month = date.Month;
             var year = date.Year;
 
