@@ -1,24 +1,30 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace PersonalFinance.Api.Models.Entities
 {
     public class Pasanaco
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();
-
-        public required string Name
+        [Required]
+        public string Name
         {
             get; set;
         }
         [Column(TypeName = "decimal(18,2)")]
-        public required decimal MonthlyAmount { get; set; }
-        public required int TotalParticipants { get; set; }
-        public required int CurrentRound
+        [Required]
+        public decimal MonthlyAmount { get; set; }
+        [Required]
+        public int TotalParticipants { get; set; }
+        [Required]
+        public int CurrentRound
         {
             get; set;
         }
-        public required int StartMonth { get; set; } // 1–12
-        public required int StartYear { get; set; }
+        [Required]
+        public int StartMonth { get; set; } // 1–12
+        [Required]
+        public int StartYear { get; set; }
 
         public ICollection<Participant> Participants { get; set; } = new List<Participant>();
         public ICollection<PasanacoPayment> Payments { get; set; } = new List<PasanacoPayment>();
