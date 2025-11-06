@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -15,11 +15,10 @@ using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add DbContext
+// Configuración de servicios
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Read JWT settings safely
 var jwtSection = builder.Configuration.GetSection("Jwt");
 var jwtKey = jwtSection.GetValue<string>("Key");
 var jwtIssuer = jwtSection.GetValue<string>("Issuer");
@@ -29,7 +28,6 @@ if (string.IsNullOrWhiteSpace(jwtKey) || string.IsNullOrWhiteSpace(jwtIssuer))
     throw new InvalidOperationException("JWT configuration is missing. Ensure 'Jwt:Key' and 'Jwt:Issuer' are set.");
 }
 
-// Add JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -38,11 +36,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             ValidateIssuer = true,
             ValidIssuer = jwtIssuer,
-            ValidateAudience = false, // set to true and provide ValidAudience if you use audiences
+            ValidateAudience = false,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.Zero // tighten expiration tolerance
+            ClockSkew = TimeSpan.Zero
         };
     });
 
@@ -53,6 +51,7 @@ builder.Services.AddControllers()
             new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
         );
     });
+
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
     .SetApplicationName("PersonalFinance");
@@ -60,7 +59,6 @@ builder.Services.AddDataProtection()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    // Use HTTP bearer scheme for JWT (recommended)
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "Enter 'Bearer {token}'",
@@ -90,10 +88,10 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// Add CORS
+// CORS personalizado
 builder.Services.AddCustomCors(builder.Configuration);
 
-// Add application services
+// Servicios de aplicación
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IUserService, UserService>();
@@ -108,27 +106,45 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ISavingService, SavingService>();
 builder.Services.AddScoped<IPasanacoService, PasanacoService>();
 
-
 var app = builder.Build();
 
-
+// Middleware
 app.UseSwagger();
 app.UseSwaggerUI();
 
+app.UseRouting(); // Necesario para que MapMethods funcione correctamente
 
-// Apply CORS before auth
-app.UseCustomCors();
+app.UseCustomCors(); // Aplica política CORS antes de auth
 
-app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// 👇 Mapea controladores normalmente
 app.MapControllers();
 
+// 👇 Mapea manualmente todas las peticiones OPTIONS para preflight CORS
+app.MapMethods("{*path}", new[] { "OPTIONS" }, async context =>
+{
+    var origin = context.Request.Headers["Origin"].ToString();
+    if (!string.IsNullOrEmpty(origin))
+    {
+        context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+    }
+
+    context.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
+    context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
+    context.Response.StatusCode = 200;
+    await context.Response.CompleteAsync();
+}); 
+
+// Endpoint de prueba
 app.MapGet("/", () => Results.Ok("Personal Finance API is running"));
+
+// Endpoint de inspección CORS
 app.MapGet("/config/cors", (IConfiguration config) =>
 {
     var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>();
     return Results.Json(origins ?? new[] { "No origins found" });
 });
+
 app.Run();
