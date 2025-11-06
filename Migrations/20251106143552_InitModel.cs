@@ -285,10 +285,10 @@ namespace PersonalFinance.Api.Migrations
                 columns: new[] { "Id", "CreatedAt", "Description", "IsActive", "IsSystem", "Name", "UpdatedAt", "UserId" },
                 values: new object[,]
                 {
-                    { 100, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), "Categoría de sistema", true, true, "Préstamo personal", null, new Guid("00000000-0000-0000-0000-000000000000") },
-                    { 101, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), "Categoría de sistema", true, true, "Préstamo bancario", null, new Guid("00000000-0000-0000-0000-000000000000") },
-                    { 200, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), "Categoría de sistema para registrar aportes de ahorro", true, true, "Ahorro", null, new Guid("00000000-0000-0000-0000-000000000000") },
-                    { 300, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), "Pagos mensuales del juego Pasanaco", true, true, "Pasanaco", null, new Guid("00000000-0000-0000-0000-000000000000") }
+                    { 100, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Categoría de sistema", true, true, "Préstamo personal", null, new Guid("00000000-0000-0000-0000-000000000000") },
+                    { 101, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Categoría de sistema", true, true, "Préstamo bancario", null, new Guid("00000000-0000-0000-0000-000000000000") },
+                    { 200, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Categoría de sistema para registrar aportes de ahorro", true, true, "Ahorro", null, new Guid("00000000-0000-0000-0000-000000000000") },
+                    { 300, new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "Pagos mensuales del juego Pasanaco", true, true, "Pasanaco", null, new Guid("00000000-0000-0000-0000-000000000000") }
                 });
 
             migrationBuilder.CreateIndex(

@@ -61,7 +61,7 @@ namespace PersonalFinance.Api.Migrations
                         new
                         {
                             Id = 100,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Categoría de sistema",
                             IsActive = true,
                             IsSystem = true,
@@ -71,7 +71,7 @@ namespace PersonalFinance.Api.Migrations
                         new
                         {
                             Id = 101,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Categoría de sistema",
                             IsActive = true,
                             IsSystem = true,
@@ -81,7 +81,7 @@ namespace PersonalFinance.Api.Migrations
                         new
                         {
                             Id = 200,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Categoría de sistema para registrar aportes de ahorro",
                             IsActive = true,
                             IsSystem = true,
@@ -91,7 +91,7 @@ namespace PersonalFinance.Api.Migrations
                         new
                         {
                             Id = 300,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
+                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Pagos mensuales del juego Pasanaco",
                             IsActive = true,
                             IsSystem = true,
