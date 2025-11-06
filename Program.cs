@@ -101,6 +101,7 @@ builder.Services.AddScoped<IImportExcelService, ImportExcelService>();
 builder.Services.AddScoped<ILoanService, LoanService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ISavingService, SavingService>();
+builder.Services.AddScoped<IPasanacoService, PasanacoService>();
 
 
 var app = builder.Build();
