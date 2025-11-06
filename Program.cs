@@ -126,4 +126,9 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapGet("/", () => Results.Ok("Personal Finance API is running"));
+app.MapGet("/config/cors", (IConfiguration config) =>
+{
+    var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>();
+    return Results.Json(origins ?? new[] { "No origins found" });
+});
 app.Run();
