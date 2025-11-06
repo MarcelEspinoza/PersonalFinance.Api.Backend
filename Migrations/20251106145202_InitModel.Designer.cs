@@ -12,7 +12,7 @@ using PersonalFinance.Api.Data;
 namespace PersonalFinance.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20251106143552_InitModel")]
+    [Migration("20251106145202_InitModel")]
     partial class InitModel
     {
         /// <inheritdoc />
