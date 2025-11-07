@@ -21,5 +21,9 @@ namespace PersonalFinance.Api.Models.Entities
         public Loan? Loan { get; set; }
 
         public bool IsIndefinite { get; set; } = false;
+        public string? PasanacoId { get; set; }
+
+        [ForeignKey("PasanacoId")]
+        public Pasanaco? Pasanaco { get; set; }
     }
 }

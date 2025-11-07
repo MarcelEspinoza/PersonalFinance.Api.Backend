@@ -36,6 +36,11 @@ namespace PersonalFinance.Api.Models.Entities
         public Category? Category { get; set; }
 
         public ICollection<LoanPayment> Payments { get; set; } = new List<LoanPayment>();
+
+        public string? PasanacoId { get; set; }
+
+        [ForeignKey("PasanacoId")]
+        public Pasanaco? Pasanaco { get; set; }
     }
 
 }

@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
 
@@ -8,6 +9,7 @@ namespace PersonalFinance.Api.Controllers
 {
     [ApiController]
     [Route("api/loans")]
+    [Authorize] // Require authenticated user for all loan endpoints
     public class LoansController : ControllerBase
     {
         private readonly ILoanService _loanService;
@@ -21,7 +23,6 @@ namespace PersonalFinance.Api.Controllers
 
 
         [HttpGet]
-        [Authorize]
         public async Task<IActionResult> GetLoans([FromQuery] Guid userId)
         {
             var loans = await _loanService.GetLoansAsync(userId);
@@ -29,7 +30,6 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpGet("{id}")]
-        [Authorize]
         public async Task<IActionResult> GetLoan(Guid id)
         {
             var loan = await _loanService.GetLoanAsync(id);
@@ -38,7 +38,6 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost]
-        [Authorize]
         public async Task<IActionResult> CreateLoan([FromBody] Loan loan)
         {
             var created = await _loanService.CreateLoanAsync(loan);
@@ -46,7 +45,6 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPut("{id}")]
-        [Authorize]
         public async Task<IActionResult> UpdateLoan(Guid id, [FromBody] Loan loan)
         {
             if (id != loan.Id) return BadRequest();
@@ -54,29 +52,45 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Delete loan endpoint:
+        /// - If loan is associated to a PasanacoPayment:
+        ///     - If payment belongs to current round => allow deletion by undoing the payment (delegates to PasanacoService.UndoPaymentAsync)
+        ///     - If payment belongs to previous round => forbid deletion (400)
+        /// - If loan is NOT associated to a Pasanaco => require Admin role to delete (forbid otherwise)
+        /// </summary>
         [HttpDelete("{id}")]
-        [Authorize]
         public async Task<IActionResult> DeleteLoan(Guid id)
         {
             var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
             // buscar si existe payment vinculado que use este loan id
-            var payment = await pasanacoService.GetPaymentByLoanIdAsync(id); // implementa este método en IPasanacoService
+            var payment = await pasanacoService.GetPaymentByLoanIdAsync(id);
             if (payment != null)
             {
+                // obtener pasanaco y calcular mes/año actual
                 var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                if (pasanaco == null) return BadRequest("Pasanaco asociado no encontrado");
+
                 var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
                 if (payment.Month != current.month || payment.Year != current.year)
                 {
                     return BadRequest("No se puede borrar: el préstamo está vinculado a un pasanaco de ronda anterior.");
                 }
 
-                // Borrar loan + limpiar payment
-                await _loanService.DeleteLoanAsync(id);
-
+                // Es la ronda actual => delegar en PasanacoService para deshacer el pago
+                // PasanacoService.UndoPaymentAsync debe encargarse de eliminar loan/transacción y limpiar el payment
+                await pasanacoService.UndoPaymentAsync(payment.Id, userId.Value);
                 return NoContent();
             }
 
-            // no está asociado a pasanaco -> borrar normal
+            // no está asociado a pasanaco -> permitir borrado solo para Admins
+            if (!User.IsInRole("Admin"))
+            {
+                return Forbid();
+            }
+
             await _loanService.DeleteLoanAsync(id);
             return NoContent();
         }

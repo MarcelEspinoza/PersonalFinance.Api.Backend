@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PersonalFinance.Api.Data;
@@ -11,9 +12,11 @@ using PersonalFinance.Api.Data;
 namespace PersonalFinance.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251107011635_NewFeatures")]
+    partial class NewFeatures
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -133,6 +136,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
+                    b.Property<string>("PasanacoId")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("Start_Date")
                         .HasColumnType("timestamp with time zone");
 
@@ -148,6 +154,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasIndex("CategoryId");
 
                     b.HasIndex("LoanId");
+
+                    b.HasIndex("PasanacoId");
 
                     b.ToTable("Expenses");
                 });
@@ -185,6 +193,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
+                    b.Property<string>("PasanacoId")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("Start_Date")
                         .HasColumnType("timestamp with time zone");
 
@@ -200,6 +211,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasIndex("CategoryId");
 
                     b.HasIndex("LoanId");
+
+                    b.HasIndex("PasanacoId");
 
                     b.ToTable("Incomes");
                 });
@@ -238,6 +251,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<decimal>("OutstandingAmount")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<string>("PasanacoId")
+                        .HasColumnType("text");
+
                     b.Property<decimal>("PrincipalAmount")
                         .HasColumnType("decimal(18,2)");
 
@@ -260,6 +276,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CategoryId");
+
+                    b.HasIndex("PasanacoId");
 
                     b.ToTable("Loans");
                 });
@@ -472,9 +490,15 @@ namespace PersonalFinance.Api.Migrations
                         .HasForeignKey("LoanId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Pasanaco", "Pasanaco")
+                        .WithMany()
+                        .HasForeignKey("PasanacoId");
+
                     b.Navigation("Category");
 
                     b.Navigation("Loan");
+
+                    b.Navigation("Pasanaco");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
@@ -489,9 +513,15 @@ namespace PersonalFinance.Api.Migrations
                         .WithMany()
                         .HasForeignKey("LoanId");
 
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Pasanaco", "Pasanaco")
+                        .WithMany()
+                        .HasForeignKey("PasanacoId");
+
                     b.Navigation("Category");
 
                     b.Navigation("Loan");
+
+                    b.Navigation("Pasanaco");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Loan", b =>
@@ -502,7 +532,13 @@ namespace PersonalFinance.Api.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Pasanaco", "Pasanaco")
+                        .WithMany()
+                        .HasForeignKey("PasanacoId");
+
                     b.Navigation("Category");
+
+                    b.Navigation("Pasanaco");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.LoanPayment", b =>

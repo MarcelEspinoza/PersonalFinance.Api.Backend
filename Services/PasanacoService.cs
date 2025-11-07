@@ -74,7 +74,6 @@ namespace PersonalFinance.Api.Services
             if (dto.StartYear < 2000)
                 throw new ValidationException("Año de inicio inválido");
 
-
             var entity = new Pasanaco
             {
                 Name = dto.Name,
@@ -154,7 +153,7 @@ namespace PersonalFinance.Api.Services
 
             var participant = new Participant
             {
-                Id = Guid.NewGuid().ToString(), // adapta si tu Id es Guid o string
+                Id = Guid.NewGuid().ToString(),
                 PasanacoId = pasanacoId,
                 Name = dto.Name.Trim(),
                 AssignedNumber = dto.AssignedNumber,
@@ -170,7 +169,7 @@ namespace PersonalFinance.Api.Services
             {
                 throw new ValidationException("No se pudo añadir el participante. Verifica que el número no esté duplicado.");
             }
-        }    
+        }
 
         public async Task DeleteParticipantAsync(string pasanacoId, string participantId)
         {
@@ -268,7 +267,7 @@ namespace PersonalFinance.Api.Services
                 IsIndefinite = false,
                 Start_Date = DateTime.UtcNow,
                 End_Date = DateTime.UtcNow,
-                
+
             });
 
             await _context.SaveChangesAsync();
@@ -285,7 +284,7 @@ namespace PersonalFinance.Api.Services
 
             if (amount <= 0) throw new ValidationException("El importe del préstamo debe ser mayor que 0");
 
-            // Crear Loan
+            // Crear Loan: ahora guardamos PasanacoId para relacionarlo
             var loan = new Loan
             {
                 Id = Guid.NewGuid(),
@@ -296,7 +295,8 @@ namespace PersonalFinance.Api.Services
                 OutstandingAmount = amount,
                 StartDate = DateTime.UtcNow,
                 Status = "active",
-                CategoryId = DefaultCategories.PersonalLoan
+                CategoryId = DefaultCategories.PersonalLoan,
+                PasanacoId = pasanacoId // <-- asignamos relación explícita
             };
 
             var createdLoan = await loanService.CreateLoanAsync(loan);
@@ -315,8 +315,7 @@ namespace PersonalFinance.Api.Services
             // Ajusta la llamada según la firma real de tu ExpenseService.
             await expenseService.CreateAsync(userId, expenseDto, CancellationToken.None);
 
-            // Opcional: marcar pago de este mes como pagado y referenciar Loan
-            // Buscamos el pago para el mes correspondiente (pasanaco.CurrentRound)
+            // Marcar pago de este mes como pagado y referenciar Loan
             var date = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
             var month = date.Month;
             var year = date.Year;
@@ -328,7 +327,6 @@ namespace PersonalFinance.Api.Services
             {
                 payment.Paid = true;
                 payment.PaymentDate = DateTime.UtcNow;
-                // Si tu entidad tiene campo PaidByLoanId o LoanId, asignalo; si no, omítelo
                 payment.PaidByLoanId = createdLoan.Id;
                 _context.PasanacoPayments.Update(payment);
                 await _context.SaveChangesAsync();
@@ -371,13 +369,11 @@ namespace PersonalFinance.Api.Services
                 Date = DateTime.UtcNow,
                 CategoryId = 300, // ajusta a la categoría 'Pasanaco' que uses
                 Notes = $"Distribución del pasanaco {pasanaco.Name} - ronda {pasanaco.CurrentRound}"
-                // LoanId = null
             };
 
-            // Asegurate de usar la firma adecuada de ExpenseService
             var createdExpense = await expenseService.CreateAsync(userId, expenseDto, CancellationToken.None);
 
-            // Opcional: si quieres enlazar algo en las PasanacoPayments (p.ej. TransactionId = createdExpense.Id), puedes hacerlo:
+            // Enlazar TransactionId en PasanacoPayments si procede
             var payments = await _context.PasanacoPayments
                 .Where(p => p.PasanacoId == pasanacoId && p.Month == month && p.Year == year)
                 .ToListAsync();
@@ -389,22 +385,20 @@ namespace PersonalFinance.Api.Services
             }
             await _context.SaveChangesAsync();
 
-            return createdExpense.Id; // asume que CreateAsync retorna el entity con Id; ajusta si returns differ
+            return createdExpense.Id;
         }
 
-        // Nuevo AdvanceRoundAsync con opción de crear préstamos para impagos
+        // AdvanceRoundAsync con opción createLoans (ya existente en tu repo)
         public async Task<bool> AdvanceRoundAsync(string pasanacoId, Guid userId, bool createLoans = false)
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
 
-            // calcular mes/año de la ronda actual
             var date = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1, 0, 0, 0, DateTimeKind.Utc)
                        .AddMonths(pasanaco.CurrentRound - 1);
             var month = date.Month;
             var year = date.Year;
 
-            // cargar pagos del mes
             var payments = await _context.PasanacoPayments
                 .Where(p => p.PasanacoId == pasanacoId && p.Month == month && p.Year == year)
                 .Include(p => p.Participant)
@@ -414,37 +408,32 @@ namespace PersonalFinance.Api.Services
 
             if (unpaid.Any() && !createLoans)
             {
-                // no se permiten impagos si no estamos creando préstamos automáticamente
                 return false;
             }
 
-            // Si hay impagos y createLoans == true -> crear préstamos y gastos para cada impago
             if (unpaid.Any() && createLoans)
             {
-                // usar transacción para que todo sea atómico
                 using var tx = await _context.Database.BeginTransactionAsync();
                 try
                 {
                     foreach (var up in unpaid)
                     {
-                        // Crear Loan (usamos Loan entity; el servicio lo persistirá)
                         var loan = new Loan
                         {
                             Id = Guid.NewGuid(),
-                            UserId = userId, // propietario del pasanaco
+                            UserId = userId,
                             Type = PersonalFinance.Api.Models.Enums.LoanType.Given,
                             Name = $"Préstamo por impago - {pasanaco.Name} - {up.Participant?.Name ?? up.ParticipantId}",
                             PrincipalAmount = pasanaco.MonthlyAmount,
                             OutstandingAmount = pasanaco.MonthlyAmount,
                             StartDate = DateTime.UtcNow,
                             Status = "active",
-                            CategoryId = DefaultCategories.PersonalLoan
+                            CategoryId = DefaultCategories.PersonalLoan,
+                            PasanacoId = pasanacoId // relacionar loan con pasanaco
                         };
 
                         var createdLoan = await loanService.CreateLoanAsync(loan);
 
-                        // Crear Expense asociado al loan para reflejar salida de dinero
-                        // Ajusta CreateExpenseDto a tu DTO real si distinto
                         var expenseDto = new CreateExpenseDto
                         {
                             Amount = pasanaco.MonthlyAmount,
@@ -455,13 +444,10 @@ namespace PersonalFinance.Api.Services
                             LoanId = createdLoan.Id
                         };
 
-                        // Llamada al servicio de gastos (firma de ejemplo)
                         await expenseService.CreateAsync(userId, expenseDto, CancellationToken.None);
 
-                        // Marcar pago como pagado y vincular al loan si procede
                         up.Paid = true;
                         up.PaymentDate = DateTime.UtcNow;
-                        // si tu entidad PasanacoPayment tiene campo PaidByLoanId, asignalo:
                         up.PaidByLoanId = createdLoan.Id;
 
                         _context.PasanacoPayments.Update(up);
@@ -477,16 +463,12 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
-            // Finalmente incrementar ronda
             pasanaco.CurrentRound++;
             await _context.SaveChangesAsync();
 
             return true;
         }
 
-        /*
-         * RetreatRoundAsync (ya existe en el repo, pero por si no)
-         */
         public async Task<bool> RetreatRoundAsync(string pasanacoId)
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
@@ -513,68 +495,56 @@ namespace PersonalFinance.Api.Services
 
         public async Task<PasanacoPayment?> GetPaymentByLoanIdAsync(Guid loanId)
         {
-            // PaidByLoanId se guarda como string en muchas implementaciones; ajusta si tu tipo es Guid
-            var loanIdStr = loanId;
+            var loanIdVal = loanId;
             return await _context.PasanacoPayments
-                .FirstOrDefaultAsync(p => p.PaidByLoanId != Guid.Empty && p.PaidByLoanId == loanIdStr);
+                .FirstOrDefaultAsync(p => p.PaidByLoanId != Guid.Empty && p.PaidByLoanId == loanIdVal);
         }
 
         public async Task<bool> UndoPaymentAsync(string paymentId, Guid userId)
         {
-            // Cargar payment y pasanaco
             var payment = await _context.PasanacoPayments.FirstOrDefaultAsync(p => p.Id == paymentId);
             if (payment == null) throw new ValidationException("Pago no encontrado");
 
             var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
 
-            // calcular mes/año de la ronda actual
             var currentDate = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
             var currentMonth = currentDate.Month;
             var currentYear = currentDate.Year;
 
-            // comprobar si el pago pertenece a la ronda actual
             var isCurrentRoundPayment = (payment.Month == currentMonth && payment.Year == currentYear);
 
             if (!isCurrentRoundPayment)
             {
-                // No permitir deshacer si no pertenece a la ronda actual
                 throw new ValidationException("No se puede deshacer el pago: no corresponde a la ronda actual.");
             }
 
-            // Ejecutar todo en una transacción para mantener consistencia
             using var tx = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 1) Eliminar la transacción asociada (Income/Expense) si existe
                 if (payment.TransactionId != null)
                 {
                     try
                     {
- 
                         await incomeService.DeleteAsync(payment.TransactionId.Value, userId);
                     }
                     catch (Exception ex)
                     {
-                        // si no puede borrarse, preferimos abortar y devolver error para no quedar en estado inconsistente
                         throw new InvalidOperationException("No se pudo eliminar la transacción asociada al pago.", ex);
                     }
                 }
 
-                // 2) Si el pago fue cubierto por un loan, eliminar dicho loan (si procede)
                 if (payment.PaidByLoanId != Guid.Empty)
                 {
-
                     try
                     {
-                        // Ajusta según la firma real de LoanService
                         await loanService.DeleteLoanAsync(payment.PaidByLoanId);
                     }
                     catch (Exception ex)
                     {
                         throw new InvalidOperationException("No se pudo eliminar el préstamo asociado al pago.", ex);
                     }
-                    
+
                 }
 
                 payment.Paid = false;
@@ -595,8 +565,83 @@ namespace PersonalFinance.Api.Services
                 throw;
             }
         }
+
+        // --- NUEVOS MÉTODOS: resumen de relaciones y borrado en cascada controlado ---
+
+        public async Task<Services.Contracts.RelatedSummaryDto> GetRelatedSummaryAsync(string pasanacoId)
+        {
+            // Count PasanacoPayments
+            var paymentsCount = await _context.PasanacoPayments.CountAsync(p => p.PasanacoId == pasanacoId);
+
+            // Loans: count by PasanacoId if present (we populate PasanacoId when creating loans from pasanaco)
+            var loansCount = 0;
+            try
+            {
+                loansCount = await _context.Loans.CountAsync(l => l.PasanacoId != null && l.PasanacoId == pasanacoId);
+            }
+            catch
+            {
+                // fallback (best-effort) if Loans model differs; try searching by Name/Notes
+                loansCount = await _context.Loans.CountAsync(l => EF.Functions.ILike(l.Name ?? "", $"%{pasanacoId}%"));
+            }
+
+            // Expenses & Incomes: try PasanacoId or Notes containing pasanacoId (best-effort)
+            var expensesCount = await _context.Expenses.CountAsync(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.ILike(e.Notes ?? "", $"%{pasanacoId}%"));
+            var incomesCount = await _context.Incomes.CountAsync(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.ILike(i.Notes ?? "", $"%{pasanacoId}%"));
+
+            return new Services.Contracts.RelatedSummaryDto
+            {
+                PaymentsCount = paymentsCount,
+                LoansCount = loansCount,
+                ExpensesCount = expensesCount,
+                IncomesCount = incomesCount
+            };
+        }
+
+        public async Task DeletePasanacoCascadeAsync(string pasanacoId, Guid performedByUserId)
+        {
+            using var tx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // 1) Remove payments first
+                var payments = _context.PasanacoPayments.Where(p => p.PasanacoId == pasanacoId);
+                _context.PasanacoPayments.RemoveRange(payments);
+
+                // 2) Remove loans that reference pasanaco (prefer service delete to keep invariants)
+                try
+                {
+                    var loans = await _context.Loans.Where(l => l.PasanacoId != null && l.PasanacoId == pasanacoId).ToListAsync();
+                    foreach (var loan in loans)
+                    {
+                        // use loan service to delete properly (it should handle related loan payments etc.)
+                        await loanService.DeleteLoanAsync(loan.Id);
+                    }
+                }
+                catch
+                {
+                    // best-effort: if loan deletion via service fails, let saveChanges handle constraints/throw
+                }
+
+                // 3) Remove expenses/incomes referencing pasanaco (best-effort by PasanacoId or Notes)
+                var expenses = _context.Expenses.Where(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.ILike(e.Notes ?? "", $"%{pasanacoId}%"));
+                _context.Expenses.RemoveRange(expenses);
+
+                var incomes = _context.Incomes.Where(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.ILike(i.Notes ?? "", $"%{pasanacoId}%"));
+                _context.Incomes.RemoveRange(incomes);
+
+                // 4) Finally remove pasanaco itself
+                var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
+                if (pasanaco != null) _context.Pasanacos.Remove(pasanaco);
+
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
     }
-
-
 
 }

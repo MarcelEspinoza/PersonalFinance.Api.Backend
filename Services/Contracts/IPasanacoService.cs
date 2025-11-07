@@ -3,6 +3,15 @@ using PersonalFinance.Api.Models.Entities;
 
 namespace PersonalFinance.Api.Services.Contracts
 {
+    public class RelatedSummaryDto
+    {
+        public bool HasAnyRelated => PaymentsCount > 0 || LoansCount > 0 || ExpensesCount > 0 || IncomesCount > 0;
+        public int PaymentsCount { get; set; }
+        public int LoansCount { get; set; }
+        public int ExpensesCount { get; set; }
+        public int IncomesCount { get; set; }
+    }
+
     public interface IPasanacoService
     {
         Task<IEnumerable<PasanacoDto>> GetAllAsync();
@@ -31,6 +40,13 @@ namespace PersonalFinance.Api.Services.Contracts
 
         // Deshacer pago: borrar transacción/loan si aplica y dejar payment como no pagado.
         Task<bool> UndoPaymentAsync(string paymentId, Guid performedByUserId);
+
+        // --- Nuevos métodos para proteger borrado de Pasanaco ---
+        // Devuelve un resumen de elementos relacionados para que el controller pueda informar al usuario
+        Task<RelatedSummaryDto> GetRelatedSummaryAsync(string pasanacoId);
+
+        // Borra en cascada de forma controlada (solo con ?force=true y autorización)
+        Task DeletePasanacoCascadeAsync(string pasanacoId, Guid performedByUserId);
     }
 
 }

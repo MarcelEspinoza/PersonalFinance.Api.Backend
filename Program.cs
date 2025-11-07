@@ -5,7 +5,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Data;
-using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
@@ -14,48 +13,31 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+var configuration = builder.Configuration;
+var env = builder.Environment;
 
-// Add DbContext
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-// Read JWT settings safely
-var jwtSection = builder.Configuration.GetSection("Jwt");
-var jwtKey = jwtSection.GetValue<string>("Key");
-var jwtIssuer = jwtSection.GetValue<string>("Issuer");
-
-if (string.IsNullOrWhiteSpace(jwtKey) || string.IsNullOrWhiteSpace(jwtIssuer))
-{
-    throw new InvalidOperationException("JWT configuration is missing. Ensure 'Jwt:Key' and 'Jwt:Issuer' are set.");
-}
-
-// Add JWT Authentication
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.SaveToken = true;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = jwtIssuer,
-            ValidateAudience = false, // set to true and provide ValidAudience if you use audiences
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.Zero // tighten expiration tolerance
-        };
-    });
-
+// -------------------------------
+// JSON / Controllers configuration
+// -------------------------------
 builder.Services.AddControllers()
     .AddJsonOptions(opts =>
     {
+        // Keep enum values as camelCase strings, like you had before
         opts.JsonSerializerOptions.Converters.Add(
             new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
         );
+
+        // sensible defaults
+        opts.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        opts.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
 
-if (!builder.Environment.IsDevelopment())
+// -------------------------------
+// Data protection keys (persist in production)
+// -------------------------------
+if (!env.IsDevelopment())
 {
+    // ensure folder exists in container/host
     Directory.CreateDirectory("/app/keys");
 }
 
@@ -63,13 +45,93 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
     .SetApplicationName("PersonalFinance");
 
+// -------------------------------
+// CORS - prefer a policy over manual OPTIONS handler
+// -------------------------------
+var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DefaultCors", policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            // Development-friendly fallback: allow all origins (no credentials)
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        }
+    });
+});
+
+// -------------------------------
+// EF / DbContext
+// -------------------------------
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// -------------------------------
+// Identity (Option B): ASP.NET Core Identity with Guid keys
+// -------------------------------
+builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
+{
+    options.User.RequireUniqueEmail = true;
+    options.SignIn.RequireConfirmedEmail = true; // we want confirmed emails before role upgrade
+    // Password policy - relax as required (example)
+    options.Password.RequireDigit = false;
+    options.Password.RequireUppercase = false;
+    options.Password.RequireNonAlphanumeric = false;
+})
+.AddEntityFrameworkStores<AppDbContext>()
+.AddDefaultTokenProviders();
+
+// -------------------------------
+// JWT Authentication
+// -------------------------------
+var jwtSection = configuration.GetSection("Jwt");
+var jwtKey = jwtSection["Key"] ?? throw new InvalidOperationException("Jwt:Key not configured");
+var jwtIssuer = jwtSection["Issuer"] ?? "PersonalFinance.Api";
+var jwtAudience = jwtSection["Audience"] ?? "PersonalFinance.Api.Client";
+var key = Encoding.UTF8.GetBytes(jwtKey);
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = !env.IsDevelopment();
+    options.SaveToken = true;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        NameClaimType = System.Security.Claims.ClaimTypes.NameIdentifier,
+        RoleClaimType = System.Security.Claims.ClaimTypes.Role
+    };
+});
+
+// -------------------------------
+// Swagger & OpenAPI (with Bearer auth)
+// -------------------------------
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    // Use HTTP bearer scheme for JWT (recommended)
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "Enter 'Bearer {token}'",
+        Description = "JWT Authorization header using the Bearer scheme. Enter: 'Bearer {token}'",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.Http,
@@ -77,31 +139,43 @@ builder.Services.AddSwaggerGen(c =>
         BearerFormat = "JWT"
     });
 
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement {
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
+            new OpenApiSecurityScheme {
+                Reference = new OpenApiReference {
                     Type = ReferenceType.SecurityScheme,
                     Id = "Bearer"
-                },
-                Scheme = "bearer",
-                Name = "Authorization",
-                In = ParameterLocation.Header
+                }
             },
             Array.Empty<string>()
         }
     });
 });
 
-// Add CORS
-builder.Services.AddCustomCors(builder.Configuration);
+// -------------------------------
+// Application services registration
+// -------------------------------
+// Role seeder to create Admin / User / Invited and an initial admin user if none exist
+builder.Services.AddScoped<IRoleSeeder, RoleSeeder>();
 
-// Add application services
+// DI helpers and policies
+builder.Services.AddHttpContextAccessor(); // if services need IHttpContextAccessor
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    // add more policies if needed
+});
+
+// NOTE: Identity already registers a PasswordHasher for ApplicationUser. If you had previously
+// registered a hasher for a custom User class, remove that registration and use ApplicationUser.
+// Registering explicitly here is optional; Identity will provide it by default.
+builder.Services.AddScoped<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>();
+
+// Register your application services here (adjust to actual implementations)
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+// If you have your own legacy User class, prefer to use UserManager<ApplicationUser> instead.
+// Remove or adapt any IPasswordHasher<User> registrations.
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IIncomeService, IncomeService>();
@@ -114,47 +188,92 @@ builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ISavingService, SavingService>();
 builder.Services.AddScoped<IPasanacoService, PasanacoService>();
 
+// If you already have an email sender registered elsewhere (IEmailSender or Microsoft.AspNetCore.Identity.UI.Services.IEmailSender),
+// keep it; do not register a second one here. If you don't have one, add it (MailKit or SendGrid) and configure it.
 
+// -------------------------------
+// Build application
+// -------------------------------
 var app = builder.Build();
 
+// -------------------------------
+// Seed roles and optionally an admin user on startup
+// -------------------------------
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
+    var services = scope.ServiceProvider;
+    var logger = services.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var db = services.GetRequiredService<AppDbContext>();
+
+        // Aplicar migraciones pendientes (crea tablas AspNetUsers/AspNetRoles/etc.)
+        var pending = await db.Database.GetPendingMigrationsAsync();
+        if (pending != null && pending.Any())
+        {
+            logger.LogInformation("Se han detectado {Count} migraciones pendientes. Aplicando migraciones...", pending.Count());
+            db.Database.Migrate();
+            logger.LogInformation("Migraciones aplicadas correctamente.");
+        }
+        else
+        {
+            logger.LogInformation("No hay migraciones pendientes.");
+        }
+
+        // Ejecutar el seeder (roles / admin)
+        var seeder = services.GetService<IRoleSeeder>();
+        if (seeder != null)
+        {
+            try
+            {
+                await seeder.EnsureRolesAndAdminAsync();
+                logger.LogInformation("RoleSeeder ejecutado correctamente.");
+            }
+            catch (Exception seederEx)
+            {
+                logger.LogError(seederEx, "Error ejecutando RoleSeeder");
+            }
+        }
+        else
+        {
+            logger.LogWarning("No se encontró IRoleSeeder en DI; no se creó ningún role/usuario inicial.");
+        }
+    }
+    catch (Exception ex)
+    {
+        // Si falla aquí, es crítico — registra y re-throw para que lo veas
+        logger.LogError(ex, "Error durante la inicialización (migrations/seeder).");
+        throw;
+    }
 }
 
-app.UseSwagger();
-app.UseSwaggerUI();
-
-
-// Apply CORS before auth
-app.UseCustomCors();
+// -------------------------------
+// Middleware pipeline
+// -------------------------------
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.UseHttpsRedirection();
+
+// Use CORS BEFORE authentication so preflight isn't blocked
+app.UseCors("DefaultCors");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
-
-app.MapMethods("{*path}", new[] { "OPTIONS" }, async context =>
-{
-    var origin = context.Request.Headers["Origin"].ToString();
-    if (!string.IsNullOrEmpty(origin))
-    {
-        context.Response.Headers["Access-Control-Allow-Origin"] = origin;
-    }
-
-    context.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-    context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
-    context.Response.StatusCode = 200;
-    await context.Response.CompleteAsync();
-});
-
-
+// Map minimal helpful endpoints (keeps your previous "/" and config/cors)
 app.MapGet("/", () => Results.Ok("Personal Finance API is running"));
 app.MapGet("/config/cors", (IConfiguration config) =>
 {
     var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>();
     return Results.Json(origins ?? new[] { "No origins found" });
 });
+
+// Map controllers (your API endpoints)
+app.MapControllers();
+
 app.Run();

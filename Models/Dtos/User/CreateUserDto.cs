@@ -12,5 +12,6 @@ namespace PersonalFinance.Api.Models.Dtos.User
         public string Password { get; init; } = string.Empty;
 
         public string? FullName { get; init; }
+        public bool EmailConfirmed { get; set; }
     }
 }

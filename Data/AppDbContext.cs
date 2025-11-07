@@ -1,13 +1,15 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Models.Entities;
 
 namespace PersonalFinance.Api.Data
 {
-    public class AppDbContext : DbContext
+    public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
     {
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
-        public DbSet<User> Users => Set<User>();
+        public new DbSet<User> Users => Set<User>();
         public DbSet<Income> Incomes { get; set; }
         public DbSet<Expense> Expenses { get; set; }
         public DbSet<Category> Categories { get; set; }

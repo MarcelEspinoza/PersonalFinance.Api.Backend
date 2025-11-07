@@ -9,12 +9,12 @@ using PersonalFinance.Api.Services.Contracts;
 public sealed class UserService : IUserService
 {
     private readonly AppDbContext _context;
-    private readonly IPasswordHasher<User> _hasher;
+    //private readonly IPasswordHasher<User> _hasher;
 
-    public UserService(AppDbContext context, IPasswordHasher<User> hasher)
+    public UserService(AppDbContext context)
     {
         _context = context;
-        _hasher = hasher;
+        //_hasher = hasher;
     }
 
     public async Task<IEnumerable<User>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -45,7 +45,6 @@ public sealed class UserService : IUserService
             FullName = dto.FullName ?? string.Empty
         };
 
-        user.PasswordHash = _hasher.HashPassword(user, dto.Password);
         _context.Users.Add(user);
         await _context.SaveChangesAsync(cancellationToken);
         return user;
@@ -66,8 +65,6 @@ public sealed class UserService : IUserService
         if (!string.IsNullOrWhiteSpace(dto.FullName))
             user.FullName = dto.FullName;
 
-        if (!string.IsNullOrWhiteSpace(dto.Password))
-            user.PasswordHash = _hasher.HashPassword(user, dto.Password);
 
         _context.Users.Update(user);
         await _context.SaveChangesAsync(cancellationToken);

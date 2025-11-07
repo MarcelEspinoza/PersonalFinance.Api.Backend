@@ -1,13 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Services.Contracts;
-using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 
 namespace PersonalFinance.Api.Controllers
 {
     [ApiController]
     [Route("api/pasanacos")]
+    [Authorize]
     public class PasanacoController : ControllerBase
     {
         private readonly IPasanacoService _service;
@@ -45,9 +46,37 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        // Delete with related-summary check and optional force flag
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(string id)
+        public async Task<IActionResult> Delete(string id, [FromQuery] bool force = false)
         {
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            // Check related summary
+            var summary = await _service.GetRelatedSummaryAsync(id);
+
+            if (!force && summary.HasAnyRelated)
+            {
+                return BadRequest(new
+                {
+                    message = "No se puede eliminar el pasanaco porque existen registros relacionados.",
+                    related = summary
+                });
+            }
+
+            if (force && !User.IsInRole("Admin"))
+            {
+                return Forbid("No tienes permisos para forzar el borrado.");
+            }
+
+            if (force)
+            {
+                await _service.DeletePasanacoCascadeAsync(id, userId.Value);
+                return NoContent();
+            }
+
+            // normal delete
             await _service.DeleteAsync(id);
             return NoContent();
         }
@@ -57,6 +86,13 @@ namespace PersonalFinance.Api.Controllers
         {
             var result = await _service.GetParticipantsAsync(id);
             return Ok(result);
+        }
+
+        [HttpPost("{id}/participants")]
+        public async Task<IActionResult> AddParticipant(string id, [FromBody] CreateParticipantDto dto)
+        {
+            await _service.AddParticipantAsync(id, dto);
+            return Ok();
         }
 
         [HttpDelete("{id}/participants/{participantId}")]
@@ -80,7 +116,17 @@ namespace PersonalFinance.Api.Controllers
             return Ok();
         }
 
-        
+        [HttpPost("{id}/advance")]
+        public async Task<IActionResult> AdvanceRound(string id, [FromQuery] bool createLoans = false)
+        {
+            var userId = GetCurrentUserId();
+            var success = await _service.AdvanceRoundAsync(id, userId!.Value);
+            if (!success)
+                return BadRequest("No se puede avanzar: hay pagos pendientes");
+
+            return Ok("Ronda avanzada correctamente");
+        }
+
         [HttpPost("payments/{paymentId}/mark-paid")]
         public async Task<IActionResult> MarkPaymentAsPaid(Guid paymentId)
         {
@@ -89,78 +135,6 @@ namespace PersonalFinance.Api.Controllers
             if (!success) return BadRequest("No se pudo marcar como pagado");
             return Ok("Pago registrado y ingreso creado");
         }
-
-        [HttpPost("{id}/participants")]
-        public async Task<IActionResult> AddParticipant(string id, [FromBody] CreateParticipantDto dto)
-        {
-            try
-            {
-                await _service.AddParticipantAsync(id, dto);
-                return Ok();
-            }
-            catch (ValidationException vex)
-            {
-                return BadRequest(vex.Message);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, "Error interno");
-            }
-        }
-
-        [HttpPost("{id}/participants/{participantId}/loan")]
-        public async Task<IActionResult> CreateLoanForParticipant(string id, string participantId, [FromBody] CreateLoanForParticipantDto dto)
-        {
-            try
-            {
-                var userId = GetCurrentUserId();
-                var loan = await _service.CreateLoanForParticipantAsync(id, participantId, dto.Amount, userId!.Value, dto.Note);
-                var result = new
-                {
-                    Id = loan.Id,
-                    PrincipalAmount = loan.PrincipalAmount,
-                    OutstandingAmount = loan.OutstandingAmount,
-                    Status = loan.Status
-                };
-                return Ok(result);
-            }
-            catch (ValidationException vex)
-            {
-                return BadRequest(vex.Message);
-            }
-        }
-
-        // Advance with optional disburse flag
-        [HttpPost("{id}/advance")]
-        public async Task<IActionResult> AdvanceRound(string id, [FromQuery] bool createLoans = false)
-        {
-            var userId = GetCurrentUserId();
-            var success = await _service.AdvanceRoundAsync(id, userId!.Value, createLoans);
-            if (!success)
-                return BadRequest("No se puede avanzar: hay pagos pendientes");
-
-            return Ok("Ronda avanzada correctamente");
-        }
-
-
-        [HttpPost("{id}/retreat")]
-        public async Task<IActionResult> RetreatRound(string id)
-        {
-            try
-            {
-                var ok = await _service.RetreatRoundAsync(id);
-                if (!ok) return BadRequest("No se puede retroceder más");
-                return Ok("Ronda retrocedida");
-            }
-            catch (ValidationException vex)
-            {
-                return BadRequest(vex.Message);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, "Error interno");
-            }
-        }       
 
         private Guid? GetCurrentUserId()
         {
