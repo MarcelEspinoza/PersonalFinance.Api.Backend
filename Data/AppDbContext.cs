@@ -116,7 +116,9 @@ namespace PersonalFinance.Api.Data
                 .HasForeignKey(p => p.PasanacoId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-
+            modelBuilder.Entity<Participant>()
+                .HasIndex(p => new { p.PasanacoId, p.AssignedNumber })
+                .IsUnique();
 
         }
 

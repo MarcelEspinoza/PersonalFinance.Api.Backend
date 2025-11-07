@@ -4,6 +4,7 @@
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
     using PersonalFinance.Api.Models.Dtos.Expense;
+    using PersonalFinance.Api.Services;
     using PersonalFinance.Api.Services.Contracts;
     using System;
     using System.Linq;
@@ -16,10 +17,12 @@
     public class ExpenseController : ControllerBase
     {
         private readonly IExpenseService _expenseService;
+        private readonly IPasanacoService pasanacoService;
 
-        public ExpenseController(IExpenseService expenseService)
+        public ExpenseController(IExpenseService expenseService, IPasanacoService pasanacoService)
         {
             _expenseService = expenseService;
+            this.pasanacoService = pasanacoService;
         }
 
         private Guid? GetCurrentUserId()
@@ -120,17 +123,26 @@
             }
         }
 
-        // DELETE: api/expense/5
-        [HttpDelete("{id}")]
         [Authorize]
-        public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken = default)
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteExpense(int id)
         {
             var userId = GetCurrentUserId();
-            if (userId == null) return Unauthorized();
+            // Si Expense tiene relation directa a PasanacoPayment via TransactionId, reutilizar la misma comprobación:
+            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id);
+            if (payment != null)
+            {
+                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
+                if (payment.Month != current.month || payment.Year != current.year)
+                {
+                    return BadRequest("No se puede borrar: el gasto está vinculado a un pasanaco de ronda anterior.");
+                }
+                await pasanacoService.UndoPaymentAsync(payment.Id, userId!.Value);
+                return NoContent();
+            }
 
-            var deleted = await _expenseService.DeleteAsync(id, userId.Value, cancellationToken);
-            if (!deleted) return NotFound();
-
+            await _expenseService.DeleteAsync(id, userId!.Value);
             return NoContent();
         }
     }

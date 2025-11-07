@@ -1,5 +1,8 @@
-﻿namespace PersonalFinance.Api.Models.Entities
+﻿using Microsoft.EntityFrameworkCore;
+
+namespace PersonalFinance.Api.Models.Entities
 {
+    [Index(nameof(PasanacoId), nameof(AssignedNumber), IsUnique = true)]
     public class Participant
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();

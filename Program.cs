@@ -53,6 +53,12 @@ builder.Services.AddControllers()
             new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
         );
     });
+
+if (!builder.Environment.IsDevelopment())
+{
+    Directory.CreateDirectory("/app/keys");
+}
+
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
     .SetApplicationName("PersonalFinance");

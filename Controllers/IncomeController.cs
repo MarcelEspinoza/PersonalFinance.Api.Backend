@@ -5,6 +5,9 @@
     using Microsoft.AspNetCore.Http.HttpResults;
     using Microsoft.AspNetCore.Mvc;
     using PersonalFinance.Api.Models.Dtos.Income;
+    using PersonalFinance.Api.Models.Dtos.Pasanaco;
+    using PersonalFinance.Api.Models.Entities;
+    using PersonalFinance.Api.Services;
     using PersonalFinance.Api.Services.Contracts;
     using System;
     using System.Linq;
@@ -17,10 +20,12 @@
     public class IncomeController : ControllerBase
     {
         private readonly IIncomeService _incomeService;
+        private readonly IPasanacoService pasanacoService;
 
-        public IncomeController(IIncomeService incomeService)
+        public IncomeController(IIncomeService incomeService, IPasanacoService pasanacoService)
         {
             _incomeService = incomeService;
+            this.pasanacoService = pasanacoService;
         }
 
         private Guid? GetCurrentUserId()
@@ -122,19 +127,35 @@
             }
         }
 
-        // DELETE: api/income/5
-        [HttpDelete("{id}")]
         [Authorize]
-        public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken = default)
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteIncome(int id)
         {
             var userId = GetCurrentUserId();
-            if (userId == null) return Unauthorized();
 
-            var deleted = await _incomeService.DeleteAsync(id, userId.Value, cancellationToken);
-            if (!deleted) return NotFound();
+            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id);
+            if (payment != null)
+            {
+                // recuperar pasanaco para calcular ronda actual
+                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                if (pasanaco == null) return BadRequest("Pasanaco no encontrado");
 
+                var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
+                if (payment.Month != current.month || payment.Year != current.year)
+                {
+                    return BadRequest("No se puede borrar: el ingreso está vinculado a un pasanaco de ronda anterior.");
+                }
+
+                await pasanacoService.UndoPaymentAsync(payment.Id, userId!.Value);
+
+                return NoContent();
+            }
+
+            await _incomeService.DeleteAsync(id, userId!.Value);
             return NoContent();
         }
+
+        
     }
     
 }

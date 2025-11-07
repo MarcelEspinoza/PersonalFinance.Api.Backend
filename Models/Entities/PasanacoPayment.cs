@@ -16,5 +16,6 @@
         public bool Paid { get; set; } = false;
         public DateTime? PaymentDate { get; set; }
         public int? TransactionId { get; set; }
+        public Guid PaidByLoanId { get; internal set; }
     }
 }

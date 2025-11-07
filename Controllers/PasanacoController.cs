@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Services.Contracts;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 
 namespace PersonalFinance.Api.Controllers
@@ -58,13 +59,6 @@ namespace PersonalFinance.Api.Controllers
             return Ok(result);
         }
 
-        [HttpPost("{id}/participants")]
-        public async Task<IActionResult> AddParticipant(string id, [FromBody] CreateParticipantDto dto)
-        {
-            await _service.AddParticipantAsync(id, dto);
-            return Ok();
-        }
-
         [HttpDelete("{id}/participants/{participantId}")]
         public async Task<IActionResult> DeleteParticipant(string id, string participantId)
         {
@@ -86,16 +80,7 @@ namespace PersonalFinance.Api.Controllers
             return Ok();
         }
 
-        [HttpPost("{id}/advance")]
-        public async Task<IActionResult> AdvanceRound(string id)
-        {
-            var success = await _service.AdvanceRoundAsync(id);
-            if (!success)
-                return BadRequest("No se puede avanzar: hay pagos pendientes");
-
-            return Ok("Ronda avanzada correctamente");
-        }
-
+        
         [HttpPost("payments/{paymentId}/mark-paid")]
         public async Task<IActionResult> MarkPaymentAsPaid(Guid paymentId)
         {
@@ -104,6 +89,78 @@ namespace PersonalFinance.Api.Controllers
             if (!success) return BadRequest("No se pudo marcar como pagado");
             return Ok("Pago registrado y ingreso creado");
         }
+
+        [HttpPost("{id}/participants")]
+        public async Task<IActionResult> AddParticipant(string id, [FromBody] CreateParticipantDto dto)
+        {
+            try
+            {
+                await _service.AddParticipantAsync(id, dto);
+                return Ok();
+            }
+            catch (ValidationException vex)
+            {
+                return BadRequest(vex.Message);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, "Error interno");
+            }
+        }
+
+        [HttpPost("{id}/participants/{participantId}/loan")]
+        public async Task<IActionResult> CreateLoanForParticipant(string id, string participantId, [FromBody] CreateLoanForParticipantDto dto)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var loan = await _service.CreateLoanForParticipantAsync(id, participantId, dto.Amount, userId!.Value, dto.Note);
+                var result = new
+                {
+                    Id = loan.Id,
+                    PrincipalAmount = loan.PrincipalAmount,
+                    OutstandingAmount = loan.OutstandingAmount,
+                    Status = loan.Status
+                };
+                return Ok(result);
+            }
+            catch (ValidationException vex)
+            {
+                return BadRequest(vex.Message);
+            }
+        }
+
+        // Advance with optional disburse flag
+        [HttpPost("{id}/advance")]
+        public async Task<IActionResult> AdvanceRound(string id, [FromQuery] bool createLoans = false)
+        {
+            var userId = GetCurrentUserId();
+            var success = await _service.AdvanceRoundAsync(id, userId!.Value, createLoans);
+            if (!success)
+                return BadRequest("No se puede avanzar: hay pagos pendientes");
+
+            return Ok("Ronda avanzada correctamente");
+        }
+
+
+        [HttpPost("{id}/retreat")]
+        public async Task<IActionResult> RetreatRound(string id)
+        {
+            try
+            {
+                var ok = await _service.RetreatRoundAsync(id);
+                if (!ok) return BadRequest("No se puede retroceder más");
+                return Ok("Ronda retrocedida");
+            }
+            catch (ValidationException vex)
+            {
+                return BadRequest(vex.Message);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, "Error interno");
+            }
+        }       
 
         private Guid? GetCurrentUserId()
         {
