@@ -1,6 +1,8 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using PersonalFinance.Api.Models.Dtos.Auth;
 using PersonalFinance.Api.Models.Entities;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -24,6 +26,7 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("register")]
+        [AllowAnonymous]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
             var exists = await _userManager.FindByEmailAsync(dto.Email);
@@ -52,6 +55,7 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("confirm-email")]
+        [AllowAnonymous]
         public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailDto dto)
         {
             var user = await _userManager.FindByEmailAsync(dto.Email);
@@ -71,6 +75,7 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("login")]
+        [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
             var user = await _userManager.FindByEmailAsync(dto.Email);
@@ -83,6 +88,28 @@ namespace PersonalFinance.Api.Controllers
             var token = GenerateJwtToken(user, roles);
 
             return Ok(new { token });
+        }
+
+        [HttpPost("request-password-reset")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RequestPasswordReset([FromBody] RequestPasswordResetDto dto)
+        {
+            var user = await _userManager.FindByEmailAsync(dto.Email);
+            if (user == null) return NotFound("User not found");
+            var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+            if(token == null) return BadRequest("Could not generate reset token");
+            return Ok(new { email = dto.Email, token });
+        }
+
+        [HttpPost("reset-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+        {
+            var user = await _userManager.FindByEmailAsync(dto.Email);
+            if (user == null) return NotFound("User not found");
+            var result = await _userManager.ResetPasswordAsync(user, dto.Token, dto.Password);
+            if (!result.Succeeded) return BadRequest(result.Errors);
+            return NoContent();
         }
 
         private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
