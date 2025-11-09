@@ -20,7 +20,8 @@ namespace PersonalFinance.Api.Data
         public DbSet<Pasanaco> Pasanacos { get; set; }
         public DbSet<Participant> Participants { get; set; }
         public DbSet<PasanacoPayment> PasanacoPayments { get; set; }
-
+        public DbSet<Bank> Banks { get; set; }
+        public DbSet<Reconciliation> Reconciliations { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -121,6 +122,22 @@ namespace PersonalFinance.Api.Data
             modelBuilder.Entity<Participant>()
                 .HasIndex(p => new { p.PasanacoId, p.AssignedNumber })
                 .IsUnique();
+
+            modelBuilder.Entity<Income>()
+                .HasOne<Bank>(i => i.Bank)
+                .WithMany() // si no quieres colección en Bank; o WithMany(b => b.Incomes) si la añades
+                .HasForeignKey(i => i.BankId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<Expense>()
+                .HasOne<Bank>(e => e.Bank)
+                .WithMany()
+                .HasForeignKey(e => e.BankId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // index para consultas por BankId (opcional pero recomendable)
+            modelBuilder.Entity<Income>().HasIndex(i => i.BankId);
+            modelBuilder.Entity<Expense>().HasIndex(e => e.BankId);
 
         }
 

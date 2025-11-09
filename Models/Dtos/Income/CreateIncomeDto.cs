@@ -12,4 +12,5 @@ public class CreateIncomeDto
     public Guid? LoanId { get; set; }
 
     public bool? IsIndefinite { get; set; }
+    public Guid? BankId { get; set; }
 }

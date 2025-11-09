@@ -27,5 +27,10 @@ namespace PersonalFinance.Api.Models.Entities
         [ForeignKey("PasanacoId")]
         public Pasanaco? Pasanaco { get; set; }
 
+        public Guid? BankId { get; set; }
+
+        [ForeignKey(nameof(BankId))]
+        public Bank? Bank { get; set; }
+
     }
 }

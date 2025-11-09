@@ -7,16 +7,16 @@
         public DateTime? Date { get; set; }
         public int? CategoryId { get; set; }
 
-        // Mejor nullable si no siempre quieres forzar el cambio
         public string? Type { get; set; }
 
         public DateTime? Start_Date { get; set; }
         public DateTime? End_Date { get; set; }
         public string? Notes { get; set; }
 
-        // Nuevo: permitir cambiar vínculo
         public Guid? LoanId { get; set; }
         public bool? IsIndefinite { get; set; }
+
+        public Guid? BankId { get; set; }
     }
 
 }

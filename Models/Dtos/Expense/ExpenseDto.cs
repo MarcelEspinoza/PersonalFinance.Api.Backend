@@ -18,5 +18,7 @@
         public Guid UserId { get; set; }
 
         public bool IsIndefinite { get; set; }
+
+        public Guid? BankId { get; set; }
     }
 }

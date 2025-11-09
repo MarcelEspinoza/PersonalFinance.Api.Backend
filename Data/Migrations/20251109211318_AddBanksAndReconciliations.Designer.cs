@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PersonalFinance.Api.Data;
 
 #nullable disable
 
-namespace PersonalFinance.Api.Migrations
+namespace PersonalFinance.Api.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251109211318_AddBanksAndReconciliations")]
+    partial class AddBanksAndReconciliations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -220,36 +223,6 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
-            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Bank", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("AccountNumber")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Institution")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Banks");
-                });
-
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Category", b =>
                 {
                     b.Property<int>("Id")
@@ -339,9 +312,6 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<Guid?>("BankId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("CategoryId")
                         .HasColumnType("integer");
 
@@ -378,8 +348,6 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("BankId");
 
                     b.HasIndex("CategoryId");
 
@@ -401,9 +369,6 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<Guid?>("BankId")
-                        .HasColumnType("uuid");
-
                     b.Property<int>("CategoryId")
                         .HasColumnType("integer");
 
@@ -440,8 +405,6 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("BankId");
 
                     b.HasIndex("CategoryId");
 
@@ -643,44 +606,6 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("PasanacoPayments");
                 });
 
-            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Reconciliation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("BankId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("ClosingBalance")
-                        .HasColumnType("numeric");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("Month")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("Reconciled")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("ReconciledAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Year")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Reconciliations");
-                });
-
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.SavingAccount", b =>
                 {
                     b.Property<int>("Id")
@@ -803,11 +728,6 @@ namespace PersonalFinance.Api.Migrations
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Expense", b =>
                 {
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Bank", "Bank")
-                        .WithMany()
-                        .HasForeignKey("BankId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("PersonalFinance.Api.Models.Entities.Category", "Category")
                         .WithMany("Expenses")
                         .HasForeignKey("CategoryId")
@@ -823,8 +743,6 @@ namespace PersonalFinance.Api.Migrations
                         .WithMany()
                         .HasForeignKey("PasanacoId");
 
-                    b.Navigation("Bank");
-
                     b.Navigation("Category");
 
                     b.Navigation("Loan");
@@ -834,11 +752,6 @@ namespace PersonalFinance.Api.Migrations
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
                 {
-                    b.HasOne("PersonalFinance.Api.Models.Entities.Bank", "Bank")
-                        .WithMany()
-                        .HasForeignKey("BankId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("PersonalFinance.Api.Models.Entities.Category", "Category")
                         .WithMany("Incomes")
                         .HasForeignKey("CategoryId")
@@ -852,8 +765,6 @@ namespace PersonalFinance.Api.Migrations
                     b.HasOne("PersonalFinance.Api.Models.Entities.Pasanaco", "Pasanaco")
                         .WithMany()
                         .HasForeignKey("PasanacoId");
-
-                    b.Navigation("Bank");
 
                     b.Navigation("Category");
 

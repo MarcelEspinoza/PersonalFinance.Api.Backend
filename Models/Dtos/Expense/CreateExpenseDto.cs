@@ -14,6 +14,8 @@
         // Nuevo: vínculo opcional al préstamo
         public Guid? LoanId { get; set; }
         public bool? IsIndefinite { get; set; }
+
+        public Guid? BankId { get; set; }
     }
 
 
