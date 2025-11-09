@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using PersonalFinance.Api.Models.Dtos.Auth;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -17,12 +19,17 @@ namespace PersonalFinance.Api.Controllers
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly IConfiguration _config;
+        private readonly IEmailSender _emailSender;
 
-        public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IConfiguration config)
+        public AuthController(UserManager<ApplicationUser> userManager,
+                              SignInManager<ApplicationUser> signInManager,
+                              IConfiguration config,
+                              IEmailSender emailSender)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _config = config;
+            _emailSender = emailSender;
         }
 
         [HttpPost("register")]
@@ -47,13 +54,23 @@ namespace PersonalFinance.Api.Controllers
             // Assign Invited role by default
             await _userManager.AddToRoleAsync(user, "Invited");
 
-            // Generate email confirmation token and return it (or send via email)
+            // Generate email confirmation token
             var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
 
-            // TODO: send token via email to user.Email using your email sender
-            return Ok(new { user.Id, user.Email, confirmationToken = token });
+            // Build confirmation link (we provide a backend GET endpoint that confirms and redirects)
+            var apiBase = _config["ApiBaseUrl"] ?? $"{Request.Scheme}://{Request.Host.Value}";
+            var encodedToken = Uri.EscapeDataString(token);
+            var callbackUrl = $"{apiBase}/api/auth/confirm-email?email={Uri.EscapeDataString(user.Email)}&token={encodedToken}";
+
+            // Send email using IEmailSender
+            var html = EmailTemplates.ConfirmEmailTemplate(user!.FullName, callbackUrl);
+            await _emailSender.SendEmailAsync(user.Email, "Confirma tu correo en Personal Finance", html);
+
+            // Return minimal response (token not returned now because we sent it by email)
+            return Ok(new { user.Id, user.Email, message = "Usuario creado. Se ha enviado un correo de confirmación." });
         }
 
+        // Existing POST confirm-email kept for API callers (frontend)
         [HttpPost("confirm-email")]
         [AllowAnonymous]
         public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailDto dto)
@@ -74,6 +91,36 @@ namespace PersonalFinance.Api.Controllers
             return Ok("Email confirmado");
         }
 
+        // New GET endpoint to confirm via link in email and redirect to frontend
+        [HttpGet("confirm-email")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ConfirmEmailGet([FromQuery] string email, [FromQuery] string token)
+        {
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
+                return BadRequest("Missing email or token");
+
+            var user = await _userManager.FindByEmailAsync(email);
+            if (user == null) return NotFound("User not found");
+
+            var res = await _userManager.ConfirmEmailAsync(user, token);
+            if (!res.Succeeded)
+            {
+                // You may want to redirect to a frontend page that informs of failure
+                var failUrl = _config["Frontend:EmailConfirmationFailedUrl"] ?? _config["Frontend:Url"] ?? "/";
+                return Redirect($"{failUrl}?email={Uri.EscapeDataString(email)}&status=failed");
+            }
+
+            // Promote Invited -> User
+            if (await _userManager.IsInRoleAsync(user, "Invited"))
+            {
+                await _userManager.AddToRoleAsync(user, "User");
+                await _userManager.RemoveFromRoleAsync(user, "Invited");
+            }
+
+            var successUrl = _config["Frontend:EmailConfirmedUrl"] ?? _config["Frontend:Url"] ?? "/";
+            return Redirect($"{successUrl}?email={Uri.EscapeDataString(email)}&status=success");
+        }
+
         [HttpPost("login")]
         [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
@@ -82,7 +129,18 @@ namespace PersonalFinance.Api.Controllers
             if (user == null) return Unauthorized("Invalid credentials");
 
             var signRes = await _signInManager.CheckPasswordSignInAsync(user, dto.Password, false);
-            if (!signRes.Succeeded) return Unauthorized("Invalid credentials");
+            if (!signRes.Succeeded)
+            {
+                // Mejor diagnóstico para desarrollo (opcional)
+                if (signRes.IsLockedOut)
+                    return StatusCode(StatusCodes.Status423Locked, "Account locked");
+
+                if (signRes.IsNotAllowed)
+                    // Devuelve 403 explícito con mensaje; NO pasar texto a Forbid()
+                    return StatusCode(StatusCodes.Status403Forbidden, "Email not confirmed");
+
+                return Unauthorized("Invalid credentials");
+            }
 
             var roles = await _userManager.GetRolesAsync(user);
             var token = GenerateJwtToken(user, roles);
@@ -97,7 +155,7 @@ namespace PersonalFinance.Api.Controllers
             var user = await _userManager.FindByEmailAsync(dto.Email);
             if (user == null) return NotFound("User not found");
             var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-            if(token == null) return BadRequest("Could not generate reset token");
+            if (token == null) return BadRequest("Could not generate reset token");
             return Ok(new { email = dto.Email, token });
         }
 
@@ -111,6 +169,7 @@ namespace PersonalFinance.Api.Controllers
             if (!result.Succeeded) return BadRequest(result.Errors);
             return NoContent();
         }
+
 
         private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
         {
@@ -142,7 +201,7 @@ namespace PersonalFinance.Api.Controllers
         }
     }
 
-    // DTOs
+    // DTOs (mantengo los records que ya usabas)
     public record RegisterDto(string Email, string Password, string? FullName);
     public record LoginDto(string Email, string Password);
     public record ConfirmEmailDto(string Email, string Token);

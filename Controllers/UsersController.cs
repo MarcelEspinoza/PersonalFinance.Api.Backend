@@ -1,8 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.User;
-using PersonalFinance.Api.Services.Contracts;
+using PersonalFinance.Api.Models.Entities;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -10,42 +11,46 @@ namespace PersonalFinance.Api.Controllers
     [Route("api/[controller]")]
     public class UsersController : ControllerBase
     {
-        private readonly IUserService _userService;
+        private readonly UserManager<ApplicationUser> _userManager;
 
-        public UsersController(IUserService userService)
+        public UsersController(UserManager<ApplicationUser> userManager)
         {
-            _userService = userService;
+            _userManager = userManager;
         }
 
         private Guid? GetCurrentUserId()
         {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                              ?? User.FindFirst("id")?.Value;
+            var userIdClaim = User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                              ?? User?.FindFirst("id")?.Value;
 
             if (string.IsNullOrEmpty(userIdClaim)) return null;
             if (!Guid.TryParse(userIdClaim, out var userId)) return null;
             return userId;
         }
 
+        // GET: api/users
+        // Requiere autorización (Admin normalmente) — aquí mantiene [Authorize]
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAll()
+        public IActionResult GetAll()
         {
-            var users = await _userService.GetAllAsync();
-            var result = users.Select(u => new
+            // UserManager.Users es IQueryable<ApplicationUser>
+            var users = _userManager.Users.Select(u => new
             {
                 id = u.Id,
                 fullName = u.FullName,
                 email = u.Email
-            });
-            return Ok(result);
+            }).ToList();
+
+            return Ok(users);
         }
 
-        [HttpGet("{id:int}")]
+        // GET: api/users/{id}
+        [HttpGet("{id:guid}")]
         [Authorize]
         public async Task<IActionResult> GetById(Guid id)
         {
-            var user = await _userService.GetByIdAsync(id);
+            var user = await _userManager.FindByIdAsync(id.ToString());
             if (user == null) return NotFound();
             return Ok(new
             {
@@ -55,33 +60,47 @@ namespace PersonalFinance.Api.Controllers
             });
         }
 
+        // POST: api/users
+        // Nota: normalmente el registro se maneja en AuthController. Dejamos Create para compatibilidad.
         [HttpPost]
         [AllowAnonymous]
         public async Task<IActionResult> Create([FromBody] CreateUserDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            try
+            var existing = await _userManager.FindByEmailAsync(dto.Email);
+            if (existing != null) return Conflict(new { error = "Email already registered" });
+
+            var user = new ApplicationUser
             {
-                var user = await _userService.CreateAsync(dto);
-                return CreatedAtAction(nameof(GetById), new { id = user.Id }, new
-                {
-                    id = user.Id,
-                    fullName = user.FullName,
-                    email = user.Email
-                });
-            }
-            catch (InvalidOperationException ex) // e.g. email already registered
+                Id = Guid.NewGuid(),
+                UserName = dto.Email,
+                Email = dto.Email,
+                EmailConfirmed = dto.EmailConfirmed,
+                FullName = dto.FullName ?? string.Empty
+            };
+
+            var createRes = await _userManager.CreateAsync(user, dto.Password);
+            if (!createRes.Succeeded)
             {
-                return Conflict(new { error = ex.Message });
+                var errors = createRes.Errors.Select(e => e.Description);
+                return BadRequest(new { errors = errors });
             }
-            catch (ArgumentException ex)
+
+            // assign default role if exists
+            await _userManager.AddToRoleAsync(user, "Invited");
+
+            return CreatedAtAction(nameof(GetById), new { id = user.Id }, new
             {
-                return BadRequest(new { error = ex.Message });
-            }
+                id = user.Id,
+                fullName = user.FullName,
+                email = user.Email
+            });
         }
 
-        [HttpPut("{id:int}")]
+        // PUT: api/users/{id}
+        // Only updates FullName and Email. For password changes use request-password-reset/reset-password flow.
+        [HttpPut("{id:guid}")]
         [Authorize]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserDto dto)
         {
@@ -91,23 +110,56 @@ namespace PersonalFinance.Api.Controllers
             if (currentUserId == null) return Unauthorized();
             if (currentUserId.Value != id) return Forbid();
 
-            try
+            var user = await _userManager.FindByIdAsync(id.ToString());
+            if (user == null) return NotFound();
+
+            var changed = false;
+
+            if (!string.IsNullOrWhiteSpace(dto.FullName) && dto.FullName != user.FullName)
             {
-                var updated = await _userService.UpdateAsync(id, dto);
-                if (!updated) return NotFound();
-                return NoContent();
+                user.FullName = dto.FullName;
+                changed = true;
             }
-            catch (InvalidOperationException ex) // e.g. email taken by another user
+
+            if (!string.IsNullOrWhiteSpace(dto.Email) && dto.Email != user.Email)
             {
-                return Conflict(new { error = ex.Message });
+                var setMailRes = await _userManager.SetEmailAsync(user, dto.Email);
+                if (!setMailRes.Succeeded)
+                {
+                    var errors = setMailRes.Errors.Select(e => e.Description);
+                    return BadRequest(new { errors });
+                }
+
+                // update username to keep them aligned if you used email as username
+                var setUserNameRes = await _userManager.SetUserNameAsync(user, dto.Email);
+                if (!setUserNameRes.Succeeded)
+                {
+                    var errors = setUserNameRes.Errors.Select(e => e.Description);
+                    return BadRequest(new { errors });
+                }
+
+                changed = true;
             }
-            catch (ArgumentException ex)
+
+            if (changed)
             {
-                return BadRequest(new { error = ex.Message });
+                var updateRes = await _userManager.UpdateAsync(user);
+                if (!updateRes.Succeeded)
+                {
+                    var errors = updateRes.Errors.Select(e => e.Description);
+                    return BadRequest(new { errors });
+                }
             }
+
+            // password updates are not handled here — use password reset endpoints
+            if (!string.IsNullOrWhiteSpace(dto.Password))
+                return BadRequest(new { error = "Change password via reset-password endpoint" });
+
+            return NoContent();
         }
 
-        [HttpDelete("{id:int}")]
+        // DELETE: api/users/{id}
+        [HttpDelete("{id:guid}")]
         [Authorize]
         public async Task<IActionResult> Delete(Guid id)
         {
@@ -115,11 +167,20 @@ namespace PersonalFinance.Api.Controllers
             if (currentUserId == null) return Unauthorized();
             if (currentUserId.Value != id) return Forbid();
 
-            var deleted = await _userService.DeleteAsync(id);
-            if (!deleted) return NotFound();
+            var user = await _userManager.FindByIdAsync(id.ToString());
+            if (user == null) return NotFound();
+
+            var res = await _userManager.DeleteAsync(user);
+            if (!res.Succeeded)
+            {
+                var errors = res.Errors.Select(e => e.Description);
+                return BadRequest(new { errors });
+            }
+
             return NoContent();
         }
 
+        // GET: api/users/me
         [HttpGet("me")]
         [Authorize]
         public async Task<IActionResult> Me()
@@ -130,14 +191,17 @@ namespace PersonalFinance.Api.Controllers
             if (string.IsNullOrEmpty(userIdClaim)) return Unauthorized();
             if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
-            var user = await _userService.GetByIdAsync(userId);
-            if (user == null) return NotFound();
+            var appUser = await _userManager.FindByIdAsync(userId.ToString());
+            if (appUser == null) return NotFound();
+
+            var roles = await _userManager.GetRolesAsync(appUser);
 
             return Ok(new
             {
-                id = user.Id,
-                fullName = user.FullName,
-                email = user.Email
+                id = appUser.Id,
+                fullName = appUser.FullName,
+                email = appUser.Email,
+                roles = roles // lista de strings
             });
         }
     }
