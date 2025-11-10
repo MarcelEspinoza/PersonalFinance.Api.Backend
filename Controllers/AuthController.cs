@@ -6,6 +6,7 @@ using PersonalFinance.Api.Models.Dtos.Auth;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -20,16 +21,19 @@ namespace PersonalFinance.Api.Controllers
         private readonly SignInManager<ApplicationUser> _signInManager;
         private readonly IConfiguration _config;
         private readonly IEmailSender _emailSender;
+        private readonly ILogger<AuthController> _logger;
 
         public AuthController(UserManager<ApplicationUser> userManager,
                               SignInManager<ApplicationUser> signInManager,
                               IConfiguration config,
-                              IEmailSender emailSender)
+                              IEmailSender emailSender,
+                              ILogger<AuthController> logger)
         {
             _userManager = userManager;
             _signInManager = signInManager;
             _config = config;
             _emailSender = emailSender;
+            _logger = logger;
         }
 
         [HttpPost("register")]
@@ -173,31 +177,56 @@ namespace PersonalFinance.Api.Controllers
 
         private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
         {
-            var jwtSection = _config.GetSection("Jwt");
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"]));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            // obtenemos la key (seguimos fallando si no existe la clave de firma)
+            var key = _config["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                _logger.LogError("Jwt:Key is not configured. Cannot generate JWT.");
+                throw new InvalidOperationException("JWT key is not configured.");
+            }
+
+            // leer y normalizar expire minutes
+            var expireRaw = _config["Jwt:ExpireMinutes"] ?? string.Empty;
+            var expireTrimmed = expireRaw.Trim();
+            const double defaultExpireMinutes = 1440; // 24h por defecto
+            double expireMinutes;
+
+            if (!double.TryParse(expireTrimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out expireMinutes) || expireMinutes <= 0)
+            {
+                _logger.LogWarning("Invalid or missing Jwt:ExpireMinutes ('{ValuePreview}'). Falling back to default {Default} minutes.",
+                    // mostramos solo una vista corta para depuración; no imprimimos secretos
+                    expireTrimmed.Length > 0 ? "[present]" : "[empty]",
+                    defaultExpireMinutes);
+                expireMinutes = defaultExpireMinutes;
+            }
 
             var claims = new List<Claim>
-            {
-                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
-                new Claim(ClaimTypes.Name, user.UserName ?? string.Empty)
-            };
+    {
+        new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+        new Claim(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
+        new Claim(ClaimTypes.Name, user.UserName ?? string.Empty),
+        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+    };
 
             foreach (var role in roles)
             {
                 claims.Add(new Claim(ClaimTypes.Role, role));
             }
 
+            var keyBytes = Encoding.UTF8.GetBytes(key);
+            var securityKey = new SymmetricSecurityKey(keyBytes);
+            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+            var tokenHandler = new JwtSecurityTokenHandler();
             var token = new JwtSecurityToken(
-                issuer: jwtSection["Issuer"],
-                audience: jwtSection["Audience"],
+                issuer: _config["Jwt:Issuer"],
+                audience: _config["Jwt:Audience"],
                 claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(double.Parse(jwtSection["ExpireMinutes"] ?? "1440")),
-                signingCredentials: creds
+                expires: DateTime.UtcNow.AddMinutes(expireMinutes),
+                signingCredentials: credentials
             );
 
-            return new JwtSecurityTokenHandler().WriteToken(token);
+            return tokenHandler.WriteToken(token);
         }
     }
 
