@@ -46,9 +46,11 @@ namespace PersonalFinance.Api.Services
                 Id = Guid.NewGuid(),
                 UserId = userId,
                 Name = dto.Name,
-                Institution = dto.Institution,
+                Entity = dto.Entity,
                 AccountNumber = dto.AccountNumber,
                 Currency = dto.Currency ?? "EUR",
+                // Guardar color si viene en el DTO
+                Color = dto.Color,
                 CreatedAt = DateTime.UtcNow
             };
             _db.Add(bank);
@@ -62,9 +64,11 @@ namespace PersonalFinance.Api.Services
             var bank = await _db.Set<Bank>().FindAsync(new object[] { id }, ct);
             if (bank == null || bank.UserId != userId) return false;
             bank.Name = dto.Name;
-            bank.Institution = dto.Institution;
+            bank.Entity = dto.Entity;
             bank.AccountNumber = dto.AccountNumber;
             bank.Currency = dto.Currency ?? bank.Currency;
+            // Actualizar color si se proporciona (puede ser null para borrar)
+            bank.Color = dto.Color;
             await _db.SaveChangesAsync(ct);
             return true;
         }
@@ -80,4 +84,3 @@ namespace PersonalFinance.Api.Services
         }
     }
 }
-

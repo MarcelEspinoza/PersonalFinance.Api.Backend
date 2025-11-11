@@ -4,6 +4,7 @@ using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Bank;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
+using System.Collections.Generic;
 using System.Security.Claims;
 
 namespace PersonalFinance.Api.Services
@@ -68,46 +69,134 @@ namespace PersonalFinance.Api.Services
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
-            // Adjust the queries below to your actual Income/Expense entities.
-            // If your Incomes/Expenses are in a single Transaction table, adapt accordingly.
+            // Calculate system totals from Incomes and Expenses, as already done in repo
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
-            // Safe check: if tables exist in DbContext
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 incomeTotal = await _db.Set<Income>()
-                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end && (bankId == null || i.BankId == bankId))
+                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end)
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 expenseTotal = await _db.Set<Expense>()
-                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end && (bankId == null || e.BankId == bankId))
+                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end)
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            var systemTotal = incomeTotal - expenseTotal;
+            var systemTotal = incomeTotal + expenseTotal; // note: expense.Amount should be negative in your model; keep original logic
 
-            Reconciliation? saved = null;
-            if (bankId != null)
+            // If bankId provided, try to find Reconciliation with that bank/month for closing balance
+            decimal closingBalance = 0m;
+            if (bankId.HasValue)
             {
-                saved = await _db.Set<Reconciliation>().FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == bankId && r.Year == year && r.Month == month, ct);
+                var recon = await _db.Reconciliations
+                    .Where(r => r.UserId == userId && r.BankId == bankId.Value && r.Year == year && r.Month == month)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                if (recon != null)
+                    closingBalance = recon.ClosingBalance;
+            }
+            else
+            {
+                // If no bank specified, pick the latest reconciliation record for the month (if present)
+                var recon = await _db.Reconciliations
+                    .Where(r => r.UserId == userId && r.Year == year && r.Month == month)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                if (recon != null)
+                    closingBalance = recon.ClosingBalance;
             }
 
-            var suggestion = new ReconciliationSuggestionDto(SystemTotal: systemTotal, ClosingBalance: saved?.ClosingBalance ?? 0m, Difference: (saved?.ClosingBalance ?? 0m) - systemTotal, Details: new { incomeTotal, expenseTotal });
-            return suggestion;
+            var difference = systemTotal - closingBalance;
+
+            // Build actionable suggestions (lightweight heuristics)
+            var suggestions = new List<object>(); // will put simple suggestion objects; controller/frontend can interpret
+
+            // We'll suggest: "check incomes/expenses" and also simple candidate groups (by exact match)
+            // get all incomes/expenses details (if present) for the month to attempt lightweight matching
+            var txList = new List<(int Id, decimal Amount, string Description, DateTime Date)>();
+
+            if (_db.Model.FindEntityType(typeof(Income)) != null)
+            {
+                var incomes = await _db.Set<Income>()
+                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end)
+                    .Select(i => new { i.Id, i.Amount, i.Description, i.Date })
+                    .ToListAsync(ct);
+                txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date)));
+            }
+
+            if (_db.Model.FindEntityType(typeof(Expense)) != null)
+            {
+                var expenses = await _db.Set<Expense>()
+                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end)
+                    .Select(e => new { e.Id, e.Amount, e.Description, e.Date })
+                    .ToListAsync(ct);
+                txList.AddRange(expenses.Select(e => (e.Id, e.Amount, e.Description ?? string.Empty, e.Date)));
+            }
+
+            // Simple exact match suggestions: amounts that equal the difference or pairs that sum to a recon diff
+            // Note: we do NOT return "do the cuadre for me" — we return candidate transactions to check
+            foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
+            {
+                // candidate if amount equals difference (very rare) or if amount close to difference
+                if (Math.Abs(tx.Amount - difference) <= 0.01m)
+                {
+                    suggestions.Add(new
+                    {
+                        Type = "ExactDiff",
+                        TransactionId = tx.Id,
+                        Amount = tx.Amount,
+                        Description = tx.Description,
+                        Reason = "Transaction equals system-closing difference"
+                    });
+                }
+            }
+
+            // Also suggest largest transactions (top 5) as candidates to review
+            var topTx = txList.OrderByDescending(t => Math.Abs((double)t.Amount)).Take(5)
+                .Select(t => new { Type = "TopTx", TransactionId = t.Id, Amount = t.Amount, Description = t.Description })
+                .ToList();
+            foreach (var s in topTx) suggestions.Add(s);
+
+            // Return a DTO with system totals, closing balance and suggestions in Details (no push to 'cuadre')
+            var suggestionDto = new ReconciliationSuggestionDto(systemTotal, closingBalance, difference, suggestions);
+            return suggestionDto;
         }
 
         public async Task<bool> MarkReconciledAsync(Guid id, CancellationToken ct = default)
         {
-            var userId = CurrentUserId();
-            var rec = await _db.Set<Reconciliation>().FindAsync(new object[] { id }, ct);
-            if (rec == null || rec.UserId != userId) return false;
-            rec.Reconciled = true;
-            rec.ReconciledAt = DateTime.UtcNow;
+            // more robust: recalc totals and reject if difference != 0 (with small tolerance)
+            var recon = await _db.Reconciliations.FindAsync(new object[] { id }, ct);
+            if (recon == null) return false;
+
+            var year = recon.Year;
+            var month = recon.Month;
+            var userId = recon.UserId;
+            var bankId = recon.BankId;
+
+            // Reuse SuggestAsync to compute systemTotal and closingBalance
+            var suggestion = await SuggestAsync(year, month, bankId, ct);
+            var difference = suggestion.Difference;
+
+            // tolerance: allow very small rounding differences (1 cent)
+            var tol = 0.01m;
+            if (Math.Abs(difference) > tol)
+            {
+                return false;
+            }
+
+            // Mark as reconciled
+            recon.Reconciled = true;
+            recon.ReconciledAt = DateTime.UtcNow;
+            _db.Reconciliations.Update(recon);
             await _db.SaveChangesAsync(ct);
+
             return true;
         }
     }
