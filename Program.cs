@@ -190,6 +190,7 @@ builder.Services.AddScoped<IPasanacoService, PasanacoService>();
 builder.Services.AddSingleton<IEmailSender, SendGridEmailSender>();
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<IReconciliationService, ReconciliationService>();
+builder.Services.AddScoped<ITransferService, TransferService>();
 
 // If you already have an email sender registered elsewhere (IEmailSender or Microsoft.AspNetCore.Identity.UI.Services.IEmailSender),
 // keep it; do not register a second one here. If you don't have one, add it (MailKit or SendGrid) and configure it.

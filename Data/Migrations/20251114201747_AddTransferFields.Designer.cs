@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PersonalFinance.Api.Data;
 
 #nullable disable
 
-namespace PersonalFinance.Api.Migrations
+namespace PersonalFinance.Api.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251114201747_AddTransferFields")]
+    partial class AddTransferFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -327,16 +330,6 @@ namespace PersonalFinance.Api.Migrations
                             IsActive = true,
                             IsSystem = true,
                             Name = "Pasanaco",
-                            UserId = new Guid("00000000-0000-0000-0000-000000000000")
-                        },
-                        new
-                        {
-                            Id = 400,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Categoría de sistema para traspasos internos",
-                            IsActive = true,
-                            IsSystem = true,
-                            Name = "Transferencia",
                             UserId = new Guid("00000000-0000-0000-0000-000000000000")
                         });
                 });

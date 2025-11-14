@@ -71,6 +71,16 @@ namespace PersonalFinance.Api.Data
                     IsSystem = true,
                     IsActive = true,
                     CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
+                },
+                new Category
+                {
+                    Id = 400,
+                    Name = "Transferencia",
+                    Description = "Categoría de sistema para traspasos internos",
+                    UserId = Guid.Empty,
+                    IsSystem = true,
+                    IsActive = true,
+                    CreatedAt = DateTime.SpecifyKind(new DateTime(2025, 1, 1, 0, 0, 0), DateTimeKind.Utc)
                 }
             );
 

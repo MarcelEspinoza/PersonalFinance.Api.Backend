@@ -32,5 +32,10 @@ namespace PersonalFinance.Api.Models.Entities
         [ForeignKey(nameof(BankId))]
         public Bank? Bank { get; set; }
 
+        public bool IsTransfer { get; set; } = false;
+        public string? TransferId { get; set; }                 // UUID/string que liga ambos movimientos
+        public Guid? TransferCounterpartyBankId { get; set; }   // BankId del otro lado
+        public string? TransferReference { get; set; }
+
     }
 }
