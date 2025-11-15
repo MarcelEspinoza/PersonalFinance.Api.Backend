@@ -1,4 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using AutoMapper;
+using AutoMapper.QueryableExtensions;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Income;
 using PersonalFinance.Api.Models.Entities;
@@ -9,10 +11,12 @@ namespace PersonalFinance.Api.Services
     public class IncomeService : IIncomeService
     {
         private readonly AppDbContext _context;
+        private readonly IMapper _mapper;
 
-        public IncomeService(AppDbContext context)
+        public IncomeService(AppDbContext context, IMapper mapper)
         {
             _context = context;
+            _mapper = mapper;
         }
 
         public async Task<IEnumerable<IncomeDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -20,20 +24,7 @@ namespace PersonalFinance.Api.Services
             return await _context.Incomes
                 .AsNoTracking()
                 .Where(i => i.UserId == userId)
-                .Include(i => i.Category)
-                .Select(i => new IncomeDto
-                {
-                    Id = i.Id,
-                    Amount = i.Amount,
-                    Description = i.Description,
-                    Date = i.Date,
-                    Type = i.Type,
-                    CategoryId = i.CategoryId,
-                    CategoryName = i.Category.Name,
-                    Start_Date = i.Start_Date,
-                    End_Date = i.End_Date,
-                    Notes = i.Notes
-                })
+                .ProjectTo<IncomeDto>(_mapper.ConfigurationProvider)
                 .ToListAsync(cancellationToken);
         }
 
@@ -42,20 +33,7 @@ namespace PersonalFinance.Api.Services
             return await _context.Incomes
                 .AsNoTracking()
                 .Where(i => i.UserId == userId && i.Id == id)
-                .Include(i => i.Category)
-                .Select(i => new IncomeDto
-                {
-                    Id = i.Id,
-                    Amount = i.Amount,
-                    Description = i.Description,
-                    Date = i.Date,
-                    Type = i.Type,
-                    CategoryId = i.CategoryId,
-                    CategoryName = i.Category.Name,
-                    Start_Date = i.Start_Date,
-                    End_Date = i.End_Date,
-                    Notes = i.Notes
-                })
+                .ProjectTo<IncomeDto>(_mapper.ConfigurationProvider)
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
@@ -108,8 +86,8 @@ namespace PersonalFinance.Api.Services
             // If your Income entity contains CategoryId, you can assign it when dto.CategoryId.HasValue
             if (dto.CategoryId.HasValue) income.CategoryId = dto.CategoryId.Value;
 
-            if (dto.Type != null) 
-            income.Type = dto.Type;
+            if (dto.Type != null)
+                income.Type = dto.Type;
 
             if (dto.LoanId.HasValue)
                 income.LoanId = dto.LoanId.Value;

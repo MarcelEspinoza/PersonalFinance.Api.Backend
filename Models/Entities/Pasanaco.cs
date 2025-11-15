@@ -1,8 +1,7 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
-
-namespace PersonalFinance.Api.Models.Entities
+﻿namespace PersonalFinance.Api.Models.Entities
 {
+    using System.ComponentModel.DataAnnotations;
+    using System.ComponentModel.DataAnnotations.Schema;
     public class Pasanaco
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();

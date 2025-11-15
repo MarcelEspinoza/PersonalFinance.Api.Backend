@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using AutoMapper;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Data;
@@ -152,6 +154,8 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
+
 // -------------------------------
 // Application services registration
 // -------------------------------
@@ -192,8 +196,6 @@ builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<IReconciliationService, ReconciliationService>();
 builder.Services.AddScoped<ITransferService, TransferService>();
 
-// If you already have an email sender registered elsewhere (IEmailSender or Microsoft.AspNetCore.Identity.UI.Services.IEmailSender),
-// keep it; do not register a second one here. If you don't have one, add it (MailKit or SendGrid) and configure it.
 
 // -------------------------------
 // Build application

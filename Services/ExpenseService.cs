@@ -1,4 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using AutoMapper;
+using AutoMapper.QueryableExtensions;
+using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Expense;
@@ -10,10 +12,12 @@ namespace PersonalFinance.Api.Services
     public class ExpenseService : IExpenseService
     {
         private readonly AppDbContext _context;
+        private readonly IMapper _mapper;
 
-        public ExpenseService(AppDbContext context)
+        public ExpenseService(AppDbContext context, IMapper mapper)
         {
             _context = context;
+            _mapper = mapper;
         }
 
         public async Task<IEnumerable<ExpenseDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -21,21 +25,7 @@ namespace PersonalFinance.Api.Services
             return await _context.Expenses
                 .AsNoTracking()
                 .Where(e => e.UserId == userId)
-                .Include(e => e.Category)
-                .Select(e => new ExpenseDto
-                {
-                    Id = e.Id,
-                    Amount = e.Amount,
-                    Description = e.Description,
-                    Date = e.Date,
-                    Type = e.Type,
-                    CategoryId = e.CategoryId,
-                    CategoryName = e.Category.Name,
-                    Start_Date = e.Start_Date,
-                    End_Date = e.End_Date,
-                    Notes = e.Notes,
-                    LoanId = e.LoanId
-                })
+                .ProjectTo<ExpenseDto>(_mapper.ConfigurationProvider)
                 .ToListAsync(cancellationToken);
         }
 
@@ -44,21 +34,7 @@ namespace PersonalFinance.Api.Services
             return await _context.Expenses
                 .AsNoTracking()
                 .Where(e => e.UserId == userId && e.Id == id)
-                .Include(e => e.Category)
-                .Select(e => new ExpenseDto
-                {
-                    Id = e.Id,
-                    Amount = e.Amount,
-                    Description = e.Description,
-                    Date = e.Date,
-                    Type = e.Type,
-                    CategoryId = e.CategoryId,
-                    CategoryName = e.Category.Name,
-                    Start_Date = e.Start_Date,
-                    End_Date = e.End_Date,
-                    Notes = e.Notes,
-                    LoanId = e.LoanId
-                })
+                .ProjectTo<ExpenseDto>(_mapper.ConfigurationProvider)
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
