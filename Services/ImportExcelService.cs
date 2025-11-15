@@ -151,9 +151,8 @@ namespace PersonalFinance.Api.Services
             using var workbook = new XLWorkbook(stream);
             var ws = workbook.Worksheet("Template");
 
-            var rows = ws.RangeUsed() != null
-                ? ws.RangeUsed().RowsUsed().Skip(1).Cast<IXLRow>()
-                : Enumerable.Empty<IXLRow>();
+            var rows = ws.RangeUsed()?.RowsUsed().Skip(1) ?? Enumerable.Empty<IXLRangeRow>();
+
 
             var validTypes = new[] { "Fixed", "Variable", "Temporary" };
             var validMovements = new[] { "Income", "Expense" };
