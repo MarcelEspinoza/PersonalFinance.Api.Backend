@@ -153,7 +153,6 @@ namespace PersonalFinance.Api.Services
 
             var rows = ws.RangeUsed()?.RowsUsed().Skip(1) ?? Enumerable.Empty<IXLRangeRow>();
 
-
             var validTypes = new[] { "Fixed", "Variable", "Temporary" };
             var validMovements = new[] { "Income", "Expense" };
 
@@ -165,7 +164,11 @@ namespace PersonalFinance.Api.Services
                 .ToDictionary(c => CleanString(c.Name), c => c.Id, StringComparer.OrdinalIgnoreCase);
 
             var banksList = await _context.Banks.ToListAsync();
-            var banksDict = banksList.ToDictionary(b => CleanString(b.Name + (string.IsNullOrEmpty(b.Entity) ? "" : $" | {b.Entity}")), b => b.Id, StringComparer.OrdinalIgnoreCase);
+            var banksDict = banksList.ToDictionary(
+                b => CleanString(b.Name + (string.IsNullOrEmpty(b.Entity) ? "" : $" | {b.Entity}")),
+                b => b.Id,
+                StringComparer.OrdinalIgnoreCase
+            );
 
             foreach (var row in rows)
             {
@@ -191,16 +194,24 @@ namespace PersonalFinance.Api.Services
 
                     // Parse amount
                     var amountOk = double.TryParse(amountStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount)
-                        || double.TryParse(amountStr, NumberStyles.Any, CultureInfo.CurrentCulture, out amount);
+                                   || double.TryParse(amountStr, NumberStyles.Any, CultureInfo.CurrentCulture, out amount);
 
-                    // Parse date
-                    var dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
-                        || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.None, out date);
+                    // Parse date y convertir a UTC
+                    DateTime dateUtc = DateTime.MinValue; // Inicializamos para evitar CS0165
+                    var dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate)
+                                 || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsedDate);
+                    if (dateOk)
+                    {
+                        dateUtc = parsedDate.ToUniversalTime();
+                    }
+                    else
+                    {
+                        errors.Add("Invalid date");
+                    }
 
                     // Validaciones básicas
                     if (string.IsNullOrWhiteSpace(description)) errors.Add("Empty description");
                     if (!amountOk) errors.Add("Invalid amount");
-                    if (!dateOk) errors.Add("Invalid date");
                     if (!validTypes.Contains(type, StringComparer.OrdinalIgnoreCase)) errors.Add("Invalid type");
                     if (!validMovements.Contains(movementType, StringComparer.OrdinalIgnoreCase)) errors.Add("Invalid movement type");
                     if (string.IsNullOrWhiteSpace(bankOriginName) || !banksDict.ContainsKey(bankOriginName)) errors.Add("Invalid or empty Bank (Origin)");
@@ -220,7 +231,7 @@ namespace PersonalFinance.Api.Services
                         {
                             description,
                             amount = amountOk ? amount : (double?)null,
-                            date = dateOk ? date : (DateTime?)null,
+                            date = dateOk ? dateUtc : (DateTime?)null,
                             category = categoryName,
                             type,
                             movementType,
@@ -279,7 +290,7 @@ namespace PersonalFinance.Api.Services
                         {
                             Description = description,
                             Amount = (decimal)amount,
-                            Date = date,
+                            Date = dateUtc,
                             CategoryId = categoryId!.Value,
                             Notes = notes,
                             Type = type,
@@ -295,7 +306,7 @@ namespace PersonalFinance.Api.Services
                         {
                             Description = description,
                             Amount = (decimal)amount,
-                            Date = date,
+                            Date = dateUtc,
                             CategoryId = categoryId!.Value,
                             Notes = notes,
                             Type = type,
@@ -319,7 +330,7 @@ namespace PersonalFinance.Api.Services
                             {
                                 Description = description,
                                 Amount = (decimal)amount,
-                                Date = date,
+                                Date = dateUtc,
                                 CategoryId = categoryId!.Value,
                                 Notes = notes,
                                 Type = type,
@@ -333,7 +344,7 @@ namespace PersonalFinance.Api.Services
                             {
                                 Description = description,
                                 Amount = (decimal)amount,
-                                Date = date,
+                                Date = dateUtc,
                                 CategoryId = categoryId!.Value,
                                 Notes = notes,
                                 Type = type,
@@ -353,5 +364,7 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
             return result;
         }
+
+
     }
 }
