@@ -69,6 +69,7 @@ namespace PersonalFinance.Api.Services
             var end = start.AddMonths(1).AddTicks(-1);
 
             // Calculate system totals from Incomes and Expenses, filtered by bankId when provided
+            // Ignore internal transfers (IsTransfer = true)
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
@@ -76,7 +77,8 @@ namespace PersonalFinance.Api.Services
             {
                 incomeTotal = await _db.Set<Income>()
                     .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value))
+                                && (!bankId.HasValue || i.BankId == bankId.Value)
+                                && !i.IsTransfer)
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
@@ -84,46 +86,40 @@ namespace PersonalFinance.Api.Services
             {
                 expenseTotal = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value))
+                                && (!bankId.HasValue || e.BankId == bankId.Value)
+                                && !e.IsTransfer)
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
             // Net system total for the given bank (or for the whole user if bankId null)
             var systemTotal = incomeTotal - expenseTotal;
 
-            // If bankId provided, try to find Reconciliation with that bank/month for closing balance
+            // Get closing balance for bank/month
             decimal closingBalance = 0m;
+            var reconQuery = _db.Reconciliations
+                .Where(r => r.UserId == userId && r.Year == year && r.Month == month);
+
             if (bankId.HasValue)
-            {
-                var recon = await _db.Reconciliations
-                    .Where(r => r.UserId == userId && r.BankId == bankId.Value && r.Year == year && r.Month == month)
-                    .OrderByDescending(r => r.CreatedAt)
-                    .FirstOrDefaultAsync(ct);
+                reconQuery = reconQuery.Where(r => r.BankId == bankId.Value);
 
-                if (recon != null)
-                    closingBalance = recon.ClosingBalance;
-            }
-            else
-            {
-                var recon = await _db.Reconciliations
-                    .Where(r => r.UserId == userId && r.Year == year && r.Month == month)
-                    .OrderByDescending(r => r.CreatedAt)
-                    .FirstOrDefaultAsync(ct);
+            var recon = await reconQuery
+                .OrderByDescending(r => r.CreatedAt)
+                .FirstOrDefaultAsync(ct);
 
-                if (recon != null)
-                    closingBalance = recon.ClosingBalance;
-            }
+            if (recon != null)
+                closingBalance = recon.ClosingBalance;
 
             var difference = systemTotal - closingBalance;
 
-            // Build txList filtering by bankId as well
+            // Build transaction list ignoring internal transfers
             var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 var incomes = await _db.Set<Income>()
                     .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value))
+                                && (!bankId.HasValue || i.BankId == bankId.Value)
+                                && !i.IsTransfer)
                     .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
                     .ToListAsync(ct);
 
@@ -134,16 +130,15 @@ namespace PersonalFinance.Api.Services
             {
                 var expenses = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value))
+                                && (!bankId.HasValue || e.BankId == bankId.Value)
+                                && !e.IsTransfer)
                     .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
                     .ToListAsync(ct);
 
-                // Treat expenses as negative amounts so netting/matching is consistent
                 txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
-            // Build suggestions: we will return the transactions for the bank (or for the whole user if bankId null)
-            // Option: you can limit the number returned, but here devolvemos todas para que el frontend muestre candidatos completos.
+            // Build suggestions list
             var suggestions = txList
                 .OrderByDescending(t => Math.Abs((double)t.Amount))
                 .Select(t => new
@@ -157,7 +152,7 @@ namespace PersonalFinance.Api.Services
                 })
                 .ToList<object>();
 
-            // Additionally keep ExactDiff suggestions (if any)
+            // Add ExactDiff suggestions if any transaction matches the difference
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
                 if (Math.Abs(tx.Amount - difference) <= 0.01m)
@@ -175,9 +170,9 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
-            var suggestionDto = new ReconciliationSuggestionDto(systemTotal, closingBalance, difference, suggestions);
-            return suggestionDto;
+            return new ReconciliationSuggestionDto(systemTotal, closingBalance, difference, suggestions);
         }
+
 
 
         public async Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt = null, CancellationToken ct = default)
