@@ -8,7 +8,7 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<IEnumerable<Loan>> GetLoansAsync(Guid userId);
         Task<Loan?> GetLoanAsync(Guid id);
         Task<Loan> CreateLoanAsync(LoanDto dto);
-        Task UpdateLoanAsync(LoanDto dto);
+        Task UpdateLoanAsync(Guid id, LoanDto dto);
         Task DeleteLoanAsync(Guid id);
     }
 }

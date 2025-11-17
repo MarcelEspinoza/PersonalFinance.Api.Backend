@@ -77,24 +77,24 @@ namespace PersonalFinance.Api.Services
             }
         }
 
-        public async Task UpdateLoanAsync(LoanDto dto)
+        public async Task UpdateLoanAsync(Guid id, LoanDto dto)
         {
             if (dto == null) throw new ArgumentNullException(nameof(dto));
 
             // Recuperar el préstamo existente con colecciones relevantes
             var loan = await _context.Loans
                 .Include(l => l.Payments)
-                .FirstOrDefaultAsync(l => l.Id == dto.Id);
+                .FirstOrDefaultAsync(l => l.Id == id);
 
             if (loan == null)
-                throw new KeyNotFoundException($"Loan with Id '{dto.Id}' not found.");
+                throw new KeyNotFoundException($"Loan with Id '{id}' not found.");
 
             // Mapear propiedades escalares del DTO sobre la entidad existente.
             // Asumimos que el MappingProfile actualiza sólo propiedades escalares y no navegaciones complejas.
             _mapper.Map(dto, loan);
 
             // Reafirmar el Id por seguridad
-            loan.Id = dto.Id;
+            loan.Id = id;
 
             // Resolver Category por Id si el DTO expone CategoryId (mismo enfoque que en CreateLoanAsync)
             if (dto is not null && dto.GetType().GetProperty("CategoryId") is not null)

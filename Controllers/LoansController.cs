@@ -48,8 +48,7 @@ namespace PersonalFinance.Api.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateLoan(Guid id, [FromBody] LoanDto loan)
         {
-            if (id != loan.Id) return BadRequest();
-            await _loanService.UpdateLoanAsync(loan);
+            await _loanService.UpdateLoanAsync(id,loan);
             return NoContent();
         }
 
