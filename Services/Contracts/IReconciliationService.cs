@@ -8,7 +8,7 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<IEnumerable<Reconciliation>> GetForMonthAsync(int year, int month, CancellationToken ct = default);
         Task<Reconciliation?> CreateAsync(CreateReconciliationDto dto, CancellationToken ct = default);
         Task<ReconciliationSuggestionDto> SuggestAsync(int year, int month, Guid? bankId = null, CancellationToken ct = default);
-        Task<bool> MarkReconciledAsync(Guid id, CancellationToken ct = default);
+        Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt);
     }
 }
 

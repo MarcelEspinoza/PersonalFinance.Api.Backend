@@ -40,13 +40,13 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("{id:guid}/mark")]
-        public async Task<IActionResult> MarkReconciled(Guid id)
+        public async Task<IActionResult> MarkReconciled(Guid id, [FromQuery] DateTime? reconciledAt)
         {
-            var ok = await _service.MarkReconciledAsync(id);
+            var ok = await _service.MarkReconciledAsync(id, reconciledAt);
             if (!ok)
             {
                 var recon = await _service.GetForMonthAsync(DateTime.UtcNow.Year, DateTime.UtcNow.Month); // not ideal: but we return a simple message
-                return BadRequest(new { success = false, message = "No se puede marcar como conciliado: la diferencia entre el sistema y el saldo de cierre no es 0. Revisa las sugerencias y asegura que las partidas cuadren a 0." });
+                return BadRequest(new { success = false, message = "No se puede marcar como conciliado: la diferencia entre el sistema y el saldo de cierre no es 0. Revisa las sugerencias y asegura que los saldos sean correctos" });
             }
             return Ok(new { success = true, message = "Conciliación marcada como reconciliada" });
         }

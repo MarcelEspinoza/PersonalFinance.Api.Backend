@@ -68,26 +68,27 @@ namespace PersonalFinance.Api.Services
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
-            // Calculate system totals from Incomes and Expenses, as already done in repo
+            // Calculate system totals from Incomes and Expenses, filtered by bankId when provided
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 incomeTotal = await _db.Set<Income>()
-                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end)
+                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
+                                && (!bankId.HasValue || i.BankId == bankId.Value))
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 expenseTotal = await _db.Set<Expense>()
-                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end)
+                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
+                                && (!bankId.HasValue || e.BankId == bankId.Value))
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            // FIX: Expenses.Amount in your DB are positive values. The system total should be net (income - expense).
-            // Previous code added them (incomeTotal + expenseTotal) which yields the wrong result (sum of absolutes).
+            // Net system total for the given bank (or for the whole user if bankId null)
             var systemTotal = incomeTotal - expenseTotal;
 
             // If bankId provided, try to find Reconciliation with that bank/month for closing balance
@@ -104,7 +105,6 @@ namespace PersonalFinance.Api.Services
             }
             else
             {
-                // If no bank specified, pick the latest reconciliation record for the month (if present)
                 var recon = await _db.Reconciliations
                     .Where(r => r.UserId == userId && r.Year == year && r.Month == month)
                     .OrderByDescending(r => r.CreatedAt)
@@ -116,65 +116,71 @@ namespace PersonalFinance.Api.Services
 
             var difference = systemTotal - closingBalance;
 
-            // Build actionable suggestions (lightweight heuristics)
-            var suggestions = new List<object>(); // will put simple suggestion objects; controller/frontend can interpret
-
-            // We'll suggest: "check incomes/expenses" and also simple candidate groups (by exact match)
-            // get all incomes/expenses details (if present) for the month to attempt lightweight matching
-            var txList = new List<(int Id, decimal Amount, string Description, DateTime Date)>();
+            // Build txList filtering by bankId as well
+            var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 var incomes = await _db.Set<Income>()
-                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end)
-                    .Select(i => new { i.Id, i.Amount, i.Description, i.Date })
+                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
+                                && (!bankId.HasValue || i.BankId == bankId.Value))
+                    .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
                     .ToListAsync(ct);
-                // incomes are positive amounts
-                txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date)));
+
+                txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date, i.CategoryName)));
             }
 
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 var expenses = await _db.Set<Expense>()
-                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end)
-                    .Select(e => new { e.Id, e.Amount, e.Description, e.Date })
+                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
+                                && (!bankId.HasValue || e.BankId == bankId.Value))
+                    .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
                     .ToListAsync(ct);
-                // FIX: treat expense amounts as negative so matching and net calculations are consistent
-                txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date)));
+
+                // Treat expenses as negative amounts so netting/matching is consistent
+                txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
-            // Simple exact match suggestions: amounts that equal the difference (very rare) or if amount close to difference
-            // Note: we do NOT return "do the cuadre for me" — we return candidate transactions to check
+            // Build suggestions: we will return the transactions for the bank (or for the whole user if bankId null)
+            // Option: you can limit the number returned, but here devolvemos todas para que el frontend muestre candidatos completos.
+            var suggestions = txList
+                .OrderByDescending(t => Math.Abs((double)t.Amount))
+                .Select(t => new
+                {
+                    Type = "Tx",
+                    TransactionId = t.Id,
+                    Amount = t.Amount,
+                    Description = t.Description,
+                    Date = t.Date,
+                    Category = t.CategoryName
+                })
+                .ToList<object>();
+
+            // Additionally keep ExactDiff suggestions (if any)
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
-                // candidate if amount equals difference (very rare) or if amount close to difference
                 if (Math.Abs(tx.Amount - difference) <= 0.01m)
                 {
-                    suggestions.Add(new
+                    suggestions.Insert(0, new
                     {
                         Type = "ExactDiff",
                         TransactionId = tx.Id,
                         Amount = tx.Amount,
                         Description = tx.Description,
+                        Date = tx.Date,
+                        Category = tx.CategoryName,
                         Reason = "Transaction equals system-closing difference"
                     });
                 }
             }
 
-            // Also suggest largest transactions (top 5) as candidates to review
-            var topTx = txList.OrderByDescending(t => Math.Abs((double)t.Amount)).Take(5)
-                .Select(t => new { Type = "TopTx", TransactionId = t.Id, Amount = t.Amount, Description = t.Description })
-                .ToList();
-            foreach (var s in topTx) suggestions.Add(s);
-
-            // Return a DTO with system totals, closing balance and suggestions in Details (no push to 'cuadre')
             var suggestionDto = new ReconciliationSuggestionDto(systemTotal, closingBalance, difference, suggestions);
             return suggestionDto;
         }
 
-        public async Task<bool> MarkReconciledAsync(Guid id, CancellationToken ct = default)
+        public async Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt = null, CancellationToken ct = default)
         {
-            // more robust: recalc totals and reject if difference != 0 (with small tolerance)
             var recon = await _db.Reconciliations.FindAsync(new object[] { id }, ct);
             if (recon == null) return false;
 
@@ -187,16 +193,15 @@ namespace PersonalFinance.Api.Services
             var suggestion = await SuggestAsync(year, month, bankId, ct);
             var difference = suggestion.Difference;
 
-            // tolerance: allow very small rounding differences (1 cent)
             var tol = 0.01m;
             if (Math.Abs(difference) > tol)
             {
                 return false;
             }
 
-            // Mark as reconciled
+            // Mark as reconciled and set the reconciledAt date if provided (otherwise use UTC now)
             recon.Reconciled = true;
-            recon.ReconciledAt = DateTime.UtcNow;
+            recon.ReconciledAt = reconciledAt ?? DateTime.UtcNow;
             _db.Reconciliations.Update(recon);
             await _db.SaveChangesAsync(ct);
 
