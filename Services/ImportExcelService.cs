@@ -178,19 +178,16 @@ namespace PersonalFinance.Api.Services
                 .Where(c => c.IsSystem || c.UserId == userId)
                 .ToListAsync();
 
-            // Agrupar por el nombre "limpio" y tomar la primera entrada para evitar excepción por claves duplicadas
             var categories = categoriesList
                 .GroupBy(c => CleanString(c.Name), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
 
             var banksList = await _context.Banks.ToListAsync();
 
-            // Protegemos también la creación del diccionario de bancos por si hay nombres duplicados "limpios"
             var banksDict = banksList
                 .GroupBy(b => CleanString(b.Name + (string.IsNullOrEmpty(b.Entity) ? "" : $" | {b.Entity}")), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
 
-            // Cargamos loans y construimos diccionario (Guid)
             var loansList = await _context.Set<Loan>()
                 .Where(l => l.UserId == userId)
                 .ToListAsync();
@@ -205,7 +202,6 @@ namespace PersonalFinance.Api.Services
                 {
                     var description = CleanString(row.Cell(1).GetString());
                     var amountStr = row.Cell(2).GetString();
-                    var dateStr = row.Cell(3).GetString();
                     var categoryName = CleanString(row.Cell(4).GetString());
                     var notes = CleanString(row.Cell(5).GetString());
                     var type = CleanString(row.Cell(6).GetString());
@@ -214,7 +210,7 @@ namespace PersonalFinance.Api.Services
                     var isTransferStr = CleanString(row.Cell(9).GetString());
                     var bankDestinationName = CleanString(row.Cell(10).GetString());
                     var transferReference = CleanString(row.Cell(11).GetString());
-                    var loanName = CleanString(row.Cell(12).GetString()); // columna Loan
+                    var loanName = CleanString(row.Cell(12).GetString());
 
                     var isTransfer = false;
                     if (!string.IsNullOrEmpty(isTransferStr))
@@ -222,40 +218,52 @@ namespace PersonalFinance.Api.Services
 
                     var errors = new List<string>();
 
-                    // Parse amount
+                    // ✅ Parse amount (acepta . o , como separador)
                     var amountOk = double.TryParse(amountStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount)
                                    || double.TryParse(amountStr, NumberStyles.Any, CultureInfo.CurrentCulture, out amount);
 
-                    // Parse date y convertir a UTC
-                    DateTime dateUtc = DateTime.MinValue; // Inicializamos para evitar CS0165
-                    var dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate)
-                                 || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsedDate);
-                    if (dateOk)
+                    // ✅ Parse date correctamente (acepta celdas tipo DateTime o texto)
+                    DateTime dateUtc = DateTime.MinValue;
+                    bool dateOk = false;
+                    try
                     {
-                        dateUtc = parsedDate.ToUniversalTime();
+                        if (row.Cell(3).DataType == XLDataType.DateTime)
+                        {
+                            var parsedDate = row.Cell(3).GetDateTime();
+                            dateUtc = DateTime.SpecifyKind(parsedDate, DateTimeKind.Utc);
+                            dateOk = true;
+                        }
+                        else
+                        {
+                            var dateStr = row.Cell(3).GetString();
+                            dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate)
+                                     || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsedDate);
+
+                            if (dateOk)
+                                dateUtc = parsedDate.ToUniversalTime();
+                        }
                     }
-                    else
+                    catch
                     {
-                        errors.Add("Invalid date");
+                        errors.Add("Invalid date format");
                     }
 
-                    // Validaciones básicas
+                    // 🔍 Validaciones básicas
                     if (string.IsNullOrWhiteSpace(description)) errors.Add("Empty description");
                     if (!amountOk) errors.Add("Invalid amount");
+                    if (!dateOk) errors.Add("Invalid date");
                     if (!validTypes.Contains(type, StringComparer.OrdinalIgnoreCase)) errors.Add("Invalid type");
                     if (!validMovements.Contains(movementType, StringComparer.OrdinalIgnoreCase)) errors.Add("Invalid movement type");
                     if (string.IsNullOrWhiteSpace(bankOriginName) || !banksDict.ContainsKey(bankOriginName)) errors.Add("Invalid or empty Bank (Origin)");
 
                     if (isTransfer)
                     {
-                        if (string.IsNullOrWhiteSpace(bankOriginName) || !banksDict.ContainsKey(bankOriginName))
-                            errors.Add("Invalid or empty Bank (Origin)");
                         if (string.IsNullOrWhiteSpace(bankDestinationName) || !banksDict.ContainsKey(bankDestinationName))
                             errors.Add("Invalid or empty Bank (Destination)");
-                        if (string.IsNullOrWhiteSpace(transferReference)) errors.Add("Transfer Reference is required");
+                        if (string.IsNullOrWhiteSpace(transferReference))
+                            errors.Add("Transfer Reference is required");
                     }
 
-                    // Si la categoría es préstamo bancario, requerimos Loan válido si se especifica esa categoría
                     var normalizedCategory = CleanString(categoryName ?? string.Empty);
                     var normalizedLoanCategory = CleanString("Préstamo bancario");
                     if (!string.IsNullOrWhiteSpace(normalizedCategory) &&
@@ -291,6 +299,7 @@ namespace PersonalFinance.Api.Services
                     int? categoryId = null;
                     Guid? loanId = null;
 
+                    // ✅ Buscar o crear categoría si no existe
                     if (string.IsNullOrWhiteSpace(categoryName))
                     {
                         if (isTransfer)
@@ -298,25 +307,21 @@ namespace PersonalFinance.Api.Services
                             var transferCatName = "Transferencia";
                             var existing = await _context.Categories.FirstOrDefaultAsync(c => c.UserId == userId && c.Name == transferCatName);
                             if (existing != null)
-                            {
                                 categoryId = existing.Id;
-                            }
                         }
                         else
                         {
-                            // No debería llegar aquí porque ya validamos category vacía y no transfer como error
                             result.Pending.Add(new { description, reason = "Invalid category" });
                             continue;
                         }
                     }
                     else
                     {
-                        // categoryName tiene contenido: si no existe, crearla (esto es lo que pediste)
                         if (!categories.ContainsKey(categoryName))
                         {
                             var newCat = new Category
                             {
-                                Name = categoryName, // el nombre será exactamente el valor de la celda limpio
+                                Name = categoryName,
                                 Description = "Categoria creada por el usuario",
                                 UserId = userId,
                                 IsActive = true,
@@ -326,7 +331,6 @@ namespace PersonalFinance.Api.Services
                             _context.Categories.Add(newCat);
                             await _context.SaveChangesAsync();
                             categoryId = newCat.Id;
-                            // Añadir al diccionario usando la misma normalización
                             categories[CleanString(newCat.Name)] = newCat.Id;
                         }
                         else
@@ -335,12 +339,10 @@ namespace PersonalFinance.Api.Services
                         }
                     }
 
-                    // Si hay Loan especificado y existe en el diccionario, asignarlo
                     if (!string.IsNullOrWhiteSpace(loanName) && loansDict.ContainsKey(loanName))
-                    {
                         loanId = loansDict[loanName];
-                    }
 
+                    // ✅ Crear Income/Expense
                     if (isTransfer)
                     {
                         var bankDestinationId = banksDict[bankDestinationName];
@@ -432,6 +434,7 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
             return result;
         }
+
 
 
     }
