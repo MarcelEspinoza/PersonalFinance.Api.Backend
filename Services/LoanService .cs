@@ -29,6 +29,8 @@ namespace PersonalFinance.Api.Services
 
         public async Task<Loan> CreateLoanAsync(LoanDto dto)
         {
+            if (dto == null) throw new ArgumentNullException(nameof(dto));
+
             // Mapear propiedades escalares con AutoMapper (el MappingProfile ignora navegaciones en ReverseMap)
             var loan = _mapper.Map<Loan>(dto);
 
@@ -36,36 +38,25 @@ namespace PersonalFinance.Api.Services
             if (loan.Id == Guid.Empty)
                 loan.Id = Guid.NewGuid();
 
-            // Resolver Category por Id si el DTO expone CategoryId
-            if (dto is not null && dto.GetType().GetProperty("CategoryId") is not null)
+            // Resolver Category por Id si el DTO incluye uno válido (> 0)
+            // Nota: LoanDto.CategoryId es int en tu DTO actual.
+            if (dto.CategoryId > 0)
             {
-                var categoryIdProp = dto.GetType().GetProperty("CategoryId")!;
-                var categoryId = (Guid?)categoryIdProp.GetValue(dto);
-                if (categoryId.HasValue)
-                {
-                    var category = await _context.Set<Category>().FindAsync(categoryId.Value);
-                    if (category != null) loan.Category = category;
-                }
+                var category = await _context.Categories.FindAsync(dto.CategoryId);
+                if (category != null) loan.Category = category;
             }
 
-            // Resolver Pasanaco por Id si el DTO expone PasanacoId
-            if (dto is not null && dto.GetType().GetProperty("PasanacoId") is not null)
+            // Resolver Pasanaco por Id si el DTO incluye uno (PasanacoId es string? en tu DTO actual)
+            if (!string.IsNullOrWhiteSpace(dto.PasanacoId))
             {
-                var pasanacoIdProp = dto.GetType().GetProperty("PasanacoId")!;
-                var pasanacoId = (Guid?)pasanacoIdProp.GetValue(dto);
-                if (pasanacoId.HasValue)
-                {
-                    var pasanaco = await _context.Set<Pasanaco>().FindAsync(pasanacoId.Value);
-                    if (pasanaco != null) loan.Pasanaco = pasanaco;
-                }
+                var pasanaco = await _context.Pasanacos.FindAsync(dto.PasanacoId);
+                if (pasanaco != null) loan.Pasanaco = pasanaco;
             }
 
             _context.Loans.Add(loan);
             await _context.SaveChangesAsync();
             return loan;
         }
-        
-        
 
         public async Task DeleteLoanAsync(Guid id)
         {
@@ -77,6 +68,7 @@ namespace PersonalFinance.Api.Services
             }
         }
 
+        // Nota: actualicé la firma para aceptar el id de la ruta más explícitamente
         public async Task UpdateLoanAsync(Guid id, LoanDto dto)
         {
             if (dto == null) throw new ArgumentNullException(nameof(dto));
@@ -93,42 +85,33 @@ namespace PersonalFinance.Api.Services
             // Asumimos que el MappingProfile actualiza sólo propiedades escalares y no navegaciones complejas.
             _mapper.Map(dto, loan);
 
-            // Reafirmar el Id por seguridad
+            // Reafirmar el Id desde la ruta (no confiar en que el cliente pase el id en el body)
             loan.Id = id;
 
-            // Resolver Category por Id si el DTO expone CategoryId (mismo enfoque que en CreateLoanAsync)
-            if (dto is not null && dto.GetType().GetProperty("CategoryId") is not null)
+            // CategoryId: si el DTO contiene un id > 0 lo resolvemos; si viene 0 (o falta), lo limpiamos.
+            if (dto.CategoryId > 0)
             {
-                var categoryIdProp = dto.GetType().GetProperty("CategoryId")!;
-                var categoryId = (Guid?)categoryIdProp.GetValue(dto);
-                if (categoryId.HasValue)
-                {
-                    var category = await _context.Set<Category>().FindAsync(categoryId.Value);
-                    loan.Category = category; // puede ser null si no se encuentra
-                }
-                else
-                {
-                    loan.Category = null;
-                }
+                var category = await _context.Categories.FindAsync(dto.CategoryId);
+                loan.Category = category; // puede quedar null si no existe la categoría
+            }
+            else
+            {
+                // Si el cliente envía 0 explícito o no quiere categoría, limpiamos la relación.
+                loan.Category = null;
             }
 
-            // Resolver Pasanaco por Id si el DTO expone PasanacoId
-            if (dto is not null && dto.GetType().GetProperty("PasanacoId") is not null)
+            // PasanacoId: si el DTO contiene cadena no vacía la resolvemos, si viene null/empty limpiamos.
+            if (!string.IsNullOrWhiteSpace(dto.PasanacoId))
             {
-                var pasanacoIdProp = dto.GetType().GetProperty("PasanacoId")!;
-                var pasanacoId = (Guid?)pasanacoIdProp.GetValue(dto);
-                if (pasanacoId.HasValue)
-                {
-                    var pasanaco = await _context.Set<Pasanaco>().FindAsync(pasanacoId.Value);
-                    loan.Pasanaco = pasanaco; // puede ser null si no se encuentra
-                }
-                else
-                {
-                    loan.Pasanaco = null;
-                }
+                var pasanaco = await _context.Pasanacos.FindAsync(dto.PasanacoId);
+                loan.Pasanaco = pasanaco; // puede quedar null si no existe el pasanaco
+            }
+            else
+            {
+                loan.Pasanaco = null;
             }
 
-            // Nota: no se manipulan explicitamente las colecciones Payments aquí para evitar problemas
+            // Nota: no se manipulan explícitamente las colecciones Payments aquí para evitar problemas
             // de sincronización sin una especificación clara de cómo deben actualizarse.
 
             // Guardar cambios
