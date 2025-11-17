@@ -1,5 +1,4 @@
-﻿
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Bank;
 using PersonalFinance.Api.Models.Entities;
@@ -87,7 +86,9 @@ namespace PersonalFinance.Api.Services
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            var systemTotal = incomeTotal + expenseTotal; // note: expense.Amount should be negative in your model; keep original logic
+            // FIX: Expenses.Amount in your DB are positive values. The system total should be net (income - expense).
+            // Previous code added them (incomeTotal + expenseTotal) which yields the wrong result (sum of absolutes).
+            var systemTotal = incomeTotal - expenseTotal;
 
             // If bankId provided, try to find Reconciliation with that bank/month for closing balance
             decimal closingBalance = 0m;
@@ -128,6 +129,7 @@ namespace PersonalFinance.Api.Services
                     .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end)
                     .Select(i => new { i.Id, i.Amount, i.Description, i.Date })
                     .ToListAsync(ct);
+                // incomes are positive amounts
                 txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date)));
             }
 
@@ -137,10 +139,11 @@ namespace PersonalFinance.Api.Services
                     .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end)
                     .Select(e => new { e.Id, e.Amount, e.Description, e.Date })
                     .ToListAsync(ct);
-                txList.AddRange(expenses.Select(e => (e.Id, e.Amount, e.Description ?? string.Empty, e.Date)));
+                // FIX: treat expense amounts as negative so matching and net calculations are consistent
+                txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date)));
             }
 
-            // Simple exact match suggestions: amounts that equal the difference or pairs that sum to a recon diff
+            // Simple exact match suggestions: amounts that equal the difference (very rare) or if amount close to difference
             // Note: we do NOT return "do the cuadre for me" — we return candidate transactions to check
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
@@ -201,4 +204,3 @@ namespace PersonalFinance.Api.Services
         }
     }
 }
-
