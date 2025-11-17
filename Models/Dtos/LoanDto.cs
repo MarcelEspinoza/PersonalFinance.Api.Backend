@@ -9,6 +9,7 @@ namespace PersonalFinance.Api.Models.Dtos
 {
     public class LoanDto
     {
+        public Guid Id { get; set; }
         public Guid UserId { get; set; }
 
         // Type / basic info
