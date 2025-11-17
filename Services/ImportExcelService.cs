@@ -360,7 +360,9 @@ namespace PersonalFinance.Api.Services
                             TransferId = tId,
                             TransferCounterpartyBankId = bankDestinationId,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
-                            LoanId = loanId
+                            LoanId = loanId,
+                            Start_Date = dateUtc,
+                            IsIndefinite = true
                         };
 
                         var income = new Income
@@ -377,7 +379,9 @@ namespace PersonalFinance.Api.Services
                             TransferId = tId,
                             TransferCounterpartyBankId = bankOriginId,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
-                            LoanId = loanId
+                            LoanId = loanId,
+                            Start_Date = dateUtc,
+                            IsIndefinite = true
                         };
 
                         _context.Expenses.Add(expense);
