@@ -15,8 +15,8 @@ namespace PersonalFinance.Api.Models.Entities
         [Column(TypeName = "decimal(18,2)")]
         public decimal OutstandingAmount { get; set; }
 
-        public DateTime StartDate { get; set; }
-        public DateTime? DueDate { get; set; }
+        public DateTimeOffset StartDate { get; set; }
+        public DateTimeOffset? DueDate { get; set; }
 
         public string Status { get; set; } = "active";
 
@@ -29,7 +29,7 @@ namespace PersonalFinance.Api.Models.Entities
         public int? InstallmentsRemaining { get; set; }
         [Column(TypeName = "decimal(18,2)")]
         public decimal? NextPaymentAmount { get; set; }
-        public DateTime? NextPaymentDate { get; set; }
+        public DateTimeOffset? NextPaymentDate { get; set; }
 
         // 👇 Nueva relación
         public int CategoryId { get; set; }
