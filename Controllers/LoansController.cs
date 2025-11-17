@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PersonalFinance.Api.Models.Dtos;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
@@ -38,7 +39,7 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> CreateLoan([FromBody] Loan loan)
+        public async Task<IActionResult> CreateLoan([FromBody] LoanDto loan)
         {
             var created = await _loanService.CreateLoanAsync(loan);
             return Ok(created);
