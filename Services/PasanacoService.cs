@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models;
+using PersonalFinance.Api.Models.Dtos;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Models.Entities;
@@ -285,7 +286,7 @@ namespace PersonalFinance.Api.Services
             if (amount <= 0) throw new ValidationException("El importe del préstamo debe ser mayor que 0");
 
             // Crear Loan: ahora guardamos PasanacoId para relacionarlo
-            var loan = new Loan
+            var loan = new LoanDto
             {
                 Id = Guid.NewGuid(),
                 UserId = userId, // propietario del pasanaco
@@ -296,7 +297,7 @@ namespace PersonalFinance.Api.Services
                 StartDate = DateTime.UtcNow,
                 Status = "active",
                 CategoryId = DefaultCategories.PersonalLoan,
-                PasanacoId = pasanacoId // <-- asignamos relación explícita
+                PasanacoId = pasanacoId 
             };
 
             var createdLoan = await loanService.CreateLoanAsync(loan);
@@ -418,7 +419,7 @@ namespace PersonalFinance.Api.Services
                 {
                     foreach (var up in unpaid)
                     {
-                        var loan = new Loan
+                        var loan = new LoanDto
                         {
                             Id = Guid.NewGuid(),
                             UserId = userId,

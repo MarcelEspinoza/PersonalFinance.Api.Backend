@@ -12,22 +12,18 @@ namespace PersonalFinance.Api.MappingProfiles
 {
     /*
     PSEUDOCÓDIGO / PLAN (detallado):
-    1. Crear mappings para entidades relacionadas usadas por LoanDto:
+    1. Asegurar mappings bidireccionales entre entidades y DTOs usados por Loan:
        - Category <-> CreateCategoryDto
-       - LoanPayment <-> LoanPaymentDto
+       - LoanPayment <-> LoanPaymentDto (ignorar navegación a Loan al mapear hacia la entidad)
        - Pasanaco <-> PasanacoDto
-    2. Definir mapping principal Loan <-> LoanDto:
-       - Mapeo directo de propiedades compatibles (Id, UserId, Type, Name, PrincipalAmount, OutstandingAmount, StartDate, DueDate, Status, InterestRate, TAE, InstallmentsPaid, InstallmentsRemaining, NextPaymentAmount, NextPaymentDate, CategoryId, PasanacoId)
-       - Mapear navegaciones: Category -> Category DTO, Payments -> List<LoanPaymentDto>, Pasanaco -> PasanacoDto
-    3. En ReverseMap (LoanDto -> Loan):
-       - Evitar mapear las navegaciones complejas (Category, Payments, Pasanaco) para que la capa de servicio controle la resolución por Id (responsabilidad clara).
-       - Permitir mapear datos escalares y GUIDs directamente ya que tanto Loan y LoanDto usan Guid para UserId.
-    4. Añadir ReverseMap para las entidades auxiliares y en caso necesario ignorar navegaciones circulares (por ejemplo Loan dentro de LoanPayment).
-    5. Mantener coherencia con el estilo del proyecto y comentarios en español explicando decisiones.
+    2. Definir mapping explícito Loan <-> LoanDto:
+       - Mapear propiedades escalares (Id, UserId, Type, Name, PrincipalAmount, OutstandingAmount, StartDate, DueDate, Status, InterestRate, TAE, InstallmentsPaid, InstallmentsRemaining, NextPaymentAmount, NextPaymentDate, CategoryId, PasanacoId)
+       - Mapear navegaciones desde entidad hacia DTO: Category, Payments, Pasanaco
+       - En ReverseMap (LoanDto -> Loan) ignorar navegaciones complejas (Category, Payments, Pasanaco) para que la capa de servicio controle la resolución por Id
+    3. Mantener ReverseMap para entidades auxiliares y evitar ciclos.
+    4. Comentarios en español explicando decisiones.
     */
 
-    // Central AutoMapper profile: ajusta los nombres de DTO si tu proyecto usa convenciones distintas.
-    // Este archivo mapea todas las entidades del folder Models/Entities a DTOs esperados en Models/Dtos.
     public class MappingProfile : Profile
     {
         public MappingProfile()
@@ -35,15 +31,7 @@ namespace PersonalFinance.Api.MappingProfiles
             // --------------------
             // User / Auth
             // --------------------
-            // RegisterRequestDto -> CreateUserDto
             CreateMap<RegisterRequestDto, CreateUserDto>();
-
-            // ApplicationUser -> UserDto
-            //CreateMap<ApplicationUser, UserDto>()
-            //    .ForMember(d => d.Id, opt => opt.MapFrom(s => s.Id.ToString()))
-            //    .ReverseMap()
-            //    // Evitar intentar mapear string -> Guid directo desde DTO. Dejar que el servicio controle el Id.
-            //    .ForMember(d => d.Id, opt => opt.Ignore());
 
             // --------------------
             // Bank / Category
@@ -59,11 +47,8 @@ namespace PersonalFinance.Api.MappingProfiles
                 .ForMember(d => d.CategoryName, opt => opt.MapFrom(s => s.Category != null ? s.Category.Name : null))
                 .ForMember(d => d.TransferReference, opt => opt.MapFrom(s => s.TransferReference))
                 .ReverseMap()
-                // Ignorar navegaciones al mapear desde DTO hacia la entidad; el servicio debe asignarlas por Id.
                 .ForMember(d => d.Bank, opt => opt.Ignore())
-                .ForMember(d => d.Category, opt => opt.Ignore())
-                // Si el DTO contiene BankId/CategoryId como string, manejar parsing en el servicio/handler.
-                ;
+                .ForMember(d => d.Category, opt => opt.Ignore());   
 
             CreateMap<Expense, ExpenseDto>()
                 .ForMember(d => d.BankName, opt => opt.MapFrom(s => s.Bank != null ? s.Bank.Name : null))
@@ -71,8 +56,7 @@ namespace PersonalFinance.Api.MappingProfiles
                 .ForMember(d => d.TransferReference, opt => opt.MapFrom(s => s.TransferReference))
                 .ReverseMap()
                 .ForMember(d => d.Bank, opt => opt.Ignore())
-                .ForMember(d => d.Category, opt => opt.Ignore())
-                ;
+                .ForMember(d => d.Category, opt => opt.Ignore());
 
             // --------------------
             // Loans (mappings añadidos / corregidos)
@@ -80,15 +64,17 @@ namespace PersonalFinance.Api.MappingProfiles
 
             // Mapeo auxiliar para pagos de préstamo
             CreateMap<LoanPayment, LoanPaymentDto>()
-                // Evitar mapear la navegación Loan al hacer ReverseMap para prevenir ciclos y delegar resolución en servicio
+                // Mapear campos simples por convención
+                .ForMember(d => d.ExpenseId, opt => opt.MapFrom(s => s.ExpenseId))
                 .ReverseMap()
+                // Evitar mapear la navegación Loan al hacer ReverseMap para prevenir ciclos y delegar resolución en servicio
                 .ForMember(d => d.Loan, opt => opt.Ignore());
 
-            // Mapeo Pasanaco <-> PasanacoDto (si se requiere)
+            // Mapeo Pasanaco <-> PasanacoDto
             CreateMap<Pasanaco, PasanacoDto>().ReverseMap();
 
             // Loan <-> LoanDto: mapear propiedades escalares en automático,
-            // mapear colecciones/navegaciones desde entidad hacia DTO,
+            // mapear colecciones/navegaciones desde entidad hacia DTOs,
             // y en ReverseMap ignorar navegaciones para que el servicio use Ids.
             CreateMap<Loan, LoanDto>()
                 // propiedades simples y guids se mapearán por convención
@@ -103,20 +89,12 @@ namespace PersonalFinance.Api.MappingProfiles
                 // Ignorar navegaciones complejas al mapear desde DTO hacia la entidad; el servicio debe asignarlas por Id.
                 .ForMember(d => d.Category, opt => opt.Ignore())
                 .ForMember(d => d.Payments, opt => opt.Ignore())
-                .ForMember(d => d.Pasanaco, opt => opt.Ignore())
-                ;
+                .ForMember(d => d.Pasanaco, opt => opt.Ignore());
 
             // --------------------
             // Reconciliation / Other small entities
             // --------------------
             CreateMap<Reconciliation, ReconciliationDto>().ReverseMap();
-
-            // --------------------
-            // Fallbacks / notas:
-            // - Si en el futuro agregas DTOs que contienen Ids como string, sigue la misma convención:
-            //   entidad.Guid -> dto.string via ToString()
-            //   dto.string -> entidad.Guid : Ignorar y hacer parseo en la capa de servicio/handler.
-            // - Evitar mapear navegaciones complejas desde DTOs para mantener la responsabilidad clara.
         }
     }
 }
