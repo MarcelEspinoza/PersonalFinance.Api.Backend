@@ -77,8 +77,7 @@ namespace PersonalFinance.Api.Services
             {
                 incomeTotal = await _db.Set<Income>()
                     .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value)
-                                && !i.IsTransfer)
+                                && (!bankId.HasValue || i.BankId == bankId.Value))
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
@@ -86,8 +85,7 @@ namespace PersonalFinance.Api.Services
             {
                 expenseTotal = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value)
-                                && !e.IsTransfer)
+                                && (!bankId.HasValue || e.BankId == bankId.Value))
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
@@ -118,8 +116,7 @@ namespace PersonalFinance.Api.Services
             {
                 var incomes = await _db.Set<Income>()
                     .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value)
-                                && !i.IsTransfer)
+                                && (!bankId.HasValue || i.BankId == bankId.Value))
                     .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
                     .ToListAsync(ct);
 
@@ -130,8 +127,7 @@ namespace PersonalFinance.Api.Services
             {
                 var expenses = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value)
-                                && !e.IsTransfer)
+                                && (!bankId.HasValue || e.BankId == bankId.Value)                                )
                     .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
                     .ToListAsync(ct);
 
