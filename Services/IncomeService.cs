@@ -140,6 +140,7 @@ namespace PersonalFinance.Api.Services
             income.End_Date = dto.End_Date?.ToUniversalTime();
             income.Notes = dto.Notes;
             income.LoanId = dto.LoanId;
+            income.BankId = dto.BankId;
             if (dto.IsIndefinite.HasValue) income.IsIndefinite = dto.IsIndefinite.Value;
 
             _context.Incomes.Update(income);

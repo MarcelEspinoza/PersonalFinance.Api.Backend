@@ -1,4 +1,6 @@
-﻿namespace PersonalFinance.Api.Models.Dtos.Income;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+
+namespace PersonalFinance.Api.Models.Dtos.Income;
 public class UpdateIncomeDto
 {
     public decimal? Amount { get; set; }
@@ -13,4 +15,6 @@ public class UpdateIncomeDto
     // 👇 opcional
     public Guid? LoanId { get; set; }
     public bool? IsIndefinite { get; set; }
+
+    public Guid? BankId { get; set; }
 }

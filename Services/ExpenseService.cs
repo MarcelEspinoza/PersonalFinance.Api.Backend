@@ -129,6 +129,7 @@ namespace PersonalFinance.Api.Services
             expense.End_Date = dto.End_Date;
             expense.Notes = dto.Notes;
             expense.LoanId = dto.LoanId;
+            expense.BankId = dto.BankId;
             if (dto.IsIndefinite.HasValue) expense.IsIndefinite = dto.IsIndefinite.Value;
 
             _context.Expenses.Update(expense);
