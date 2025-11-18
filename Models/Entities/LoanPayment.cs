@@ -15,5 +15,8 @@ namespace PersonalFinance.Api.Models.Entities
         // Opcional: referencia al Expense que lo originó (recomendado)
         public int? ExpenseId { get; set; }
         public Expense? Expense { get; set; }
+
+        public int? IncomeId { get; set; }
+        public Income? Income { get; set; }
     }
 }
