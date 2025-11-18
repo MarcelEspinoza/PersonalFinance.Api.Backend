@@ -40,12 +40,28 @@ namespace PersonalFinance.Api.Services
             // Defensive check: don't proceed with an empty BankId
             if (dto.BankId == Guid.Empty)
             {
-                Console.WriteLine($"Reconciliation.CreateAsync received invalid BankId=Guid.Empty from user {userId}. Payload: Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
+                try
+                {
+                    Console.WriteLine($"Reconciliation.CreateAsync received invalid BankId=Guid.Empty from user {userId}. Payload: Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
+                }
+                catch (Exception logEx)
+                {
+                    // swallowing logging exceptions to avoid request crash; write minimal fallback
+                    Console.WriteLine("Reconciliation.CreateAsync: logging failed: " + logEx.Message);
+                }
+
                 throw new ArgumentException("BankId is required and must be a valid GUID.", nameof(dto.BankId));
             }
 
-            // Debug output (Console.WriteLine is OK for quick debugging)
-            Console.WriteLine($"Reconciliation.CreateAsync called by user {userId}. Payload: BankId={dto.BankId}, Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
+            // Debug output (safe wrapped)
+            try
+            {
+                Console.WriteLine($"Reconciliation.CreateAsync called by user {userId}. Payload: BankId={dto.BankId}, Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
+            }
+            catch (Exception logEx)
+            {
+                Console.WriteLine("Reconciliation.CreateAsync: logging failed: " + logEx.Message);
+            }
 
             // avoid duplicates: update if exists for same bank/year/month
             var existing = await _db.Set<Reconciliation>()
@@ -60,7 +76,11 @@ namespace PersonalFinance.Api.Services
 
                 await _db.SaveChangesAsync(ct);
 
-                Console.WriteLine($"Reconciliation.CreateAsync updated existing reconciliation {existing.Id} for user {userId} bank {dto.BankId}");
+                try
+                {
+                    Console.WriteLine($"Reconciliation.CreateAsync updated existing reconciliation {existing.Id} for user {userId} bank {dto.BankId}");
+                }
+                catch { /* ignore logging errors */ }
                 return existing;
             }
 
@@ -79,7 +99,11 @@ namespace PersonalFinance.Api.Services
             _db.Add(rec);
             await _db.SaveChangesAsync(ct);
 
-            Console.WriteLine($"Reconciliation.CreateAsync created reconciliation {rec.Id} for user {userId} bank {dto.BankId}");
+            try
+            {
+                Console.WriteLine($"Reconciliation.CreateAsync created reconciliation {rec.Id} for user {userId} bank {dto.BankId}");
+            }
+            catch { /* ignore logging errors */ }
 
             return rec;
         }
