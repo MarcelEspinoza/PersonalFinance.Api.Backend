@@ -12,11 +12,13 @@ namespace PersonalFinance.Api.Services
     {
         private readonly AppDbContext _db;
         private readonly IHttpContextAccessor _http;
+        private readonly ILogger<ReconciliationService> _logger;
 
-        public ReconciliationService(AppDbContext db, IHttpContextAccessor http)
+        public ReconciliationService(AppDbContext db, IHttpContextAccessor http, ILogger<ReconciliationService> logger)
         {
             _db = db;
             _http = http;
+            this._logger = logger;
         }
 
         private Guid CurrentUserId()
@@ -34,6 +36,11 @@ namespace PersonalFinance.Api.Services
         public async Task<Reconciliation?> CreateAsync(CreateReconciliationDto dto, CancellationToken ct = default)
         {
             var userId = CurrentUserId();
+
+            // Log incoming request for debugging
+            _logger?.LogInformation("Reconciliation.CreateAsync called by user {UserId}. Payload: BankId={BankId}, Year={Year}, Month={Month}, ClosingBalance={ClosingBalance}",
+                userId, dto.BankId, dto.Year, dto.Month, dto.ClosingBalance);
+
             // avoid duplicates: update if exists for same bank/year/month
             var existing = await _db.Set<Reconciliation>().FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == dto.BankId && r.Year == dto.Year && r.Month == dto.Month, ct);
             if (existing != null)
@@ -43,6 +50,8 @@ namespace PersonalFinance.Api.Services
                 existing.Reconciled = false;
                 existing.ReconciledAt = null;
                 await _db.SaveChangesAsync(ct);
+
+                _logger?.LogInformation("Reconciliation.CreateAsync updated existing reconciliation {RecId} for user {UserId} bank {BankId}", existing.Id, userId, dto.BankId);
                 return existing;
             }
 
@@ -59,8 +68,12 @@ namespace PersonalFinance.Api.Services
             };
             _db.Add(rec);
             await _db.SaveChangesAsync(ct);
+
+            _logger?.LogInformation("Reconciliation.CreateAsync created reconciliation {RecId} for user {UserId} bank {BankId}", rec.Id, userId, dto.BankId);
+
             return rec;
         }
+
 
         public async Task<ReconciliationSuggestionDto> SuggestAsync(int year, int month, Guid? bankId = null, CancellationToken ct = default)
         {

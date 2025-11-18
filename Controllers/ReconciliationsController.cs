@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Models.Dtos.Bank;
 using PersonalFinance.Api.Services.Contracts;
 
-
 namespace PersonalFinance.Api.Controllers
 {
     [ApiController]
@@ -28,6 +27,12 @@ namespace PersonalFinance.Api.Controllers
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateReconciliationDto dto)
         {
+            // Defensive validation: don't accept empty/invalid BankId
+            if (dto.BankId == Guid.Empty)
+            {
+                return BadRequest(new { success = false, message = "BankId is required and must be a valid GUID." });
+            }
+
             var rec = await _service.CreateAsync(dto);
             return CreatedAtAction(nameof(GetForMonth), new { year = rec!.Year, month = rec!.Month }, rec);
         }
@@ -45,8 +50,8 @@ namespace PersonalFinance.Api.Controllers
             var ok = await _service.MarkReconciledAsync(id, reconciledAt);
             if (!ok)
             {
-                var recon = await _service.GetForMonthAsync(DateTime.UtcNow.Year, DateTime.UtcNow.Month); // not ideal: but we return a simple message
-                return BadRequest(new { success = false, message = "No se puede marcar como conciliado: la diferencia entre el sistema y el saldo de cierre no es 0. Revisa las sugerencias y asegura que los saldos sean correctos" });
+                var recon = await _service.GetForMonthAsync(DateTime.UtcNow.Year, DateTime.UtcNow.Month);
+                return BadRequest(new { success = false, message = "No se puede marcar como conciliado: la diferencia entre el sistema y el saldo de cierre no es 0. Revisa las sugerencias y asegura que los montos concuerden." });
             }
             return Ok(new { success = true, message = "Conciliación marcada como reconciliada" });
         }
