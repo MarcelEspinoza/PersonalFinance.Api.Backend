@@ -31,7 +31,10 @@ public class MonthlyService : IMonthlyService
                 CategoryId = i.CategoryId,
                 CategoryName = i.Category != null ? i.Category.Name : "",
                 Type = "income",
-                Source = i.Type.ToLower()
+                Source = i.Type.ToLower(),
+                // NUEVO: exponer si es transferencia y la contraparte para que el frontend pueda filtrar internal transfers
+                IsTransfer = i.IsTransfer,
+                TransferCounterpartyBankId = i.TransferCounterpartyBankId != null ? i.TransferCounterpartyBankId: null
             })
             .ToListAsync(ct);
 
@@ -47,7 +50,10 @@ public class MonthlyService : IMonthlyService
                 CategoryId = e.CategoryId,
                 CategoryName = e.Category != null ? e.Category.Name : "",
                 Type = "expense",
-                Source = e.Type.ToLower()
+                Source = e.Type.ToLower(),
+                // NUEVO: exponer campos de transferencia
+                IsTransfer = e.IsTransfer,
+                TransferCounterpartyBankId = e.TransferCounterpartyBankId != null ? e.TransferCounterpartyBankId : null
             })
             .ToListAsync(ct);
 

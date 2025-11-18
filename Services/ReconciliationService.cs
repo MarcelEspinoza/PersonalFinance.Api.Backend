@@ -108,62 +108,76 @@ namespace PersonalFinance.Api.Services
             return rec;
         }
 
-
         public async Task<ReconciliationSuggestionDto> SuggestAsync(int year, int month, Guid? bankId = null, CancellationToken ct = default)
         {
             var userId = CurrentUserId();
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
+            // Obtener lista de bank ids del usuario para detectar transferencias internas
+            var userBankIds = await _db.Banks
+                .Where(b => b.UserId == userId)
+                .Select(b => b.Id)
+                .ToListAsync(ct);
+
             // Calculate system totals from Incomes and Expenses, filtered by bankId when provided
-            // Ignore internal transfers (IsTransfer = true)
+            // Ignore internal transfers (IsTransfer = true and TransferCounterpartyBankId in user's banks)
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 incomeTotal = await _db.Set<Income>()
-                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value))
+                    .Where(i => i.UserId == userId &&
+                                i.Date >= start && i.Date <= end &&
+                                (!bankId.HasValue || i.BankId == bankId.Value) &&
+                                // Excluir transferencias internas
+                                (!i.IsTransfer
+                                 || i.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value))
+                    )
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 expenseTotal = await _db.Set<Expense>()
-                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value))
+                    .Where(e => e.UserId == userId &&
+                                e.Date >= start && e.Date <= end &&
+                                (!bankId.HasValue || e.BankId == bankId.Value) &&
+                                // Excluir transferencias internas
+                                (!e.IsTransfer
+                                 || e.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value))
+                    )
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            // Net system total for the given bank (or for the whole user if bankId null)
             var systemTotal = incomeTotal - expenseTotal;
 
-            // Get closing balance for bank/month
+            // Get closing balance for bank/month (unchanged)
             decimal closingBalance = 0m;
-            var reconQuery = _db.Reconciliations
-                .Where(r => r.UserId == userId && r.Year == year && r.Month == month);
+            var reconQuery = _db.Reconciliations.Where(r => r.UserId == userId && r.Year == year && r.Month == month);
+            if (bankId.HasValue) reconQuery = reconQuery.Where(r => r.BankId == bankId.Value);
 
-            if (bankId.HasValue)
-                reconQuery = reconQuery.Where(r => r.BankId == bankId.Value);
-
-            var recon = await reconQuery
-                .OrderByDescending(r => r.CreatedAt)
-                .FirstOrDefaultAsync(ct);
-
-            if (recon != null)
-                closingBalance = recon.ClosingBalance;
+            var recon = await reconQuery.OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
+            if (recon != null) closingBalance = recon.ClosingBalance;
 
             var difference = systemTotal - closingBalance;
 
-            // Build transaction list ignoring internal transfers
+            // Build transaction list ignoring internal transfers (same filter as sums)
             var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 var incomes = await _db.Set<Income>()
-                    .Where(i => i.UserId == userId && i.Date >= start && i.Date <= end
-                                && (!bankId.HasValue || i.BankId == bankId.Value))
+                    .Where(i => i.UserId == userId &&
+                                i.Date >= start && i.Date <= end &&
+                                (!bankId.HasValue || i.BankId == bankId.Value) &&
+                                (!i.IsTransfer
+                                 || i.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value))
+                    )
                     .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
                     .ToListAsync(ct);
 
@@ -173,15 +187,20 @@ namespace PersonalFinance.Api.Services
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 var expenses = await _db.Set<Expense>()
-                    .Where(e => e.UserId == userId && e.Date >= start && e.Date <= end
-                                && (!bankId.HasValue || e.BankId == bankId.Value)                                )
+                    .Where(e => e.UserId == userId &&
+                                e.Date >= start && e.Date <= end &&
+                                (!bankId.HasValue || e.BankId == bankId.Value) &&
+                                (!e.IsTransfer
+                                 || e.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value))
+                    )
                     .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
                     .ToListAsync(ct);
 
                 txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
-            // Build suggestions list
+            // Build suggestions list (unchanged)
             var suggestions = txList
                 .OrderByDescending(t => Math.Abs((double)t.Amount))
                 .Select(t => new
@@ -195,7 +214,7 @@ namespace PersonalFinance.Api.Services
                 })
                 .ToList<object>();
 
-            // Add ExactDiff suggestions if any transaction matches the difference
+            // Add ExactDiff suggestions
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
                 if (Math.Abs(tx.Amount - difference) <= 0.01m)
