@@ -36,8 +36,8 @@ namespace PersonalFinance.Api.Services
             var userId = CurrentUserId();
 
             // Log incoming request for debugging
-            Console.WriteLine("Reconciliation.CreateAsync called by user {UserId}. Payload: BankId={BankId}, Year={Year}, Month={Month}, ClosingBalance={ClosingBalance}",
-                userId, dto.BankId, dto.Year, dto.Month, dto.ClosingBalance);
+            Console.WriteLine(string.Format("Reconciliation.CreateAsync called by user {UserId}. Payload: BankId={BankId}, Year={Year}, Month={Month}, ClosingBalance={ClosingBalance}",
+                userId, dto.BankId, dto.Year, dto.Month, dto.ClosingBalance));
 
             // avoid duplicates: update if exists for same bank/year/month
             var existing = await _db.Set<Reconciliation>().FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == dto.BankId && r.Year == dto.Year && r.Month == dto.Month, ct);
@@ -49,7 +49,7 @@ namespace PersonalFinance.Api.Services
                 existing.ReconciledAt = null;
                 await _db.SaveChangesAsync(ct);
 
-                Console.WriteLine("Reconciliation.CreateAsync updated existing reconciliation {RecId} for user {UserId} bank {BankId}", existing.Id, userId, dto.BankId);
+                Console.WriteLine(string.Format("Reconciliation.CreateAsync updated existing reconciliation {RecId} for user {UserId} bank {BankId}", existing.Id, userId, dto.BankId));
                 return existing;
             }
 
@@ -67,7 +67,7 @@ namespace PersonalFinance.Api.Services
             _db.Add(rec);
             await _db.SaveChangesAsync(ct);
 
-            Console.WriteLine("Reconciliation.CreateAsync created reconciliation {RecId} for user {UserId} bank {BankId}", rec.Id, userId, dto.BankId);
+            Console.WriteLine(string.Format("Reconciliation.CreateAsync created reconciliation {RecId} for user {UserId} bank {BankId}", rec.Id, userId, dto.BankId));
 
             return rec;
         }
