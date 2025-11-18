@@ -20,6 +20,15 @@ namespace PersonalFinance.Api.Services
             _mapper = mapper;
         }
 
+        private static DateTime NormalizeToUtc(DateTime d)
+        {
+            if (d.Kind == DateTimeKind.Utc) return d;
+            if (d.Kind == DateTimeKind.Local) return d.ToUniversalTime();
+            return DateTime.SpecifyKind(d, DateTimeKind.Utc);
+        }
+
+        private static DateTime? NormalizeNullable(DateTime? d) => d.HasValue ? NormalizeToUtc(d.Value) : (DateTime?)null;
+
         public async Task<IEnumerable<IncomeDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
             return await _context.Incomes
@@ -43,10 +52,10 @@ namespace PersonalFinance.Api.Services
             if (dto.Amount <= 0) throw new ArgumentException("Amount must be greater than zero", nameof(dto.Amount));
             if (dto.Date == default) throw new ArgumentException("Date is required", nameof(dto.Date));
 
-            // Convertir fechas a UTC
-            var dateUtc = dto.Date.ToUniversalTime();
-            var startUtc = dto.Start_Date?.ToUniversalTime();
-            var endUtc = dto.End_Date?.ToUniversalTime();
+            // Convertir/normalizar fechas a UTC
+            var dateUtc = NormalizeToUtc(dto.Date);
+            var startUtc = NormalizeNullable(dto.Start_Date);
+            var endUtc = NormalizeNullable(dto.End_Date);
 
             // Validar categoría
             var categoryExists = await _context.Categories.AnyAsync(c => c.Id == dto.CategoryId, ct);
@@ -133,11 +142,11 @@ namespace PersonalFinance.Api.Services
             // Actualizar campos
             if (dto.Amount.HasValue) income.Amount = dto.Amount.Value;
             if (dto.Description != null) income.Description = dto.Description;
-            if (dto.Date.HasValue) income.Date = dto.Date.Value.ToUniversalTime();
+            if (dto.Date.HasValue) income.Date = NormalizeToUtc(dto.Date.Value);
             if (dto.CategoryId.HasValue) income.CategoryId = dto.CategoryId.Value;
             if (dto.Type != null) income.Type = dto.Type;
-            income.Start_Date = dto.Start_Date?.ToUniversalTime();
-            income.End_Date = dto.End_Date?.ToUniversalTime();
+            income.Start_Date = NormalizeNullable(dto.Start_Date);
+            income.End_Date = NormalizeNullable(dto.End_Date);
             income.Notes = dto.Notes;
             income.LoanId = dto.LoanId;
             income.BankId = dto.BankId;

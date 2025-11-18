@@ -20,6 +20,18 @@ namespace PersonalFinance.Api.Services
             _mapper = mapper;
         }
 
+        // Helper: normalize DateTime to UTC in a safe way
+        private static DateTime NormalizeToUtc(DateTime d)
+        {
+            if (d.Kind == DateTimeKind.Utc) return d;
+            if (d.Kind == DateTimeKind.Local) return d.ToUniversalTime();
+            // Unspecified: assume the incoming value is already UTC (common when client sends ISO with Z but model binder sets Unspecified).
+            // If your frontend sends local times without timezone and you want to interpret them as local, change this behavior.
+            return DateTime.SpecifyKind(d, DateTimeKind.Utc);
+        }
+
+        private static DateTime? NormalizeNullable(DateTime? d) => d.HasValue ? NormalizeToUtc(d.Value) : (DateTime?)null;
+
         public async Task<IEnumerable<ExpenseDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
             return await _context.Expenses
@@ -43,23 +55,33 @@ namespace PersonalFinance.Api.Services
             if (dto.Amount <= 0) throw new ArgumentException("Amount must be > 0");
             if (dto.Date == default) throw new ArgumentException("Date is required");
 
+            // Normalize incoming dates to UTC
+            var dateUtc = NormalizeToUtc(dto.Date);
+            var startUtc = NormalizeNullable(dto.Start_Date);
+            var endUtc = NormalizeNullable(dto.End_Date);
+
             var expense = new Expense
             {
                 Amount = dto.Amount,
                 Description = dto.Description,
-                Date = dto.Date,
+                Date = dateUtc,
                 Type = dto.Type,
                 CategoryId = dto.CategoryId,
                 UserId = userId,
-                Start_Date = dto.Start_Date,
-                End_Date = dto.End_Date,
+                Start_Date = startUtc,
+                End_Date = endUtc,
                 Notes = dto.Notes,
                 LoanId = dto.LoanId,
-                IsIndefinite = dto.IsIndefinite ?? false
+                IsIndefinite = dto.IsIndefinite ?? false,
+                BankId = dto.BankId,
+                IsTransfer = dto.IsTransfer,
+                TransferId = dto.TransferId,
+                TransferCounterpartyBankId = dto.TransferCounterpartyBankId,
+                TransferReference = dto.TransferReference
             };
 
             _context.Expenses.Add(expense);
-            await _context.SaveChangesAsync(ct); // 👈 primero guardamos, ya tenemos Expense.Id
+            await _context.SaveChangesAsync(ct); // guardamos para obtener expense.Id
 
             // === Caso 1: gasto vinculado a préstamo ===
             if (expense.LoanId.HasValue && (expense.CategoryId == DefaultCategories.PersonalLoan || expense.CategoryId == DefaultCategories.BankLoan))
@@ -84,7 +106,7 @@ namespace PersonalFinance.Api.Services
                 await _context.SaveChangesAsync(ct);
             }
 
-            // === Caso 2: gasto de ahorro (categoría especial 200) ===
+            // === Caso 2: gasto de ahorro ===
             if (expense.CategoryId == DefaultCategories.Savings)
             {
                 var account = await _context.SavingAccounts.FirstOrDefaultAsync(a => a.UserId == userId, ct);
@@ -112,6 +134,7 @@ namespace PersonalFinance.Api.Services
 
             return expense;
         }
+
         public async Task<bool> UpdateAsync(int id, Guid userId, UpdateExpenseDto dto, CancellationToken ct = default)
         {
             var expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
@@ -122,15 +145,19 @@ namespace PersonalFinance.Api.Services
 
             if (dto.Amount.HasValue) expense.Amount = dto.Amount.Value;
             if (dto.Description != null) expense.Description = dto.Description;
-            if (dto.Date.HasValue) expense.Date = dto.Date.Value;
+            if (dto.Date.HasValue) expense.Date = NormalizeToUtc(dto.Date.Value);
             if (dto.CategoryId.HasValue) expense.CategoryId = dto.CategoryId.Value;
             if (dto.Type != null) expense.Type = dto.Type;
-            expense.Start_Date = dto.Start_Date;
-            expense.End_Date = dto.End_Date;
+            expense.Start_Date = NormalizeNullable(dto.Start_Date);
+            expense.End_Date = NormalizeNullable(dto.End_Date);
             expense.Notes = dto.Notes;
             expense.LoanId = dto.LoanId;
             expense.BankId = dto.BankId;
             if (dto.IsIndefinite.HasValue) expense.IsIndefinite = dto.IsIndefinite.Value;
+            if (dto.IsTransfer) expense.IsTransfer = dto.IsTransfer;
+            if (dto.TransferCounterpartyBankId.HasValue) expense.TransferCounterpartyBankId = dto.TransferCounterpartyBankId;
+            if (dto.TransferId != null) expense.TransferId = dto.TransferId;
+            if (dto.TransferReference != null) expense.TransferReference = dto.TransferReference;
 
             _context.Expenses.Update(expense);
 
