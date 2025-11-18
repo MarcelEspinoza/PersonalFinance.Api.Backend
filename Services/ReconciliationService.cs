@@ -33,23 +33,34 @@ namespace PersonalFinance.Api.Services
 
         public async Task<Reconciliation?> CreateAsync(CreateReconciliationDto dto, CancellationToken ct = default)
         {
+            if (dto == null) throw new ArgumentNullException(nameof(dto));
+
             var userId = CurrentUserId();
 
-            // Log incoming request for debugging
-            Console.WriteLine(string.Format("Reconciliation.CreateAsync called by user {UserId}. Payload: BankId={BankId}, Year={Year}, Month={Month}, ClosingBalance={ClosingBalance}",
-                userId, dto.BankId, dto.Year, dto.Month, dto.ClosingBalance));
+            // Defensive check: don't proceed with an empty BankId
+            if (dto.BankId == Guid.Empty)
+            {
+                Console.WriteLine($"Reconciliation.CreateAsync received invalid BankId=Guid.Empty from user {userId}. Payload: Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
+                throw new ArgumentException("BankId is required and must be a valid GUID.", nameof(dto.BankId));
+            }
+
+            // Debug output (Console.WriteLine is OK for quick debugging)
+            Console.WriteLine($"Reconciliation.CreateAsync called by user {userId}. Payload: BankId={dto.BankId}, Year={dto.Year}, Month={dto.Month}, ClosingBalance={dto.ClosingBalance}");
 
             // avoid duplicates: update if exists for same bank/year/month
-            var existing = await _db.Set<Reconciliation>().FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == dto.BankId && r.Year == dto.Year && r.Month == dto.Month, ct);
+            var existing = await _db.Set<Reconciliation>()
+                .FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == dto.BankId && r.Year == dto.Year && r.Month == dto.Month, ct);
+
             if (existing != null)
             {
                 existing.ClosingBalance = dto.ClosingBalance;
                 existing.Notes = dto.Notes;
                 existing.Reconciled = false;
                 existing.ReconciledAt = null;
+
                 await _db.SaveChangesAsync(ct);
 
-                Console.WriteLine(string.Format("Reconciliation.CreateAsync updated existing reconciliation {RecId} for user {UserId} bank {BankId}", existing.Id, userId, dto.BankId));
+                Console.WriteLine($"Reconciliation.CreateAsync updated existing reconciliation {existing.Id} for user {userId} bank {dto.BankId}");
                 return existing;
             }
 
@@ -64,10 +75,11 @@ namespace PersonalFinance.Api.Services
                 Notes = dto.Notes,
                 CreatedAt = DateTime.UtcNow
             };
+
             _db.Add(rec);
             await _db.SaveChangesAsync(ct);
 
-            Console.WriteLine(string.Format("Reconciliation.CreateAsync created reconciliation {RecId} for user {UserId} bank {BankId}", rec.Id, userId, dto.BankId));
+            Console.WriteLine($"Reconciliation.CreateAsync created reconciliation {rec.Id} for user {userId} bank {dto.BankId}");
 
             return rec;
         }
