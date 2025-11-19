@@ -73,7 +73,8 @@ namespace PersonalFinance.Api.Services
                 End_Date = endUtc,
                 Notes = dto.Notes,
                 LoanId = dto.LoanId,
-                IsIndefinite = dto.IsIndefinite ?? false
+                IsIndefinite = dto.IsIndefinite ?? false,
+                BankId = dto.BankId                
             };
 
             _context.Incomes.Add(income);

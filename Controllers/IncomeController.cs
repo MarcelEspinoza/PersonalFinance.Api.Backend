@@ -88,7 +88,8 @@
                     end_Date = created.End_Date,
                     notes = created.Notes,
                     categoryId = created.CategoryId,
-                    loanId = created.LoanId
+                    loanId = created.LoanId,
+                    bankId = created.BankId
                 });
             }
             catch (ArgumentException ex)
