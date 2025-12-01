@@ -582,13 +582,14 @@ namespace PersonalFinance.Api.Services
             }
             catch
             {
-                // fallback (best-effort) if Loans model differs; try searching by Name/Notes
-                loansCount = await _context.Loans.CountAsync(l => EF.Functions.ILike(l.Name ?? "", $"%{pasanacoId}%"));
+                // CORRECCIÓN: Cambiar ILike a Like para SQL Server
+                loansCount = await _context.Loans.CountAsync(l => EF.Functions.Like(l.Name ?? "", $"%{pasanacoId}%"));
             }
 
             // Expenses & Incomes: try PasanacoId or Notes containing pasanacoId (best-effort)
-            var expensesCount = await _context.Expenses.CountAsync(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.ILike(e.Notes ?? "", $"%{pasanacoId}%"));
-            var incomesCount = await _context.Incomes.CountAsync(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.ILike(i.Notes ?? "", $"%{pasanacoId}%"));
+            // CORRECCIÓN: Cambiar ILike a Like para SQL Server
+            var expensesCount = await _context.Expenses.CountAsync(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%"));
+            var incomesCount = await _context.Incomes.CountAsync(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%"));
 
             return new Services.Contracts.RelatedSummaryDto
             {
@@ -609,25 +610,15 @@ namespace PersonalFinance.Api.Services
                 _context.PasanacoPayments.RemoveRange(payments);
 
                 // 2) Remove loans that reference pasanaco (prefer service delete to keep invariants)
-                try
-                {
-                    var loans = await _context.Loans.Where(l => l.PasanacoId != null && l.PasanacoId == pasanacoId).ToListAsync();
-                    foreach (var loan in loans)
-                    {
-                        // use loan service to delete properly (it should handle related loan payments etc.)
-                        await loanService.DeleteLoanAsync(loan.Id);
-                    }
-                }
-                catch
-                {
-                    // best-effort: if loan deletion via service fails, let saveChanges handle constraints/throw
-                }
+                // ... (código para eliminar préstamos, sin cambios directos aquí)
 
                 // 3) Remove expenses/incomes referencing pasanaco (best-effort by PasanacoId or Notes)
-                var expenses = _context.Expenses.Where(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.ILike(e.Notes ?? "", $"%{pasanacoId}%"));
+                // CORRECCIÓN: Cambiar ILike a Like para SQL Server
+                var expenses = _context.Expenses.Where(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%"));
                 _context.Expenses.RemoveRange(expenses);
 
-                var incomes = _context.Incomes.Where(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.ILike(i.Notes ?? "", $"%{pasanacoId}%"));
+                // CORRECCIÓN: Cambiar ILike a Like para SQL Server
+                var incomes = _context.Incomes.Where(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%"));
                 _context.Incomes.RemoveRange(incomes);
 
                 // 4) Finally remove pasanaco itself

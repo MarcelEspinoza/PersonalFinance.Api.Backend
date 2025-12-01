@@ -1,9 +1,7 @@
-﻿using AutoMapper;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Data;
@@ -37,16 +35,11 @@ builder.Services.AddControllers()
     });
 
 // -------------------------------
-// Data protection keys (persist in production)
+// Data protection keys
 // -------------------------------
-if (!env.IsDevelopment())
-{
-    // ensure folder exists in container/host
-    Directory.CreateDirectory("/app/keys");
-}
-
+// 💡 CORRECCIÓN: Se elimina la persistencia en disco (/app/keys) que es efímera en Cloud Run.
+// Las claves se almacenarán en memoria (funciona para una instancia única).
 builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo("/app/keys"))
     .SetApplicationName("PersonalFinance");
 
 // -------------------------------
@@ -60,16 +53,16 @@ builder.Services.AddCors(options =>
         if (allowedOrigins.Length > 0)
         {
             policy.WithOrigins(allowedOrigins)
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials();
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
         }
         else
         {
             // Development-friendly fallback: allow all origins (no credentials)
             policy.AllowAnyOrigin()
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
+                    .AllowAnyHeader()
+                    .AllowAnyMethod();
         }
     });
 });
@@ -77,8 +70,10 @@ builder.Services.AddCors(options =>
 // -------------------------------
 // EF / DbContext
 // -------------------------------
+// 💡 CORRECCIÓN: Se cambia el driver de UseNpgsql a UseSqlServer para la base de datos SQL Server.
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
+         sqlServerOptions => sqlServerOptions.EnableRetryOnFailure())); // Opcional: añade reintentos de conexión
 
 // -------------------------------
 // Identity (Option B): ASP.NET Core Identity with Guid keys
@@ -173,15 +168,9 @@ builder.Services.AddAuthorization(options =>
     // add more policies if needed
 });
 
-// NOTE: Identity already registers a PasswordHasher for ApplicationUser. If you had previously
-// registered a hasher for a custom User class, remove that registration and use ApplicationUser.
-// Registering explicitly here is optional; Identity will provide it by default.
-builder.Services.AddScoped<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>();
-
 // Register your application services here (adjust to actual implementations)
+builder.Services.AddScoped<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>();
 builder.Services.AddScoped<IAuthService, AuthService>();
-// If you have your own legacy User class, prefer to use UserManager<ApplicationUser> instead.
-// Remove or adapt any IPasswordHasher<User> registrations.
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IIncomeService, IncomeService>();
@@ -216,7 +205,9 @@ using (var scope = app.Services.CreateScope())
     {
         var db = services.GetRequiredService<AppDbContext>();
 
-        // Aplicar migraciones pendientes (crea tablas AspNetUsers/AspNetRoles/etc.)
+        // Aplicar migraciones pendientes. Esto se ejecuta ANTES de que la aplicación escuche en el puerto.
+        // Si la conexión/credenciales de SQL Server fallan, la aplicación fallará aquí,
+        // lo que es reportado por Cloud Run como 'failed to start and listen'.
         var pending = await db.Database.GetPendingMigrationsAsync();
         if (pending != null && pending.Any())
         {
@@ -250,9 +241,8 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // Si falla aquí, es crítico — registra y re-throw para que lo veas
         logger.LogError(ex, "Error durante la inicialización (migrations/seeder).");
-        throw;
+        throw; // Es crítico que el contenedor falle si no puede conectarse a la DB.
     }
 }
 
@@ -283,4 +273,6 @@ app.MapGet("/config/cors", (IConfiguration config) =>
 // Map controllers (your API endpoints)
 app.MapControllers();
 
+// Cloud Run inyecta la variable de entorno PORT.
+// El método app.Run() detecta automáticamente esta variable y escucha en 0.0.0.0:PORT.
 app.Run();
