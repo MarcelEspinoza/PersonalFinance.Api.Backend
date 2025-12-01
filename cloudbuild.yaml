@@ -1,0 +1,33 @@
+# cloudbuild.yaml para PersonalFinance.Api.Backend
+steps:
+# 1. Construir la imagen de Docker
+- name: 'gcr.io/cloud-builders/docker'
+  args: 
+  - 'build'
+  - '-t'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+  - '.'
+# 2. Subir la imagen a Artifact Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: 
+  - 'push'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+# 3. Desplegar en Cloud Run
+- name: 'gcr.io/cloud-builders/gcloud'
+  args:
+  - 'run'
+  - 'deploy'
+  - 'backend'
+  - '--image'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+  - '--region'
+  - 'europe-west1'
+  - '--port'
+  - '8080'
+  - '--set-env-vars'
+  # ? IMPORTANTE: Reemplaza esta línea con tu cadena de conexión real de SQL Server
+  - 'ConnectionStrings__DefaultConnection=Server=tcp:[IP_SQL],1433;Database=[NOMBRE];User ID=sqlserver;Password=[TU_CONTRASEÑA];Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;'
+  - '--allow-unauthenticated'
+options:
+  # SOLUCIÓN AL ERROR DE LOGS: Esto cumple con el requisito (c) del error.
+  logging: CLOUD_LOGGING_ONLY
