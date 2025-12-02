@@ -20,18 +20,16 @@ RUN dotnet publish PersonalFinance.Api.csproj -c Release -o out
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 
-# ** LÍNEA CLAVE PARA CORREGIR EL ERROR DE CLOUD RUN **
-# Le dice a Kestrel que escuche en todas las interfaces (http://+) y use la variable $PORT (típicamente 8080).
-ENV ASPNETCORE_URLS=http://+:$PORT
-
 # Copiar la app publicada desde build
 COPY --from=build /app/out .
 
 # Crear carpeta para keys si la vas a usar
 RUN mkdir -p /app/keys
 
-# Exponer el puerto de Cloud Run (Aunque Kestrel usa $PORT, es buena práctica)
+# Exponer el puerto de Cloud Run 
 EXPOSE 8080
 
-# Comando de inicio
-CMD ["dotnet", "PersonalFinance.Api.dll"]
+# 🚨 CORRECCIÓN CRÍTICA PARA CLOUD RUN: 
+# Usamos '--urls' para forzar a Kestrel a escuchar en 0.0.0.0:8080,
+# lo que garantiza que la plataforma Cloud Run pueda establecer una conexión.
+CMD ["dotnet", "PersonalFinance.Api.dll", "--urls", "http://0.0.0.0:8080"]
