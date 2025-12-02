@@ -1,54 +1,46 @@
-# cloudbuild.yaml para PersonalFinance.Api.Backend (SEGURO con Timeout y CORS actualizado)
+# cloudbuild.yaml para PersonalFinance.Api.Backend (Versión Corregida)
 steps:
 # 1. Construir la imagen de Docker
 - name: 'gcr.io/cloud-builders/docker'
   args: 
   - 'build'
   - '-t'
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # ?? NOTA: Cambiada a europe-southwest1 para ser consistente con el servicio.
   - '.'
 # 2. Subir la imagen a Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
   args: 
   - 'push'
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
-# 3. Desplegar en Cloud Run (Inyectando variables de forma segura con sustituciones)
+  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # ?? NOTA: Cambiada a europe-southwest1 para ser consistente con el servicio.
+
+# 3. Desplegar en Cloud Run (Formato de Variables Corregido)
 - name: 'gcr.io/cloud-builders/gcloud'
-  # ?? AÑADIDO: Timeout para el paso de despliegue
   timeout: '600s' 
   args:
   - 'run'
   - 'deploy'
-  - 'backend'
+  - 'personalfinance-api-backend' # ?? Corregido: Nombre completo del servicio
   - '--image'
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
   - '--region'
-  - 'europe-west1'
+  - 'europe-southwest1' # ?? Corregido: Coherente con tu YAML de servicio original
   - '--port'
   - '8080'
   - '--set-env-vars'
-  
-  # ASP.NET Environment (Usando sustitución del Trigger)
-  - 'ASPNETCORE_ENVIRONMENT=$_ASPNETCORE_ENVIRONMENT'
-  
-  # Connection String (Usando sustitución del Trigger)
-  - 'ConnectionStrings__DefaultConnection=$_CONNECTION_STRING'
-  
-  # CORS (Usando sustitución del Trigger)
-  # ¡CRÍTICO! Asegúrate de que $_CORS_ALLOWED en el Trigger tenga este valor: 
-  - 'Cors__AllowedOrigins__0=$_CORS_ALLOWED' 
-  
-  # JWT Variables (Usando sustituciones del Trigger)
-  - 'Jwt__Audience=$_JWT_AUDIENCE'
-  - 'Jwt__ExpireMinutes=$_JWT_EXPIREMINUTES'
-  - 'Jwt__Issuer=$_JWT_ISSUER'
-  - 'Jwt__Key=$_JWT_KEY'
-  
-  # SendGrid Variables (Usando sustituciones del Trigger)
-  - 'SendGrid__ApiKey=$_SENDGRID_APIKEY'
-  - 'SendGrid__FromEmail=$_SENDGRID_FROMEMAIL'
-  - 'SendGrid__FromName=$_SENDGRID_FROMNAME'
-  - 'SendGrid__SandboxMode=$_SENDGRID_SANDBOXMODE'
+  # El indicador '>-' le dice a YAML que la siguiente línea es una cadena de texto multilínea
+  # que debe ser tratada como una sola entrada para el argumento.
+  - >-
+    ASPNETCORE_ENVIRONMENT=$_ASPNETCORE_ENVIRONMENT,
+    ConnectionStrings__DefaultConnection=$_CONNECTION_STRING,
+    Cors__AllowedOrigins__0=$_CORS_ALLOWED,
+    Jwt__Audience=$_JWT_AUDIENCE,
+    Jwt__ExpireMinutes=$_JWT_EXPIREMINUTES,
+    Jwt__Issuer=$_JWT_ISSUER,
+    Jwt__Key=$_JWT_KEY,
+    SendGrid__ApiKey=$_SENDGRID_APIKEY,
+    SendGrid__FromEmail=$_SENDGRID_FROMEMAIL,
+    SendGrid__FromName=$_SENDGRID_FROMNAME,
+    SendGrid__SandboxMode=$_SENDGRID_SANDBOXMODE
   
   - '--allow-unauthenticated'
 options:
