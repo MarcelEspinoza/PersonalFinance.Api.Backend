@@ -1,4 +1,4 @@
-# cloudbuild.yaml para PersonalFinance.Api.Backend (SEGURO)
+# cloudbuild.yaml para PersonalFinance.Api.Backend (SEGURO con Timeout y CORS actualizado)
 steps:
 # 1. Construir la imagen de Docker
 - name: 'gcr.io/cloud-builders/docker'
@@ -14,6 +14,8 @@ steps:
   - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
 # 3. Desplegar en Cloud Run (Inyectando variables de forma segura con sustituciones)
 - name: 'gcr.io/cloud-builders/gcloud'
+  # ?? AÑADIDO: Timeout para el paso de despliegue
+  timeout: '600s' 
   args:
   - 'run'
   - 'deploy'
@@ -33,6 +35,7 @@ steps:
   - 'ConnectionStrings__DefaultConnection=$_CONNECTION_STRING'
   
   # CORS (Usando sustitución del Trigger)
+  # ¡CRÍTICO! Asegúrate de que $_CORS_ALLOWED en el Trigger tenga este valor: 
   - 'Cors__AllowedOrigins__0=$_CORS_ALLOWED' 
   
   # JWT Variables (Usando sustituciones del Trigger)
