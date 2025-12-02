@@ -17,15 +17,12 @@
                 .AddEnvironmentVariables()
                 .Build();
 
-            // 💡 CORRECCIÓN: Cadena de conexión de SQL Server local/de desarrollo
+            // 👇 Lee la cadena de conexión del entorno o del appsettings.json
             var conn = config.GetConnectionString("DefaultConnection")
-                // Usa una cadena por defecto de SQL Server para desarrollo local, 
-                // o asegúrate que tu appsettings.json tenga una sección DefaultConnection de SQL Server.
-                // Reemplaza esta línea si usas una instancia local diferente.
-                ?? "Server=(localdb)\\mssqllocaldb;Database=PersonalFinanceDb;Trusted_Connection=True;MultipleActiveResultSets=true";
+                ?? "Server=localhost;Port=3306;Database=PersonalFinanceDb;User=root;Password=1234;SslMode=Preferred;";
 
-            // 💡 CORRECCIÓN: Cambiamos UseNpgsql a UseSqlServer
-            builder.UseSqlServer(conn);
+            // 👇 Usa el proveedor MySQL (Pomelo)
+            builder.UseMySql(conn, ServerVersion.AutoDetect(conn));
 
             return new AppDbContext(builder.Options);
         }

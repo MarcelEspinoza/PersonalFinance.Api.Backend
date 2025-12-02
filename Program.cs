@@ -68,9 +68,10 @@ builder.Services.AddCors(options =>
 // EF / DbContext
 // -------------------------------
 // 💡 CONFIGURACIÓN PARA SQL SERVER (CONFIRMADA)
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
-         sqlServerOptions => sqlServerOptions.EnableRetryOnFailure()));
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 
 // -------------------------------
 // Identity (Option B): ASP.NET Core Identity with Guid keys
