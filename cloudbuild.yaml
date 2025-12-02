@@ -1,34 +1,32 @@
-# cloudbuild.yaml para PersonalFinance.Api.Backend (Versión Corregida)
+# cloudbuild.yaml para PersonalFinance.Api.Backend (Versión Consistente con europe-west1)
 steps:
 # 1. Construir la imagen de Docker
 - name: 'gcr.io/cloud-builders/docker'
   args: 
   - 'build'
   - '-t'
-  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # ?? NOTA: Cambiada a europe-southwest1 para ser consistente con el servicio.
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # <-- CAMBIO A europe-west1
   - '.'
 # 2. Subir la imagen a Artifact Registry
 - name: 'gcr.io/cloud-builders/docker'
   args: 
   - 'push'
-  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # ?? NOTA: Cambiada a europe-southwest1 para ser consistente con el servicio.
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA' # <-- CAMBIO A europe-west1
 
-# 3. Desplegar en Cloud Run (Formato de Variables Corregido)
+# 3. Desplegar en Cloud Run (Formato de Variables Corregido + Región Consistente)
 - name: 'gcr.io/cloud-builders/gcloud'
   timeout: '600s' 
   args:
   - 'run'
   - 'deploy'
-  - 'personalfinance-api-backend' # ?? Corregido: Nombre completo del servicio
+  - 'personalfinance-api-backend'
   - '--image'
-  - 'europe-southwest1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/personal-finances-13/backend:$COMMIT_SHA'
   - '--region'
-  - 'europe-southwest1' # ?? Corregido: Coherente con tu YAML de servicio original
+  - 'europe-west1' # <-- CAMBIO A europe-west1
   - '--port'
   - '8080'
   - '--set-env-vars'
-  # El indicador '>-' le dice a YAML que la siguiente línea es una cadena de texto multilínea
-  # que debe ser tratada como una sola entrada para el argumento.
   - >-
     ASPNETCORE_ENVIRONMENT=$_ASPNETCORE_ENVIRONMENT,
     ConnectionStrings__DefaultConnection=$_CONNECTION_STRING,
