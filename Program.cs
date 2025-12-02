@@ -68,11 +68,12 @@ builder.Services.AddCors(options =>
 // EF / DbContext
 // -------------------------------
 // 💡 CONFIGURACIÓN PARA SQL SERVER (CONFIRMADA)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var connectionString = Environment.GetEnvironmentVariable("MYSQL_URL")
+                       ?? $"Server={Environment.GetEnvironmentVariable("MYSQLHOST")};Port={Environment.GetEnvironmentVariable("MYSQLPORT")};Database={Environment.GetEnvironmentVariable("MYSQL_DATABASE")};User={Environment.GetEnvironmentVariable("MYSQLUSER")};Password={Environment.GetEnvironmentVariable("MYSQL_ROOT_PASSWORD")};SslMode=Preferred;";
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
-
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString))
+);
 // -------------------------------
 // Identity (Option B): ASP.NET Core Identity with Guid keys
 // -------------------------------
