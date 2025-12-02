@@ -37,7 +37,6 @@ builder.Services.AddControllers()
 // -------------------------------
 // Data protection keys
 // -------------------------------
-// 💡 CORRECCIÓN: Se elimina la persistencia en disco (/app/keys) que es efímera en Cloud Run.
 // Las claves se almacenarán en memoria (funciona para una instancia única).
 builder.Services.AddDataProtection()
     .SetApplicationName("PersonalFinance");
@@ -70,10 +69,11 @@ builder.Services.AddCors(options =>
 // -------------------------------
 // EF / DbContext
 // -------------------------------
-// 💡 CORRECCIÓN: Se cambia el driver de UseNpgsql a UseSqlServer para la base de datos SQL Server.
+// 💡 CORRECCIÓN CRÍTICA: Asumimos PostgreSQL (común en Render/hosting externos). 
+// Si la DB es SQL Server, revertir a UseSqlServer.
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
-         sqlServerOptions => sqlServerOptions.EnableRetryOnFailure())); // Opcional: añade reintentos de conexión
+         npgsqlOptions => npgsqlOptions.EnableRetryOnFailure())); // Asegúrate de tener el paquete Npgsql instalado
 
 // -------------------------------
 // Identity (Option B): ASP.NET Core Identity with Guid keys
@@ -98,6 +98,9 @@ var jwtKey = jwtSection["Key"] ?? throw new InvalidOperationException("Jwt:Key n
 var jwtIssuer = jwtSection["Issuer"] ?? "PersonalFinance.Api";
 var jwtAudience = jwtSection["Audience"] ?? "PersonalFinance.Api.Client";
 var key = Encoding.UTF8.GetBytes(jwtKey);
+
+// 💡 LOG DE DEBUG TEMPORAL: Verifica si la clave JWT está presente antes de la conexión a la DB
+Console.WriteLine($"[DEBUG] JWT Key Length: {jwtKey.Length > 0}, Issuer: {jwtIssuer}");
 
 builder.Services.AddAuthentication(options =>
 {
@@ -206,8 +209,7 @@ using (var scope = app.Services.CreateScope())
         var db = services.GetRequiredService<AppDbContext>();
 
         // Aplicar migraciones pendientes. Esto se ejecuta ANTES de que la aplicación escuche en el puerto.
-        // Si la conexión/credenciales de SQL Server fallan, la aplicación fallará aquí,
-        // lo que es reportado por Cloud Run como 'failed to start and listen'.
+        // Si la conexión/credenciales de la base de datos fallan, la aplicación fallará aquí.
         var pending = await db.Database.GetPendingMigrationsAsync();
         if (pending != null && pending.Any())
         {
@@ -241,7 +243,8 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Error durante la inicialización (migrations/seeder).");
+        // 🚨 SI LA APLICACIÓN FALLA AQUÍ, CLOUD RUN MUESTRA EL ERROR "failed to start and listen"
+        logger.LogError(ex, "Error CRÍTICO durante la inicialización (migrations/seeder).");
         throw; // Es crítico que el contenedor falle si no puede conectarse a la DB.
     }
 }
