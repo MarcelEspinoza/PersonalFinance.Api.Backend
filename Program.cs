@@ -23,12 +23,10 @@ var env = builder.Environment;
 builder.Services.AddControllers()
     .AddJsonOptions(opts =>
     {
-        // Keep enum values as camelCase strings, like you had before
         opts.JsonSerializerOptions.Converters.Add(
             new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
         );
 
-        // sensible defaults
         opts.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
         opts.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         opts.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter());
@@ -37,7 +35,7 @@ builder.Services.AddControllers()
 // -------------------------------
 // Data protection keys
 // -------------------------------
-// Las claves se almacenarán en memoria (funciona para una instancia única).
+// Las claves se almacenarán en memoria (funciona para una instancia única en Cloud Run).
 builder.Services.AddDataProtection()
     .SetApplicationName("PersonalFinance");
 
@@ -69,11 +67,10 @@ builder.Services.AddCors(options =>
 // -------------------------------
 // EF / DbContext
 // -------------------------------
-// 💡 CORRECCIÓN CRÍTICA: Asumimos PostgreSQL (común en Render/hosting externos). 
-// Si la DB es SQL Server, revertir a UseSqlServer.
+// 💡 CONFIGURACIÓN PARA SQL SERVER (CONFIRMADA)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
-         npgsqlOptions => npgsqlOptions.EnableRetryOnFailure())); // Asegúrate de tener el paquete Npgsql instalado
+         sqlServerOptions => sqlServerOptions.EnableRetryOnFailure()));
 
 // -------------------------------
 // Identity (Option B): ASP.NET Core Identity with Guid keys
@@ -99,7 +96,7 @@ var jwtIssuer = jwtSection["Issuer"] ?? "PersonalFinance.Api";
 var jwtAudience = jwtSection["Audience"] ?? "PersonalFinance.Api.Client";
 var key = Encoding.UTF8.GetBytes(jwtKey);
 
-// 💡 LOG DE DEBUG TEMPORAL: Verifica si la clave JWT está presente antes de la conexión a la DB
+// LOG DE DEBUG TEMPORAL: Esto aparecerá en los logs de Cloud Run (si llega hasta aquí)
 Console.WriteLine($"[DEBUG] JWT Key Length: {jwtKey.Length > 0}, Issuer: {jwtIssuer}");
 
 builder.Services.AddAuthentication(options =>
@@ -159,19 +156,15 @@ builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 // -------------------------------
 // Application services registration
 // -------------------------------
-// Role seeder to create Admin / User / Invited and an initial admin user if none exist
 builder.Services.AddScoped<IRoleSeeder, RoleSeeder>();
-
-// DI helpers and policies
-builder.Services.AddHttpContextAccessor(); // if services need IHttpContextAccessor
+builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
-    // add more policies if needed
 });
 
-// Register your application services here (adjust to actual implementations)
+// Register your application services here
 builder.Services.AddScoped<IPasswordHasher<ApplicationUser>, PasswordHasher<ApplicationUser>>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserService, UserService>();
@@ -208,8 +201,7 @@ using (var scope = app.Services.CreateScope())
     {
         var db = services.GetRequiredService<AppDbContext>();
 
-        // Aplicar migraciones pendientes. Esto se ejecuta ANTES de que la aplicación escuche en el puerto.
-        // Si la conexión/credenciales de la base de datos fallan, la aplicación fallará aquí.
+        // Aplicar migraciones pendientes. Si la conexión/credenciales de SQL Server fallan, la aplicación morirá aquí.
         var pending = await db.Database.GetPendingMigrationsAsync();
         if (pending != null && pending.Any())
         {
@@ -244,7 +236,7 @@ using (var scope = app.Services.CreateScope())
     catch (Exception ex)
     {
         // 🚨 SI LA APLICACIÓN FALLA AQUÍ, CLOUD RUN MUESTRA EL ERROR "failed to start and listen"
-        logger.LogError(ex, "Error CRÍTICO durante la inicialización (migrations/seeder).");
+        logger.LogError(ex, "Error CRÍTICO durante la inicialización (migrations/seeder). LA CADENA DE CONEXIÓN O EL FIREWALL ES PROBABLEMENTE EL PROBLEMA.");
         throw; // Es crítico que el contenedor falle si no puede conectarse a la DB.
     }
 }
