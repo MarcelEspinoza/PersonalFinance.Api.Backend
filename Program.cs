@@ -269,6 +269,5 @@ app.MapGet("/config/cors", (IConfiguration config) =>
 // Map controllers (your API endpoints)
 app.MapControllers();
 
-// Cloud Run inyecta la variable de entorno PORT.
-// El método app.Run() detecta automáticamente esta variable y escucha en 0.0.0.0:PORT.
-app.Run();
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+app.Run($"http://0.0.0.0:{port}");
