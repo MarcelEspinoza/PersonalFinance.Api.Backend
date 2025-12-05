@@ -43,13 +43,12 @@ namespace PersonalFinance.Api.Services
             using var workbook = new XLWorkbook();
             var ws = workbook.Worksheets.Add("Template");
 
-            // NUEVOS HEADERS EN INGLÉS
             var headers = new[]
             {
-        "Description", "Amount", "Date", "Category", "Notes",
-        "Type", "Movement Type", "Bank (Origin)", "Is Transfer",
-        "Bank (Destination)", "Transfer Reference", "Loan"
-    };
+                "Description", "Amount", "Date", "Category", "Notes",
+                "Type", "Movement Type", "Bank (Origin)", "Is Transfer",
+                "Bank (Destination)", "Transfer Reference", "Loan"
+            };
 
             for (int i = 0; i < headers.Length; i++)
             {
@@ -62,10 +61,9 @@ namespace PersonalFinance.Api.Services
                 cell.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
             }
 
-            // Celda inicial vacía
             ws.Cell("A2").Value = "";
 
-            // HOJA CATEGORÍAS
+            // CATEGORÍAS
             var wsCategories = workbook.Worksheets.Add("Categories_aux");
             wsCategories.Cell(1, 1).Value = "Id";
             wsCategories.Cell(1, 2).Value = "Name";
@@ -79,7 +77,7 @@ namespace PersonalFinance.Api.Services
                 wsCategories.Cell(i + 2, 2).Value = CleanString(categories[i].Name);
             }
 
-            // HOJA TIPOS
+            // TIPOS
             var wsTypes = workbook.Worksheets.Add("Types_aux");
             wsTypes.Cell(1, 1).Value = "Type";
             wsTypes.Row(1).Style.Font.Bold = true;
@@ -88,7 +86,7 @@ namespace PersonalFinance.Api.Services
             wsTypes.Cell(3, 1).Value = "Variable";
             wsTypes.Cell(4, 1).Value = "Temporary";
 
-            // HOJA MOVEMENTS
+            // MOVEMENTS
             var wsMovements = workbook.Worksheets.Add("Movements_aux");
             wsMovements.Cell(1, 1).Value = "Movement Type";
             wsMovements.Row(1).Style.Font.Bold = true;
@@ -96,7 +94,7 @@ namespace PersonalFinance.Api.Services
             wsMovements.Cell(2, 1).Value = "Income";
             wsMovements.Cell(3, 1).Value = "Expense";
 
-            // HOJA BANCOS
+            // BANCOS
             var wsBanks = workbook.Worksheets.Add("Banks_aux");
             wsBanks.Cell(1, 1).Value = "Id";
             wsBanks.Cell(1, 2).Value = "Name";
@@ -111,7 +109,7 @@ namespace PersonalFinance.Api.Services
                     (string.IsNullOrEmpty(banks[i].Entity) ? "" : $" | {banks[i].Entity}"));
             }
 
-            // HOJA PRÉSTAMOS (LOANS)
+            // PRÉSTAMOS
             var wsLoans = workbook.Worksheets.Add("Loans_aux");
             wsLoans.Cell(1, 1).Value = "Id";
             wsLoans.Cell(1, 2).Value = "Name";
@@ -125,38 +123,28 @@ namespace PersonalFinance.Api.Services
                 wsLoans.Cell(i + 2, 2).Value = CleanString(loans[i].Name);
             }
 
-            // Ajustar anchos y congelar headers
             ws.Columns().AdjustToContents();
             ws.SheetView.FreezeRows(1);
 
-            // DEFINIR RANGOS PARA VALIDACIONES
+            // VALIDACIONES
             var typesRange = wsTypes.Range("$A$2:$A$4");
             var movementsRange = wsMovements.Range("$A$2:$A$3");
             var categoriesRange = wsCategories.Range($"$B$2:$B${Math.Max(2, categories.Count + 1)}");
             var banksRange = wsBanks.Range($"$B$2:$B${Math.Max(2, banks.Count + 1)}");
             var loansRange = wsLoans.Range($"$B$2:$B${Math.Max(2, loans.Count + 1)}");
 
-            // CREAR DESPLEGABLES EN HOJA PRINCIPAL
-            ws.Range("D2:D100").CreateDataValidation()
-                .List($"='{wsCategories.Name}'!{categoriesRange.RangeAddress.FirstAddress}:{categoriesRange.RangeAddress.LastAddress}");
-            ws.Range("F2:F100").CreateDataValidation()
-                .List($"='{wsTypes.Name}'!{typesRange.RangeAddress.FirstAddress}:{typesRange.RangeAddress.LastAddress}");
-            ws.Range("G2:G100").CreateDataValidation()
-                .List($"='{wsMovements.Name}'!{movementsRange.RangeAddress.FirstAddress}:{movementsRange.RangeAddress.LastAddress}");
-            ws.Range("H2:H100").CreateDataValidation()
-                .List($"='{wsBanks.Name}'!{banksRange.RangeAddress.FirstAddress}:{banksRange.RangeAddress.LastAddress}");
-            ws.Range("J2:J100").CreateDataValidation()
-                .List($"='{wsBanks.Name}'!{banksRange.RangeAddress.FirstAddress}:{banksRange.RangeAddress.LastAddress}");
-            // Desplegable para Loans en la columna L (Loan)
-            ws.Range("L2:L100").CreateDataValidation()
-                .List($"='{wsLoans.Name}'!{loansRange.RangeAddress.FirstAddress}:{loansRange.RangeAddress.LastAddress}");
+            ws.Range("D2:D100").CreateDataValidation().List($"='{wsCategories.Name}'!{categoriesRange.RangeAddress.FirstAddress}:{categoriesRange.RangeAddress.LastAddress}");
+            ws.Range("F2:F100").CreateDataValidation().List($"='{wsTypes.Name}'!{typesRange.RangeAddress.FirstAddress}:{typesRange.RangeAddress.LastAddress}");
+            ws.Range("G2:G100").CreateDataValidation().List($"='{wsMovements.Name}'!{movementsRange.RangeAddress.FirstAddress}:{movementsRange.RangeAddress.LastAddress}");
+            ws.Range("H2:H100").CreateDataValidation().List($"='{wsBanks.Name}'!{banksRange.RangeAddress.FirstAddress}:{banksRange.RangeAddress.LastAddress}");
+            ws.Range("J2:J100").CreateDataValidation().List($"='{wsBanks.Name}'!{banksRange.RangeAddress.FirstAddress}:{banksRange.RangeAddress.LastAddress}");
+            ws.Range("L2:L100").CreateDataValidation().List($"='{wsLoans.Name}'!{loansRange.RangeAddress.FirstAddress}:{loansRange.RangeAddress.LastAddress}");
 
             using var ms = new MemoryStream();
             workbook.SaveAs(ms);
             ms.Position = 0;
             return ms.ToArray();
         }
-
 
         public async Task<ImportResult> ImportTemplateAsync(IFormFile file, Guid userId)
         {
@@ -168,7 +156,6 @@ namespace PersonalFinance.Api.Services
 
             using var workbook = new XLWorkbook(stream);
             var ws = workbook.Worksheet("Template");
-
             var rows = ws.RangeUsed()?.RowsUsed().Skip(1) ?? Enumerable.Empty<IXLRangeRow>();
 
             var validTypes = new[] { "Fixed", "Variable", "Temporary" };
@@ -183,7 +170,6 @@ namespace PersonalFinance.Api.Services
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
 
             var banksList = await _context.Banks.ToListAsync();
-
             var banksDict = banksList
                 .GroupBy(b => CleanString(b.Name + (string.IsNullOrEmpty(b.Entity) ? "" : $" | {b.Entity}")), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
@@ -218,11 +204,13 @@ namespace PersonalFinance.Api.Services
 
                     var errors = new List<string>();
 
-                    // ✅ Parse amount (acepta . o , como separador)
                     var amountOk = double.TryParse(amountStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount)
                                    || double.TryParse(amountStr, NumberStyles.Any, CultureInfo.CurrentCulture, out amount);
 
-                    // ✅ Parse date correctamente (acepta celdas tipo DateTime o texto)
+                    // ✅ fuerza el importe a positivo
+                    amount = Math.Abs(amount);
+
+                    // ✅ fecha
                     DateTime dateUtc = DateTime.MinValue;
                     bool dateOk = false;
                     try
@@ -238,7 +226,6 @@ namespace PersonalFinance.Api.Services
                             var dateStr = row.Cell(3).GetString();
                             dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate)
                                      || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsedDate);
-
                             if (dateOk)
                                 dateUtc = parsedDate.ToUniversalTime();
                         }
@@ -248,7 +235,6 @@ namespace PersonalFinance.Api.Services
                         errors.Add("Invalid date format");
                     }
 
-                    // 🔍 Validaciones básicas
                     if (string.IsNullOrWhiteSpace(description)) errors.Add("Empty description");
                     if (!amountOk) errors.Add("Invalid amount");
                     if (!dateOk) errors.Add("Invalid date");
@@ -258,40 +244,13 @@ namespace PersonalFinance.Api.Services
 
                     if (isTransfer)
                     {
-                        if (string.IsNullOrWhiteSpace(bankDestinationName) || !banksDict.ContainsKey(bankDestinationName))
-                            errors.Add("Invalid or empty Bank (Destination)");
                         if (string.IsNullOrWhiteSpace(transferReference))
                             errors.Add("Transfer Reference is required");
                     }
 
-                    var normalizedCategory = CleanString(categoryName ?? string.Empty);
-                    var normalizedLoanCategory = CleanString("Préstamo bancario");
-                    if (!string.IsNullOrWhiteSpace(normalizedCategory) &&
-                        string.Equals(normalizedCategory, normalizedLoanCategory, StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (string.IsNullOrWhiteSpace(loanName) || !loansDict.ContainsKey(loanName))
-                        {
-                            errors.Add("Invalid or empty Loan for Préstamo bancario category");
-                        }
-                    }
-
                     if (errors.Any())
                     {
-                        result.Pending.Add(new
-                        {
-                            description,
-                            amount = amountOk ? amount : (double?)null,
-                            date = dateOk ? dateUtc : (DateTime?)null,
-                            category = categoryName,
-                            type,
-                            movementType,
-                            bankOrigin = bankOriginName,
-                            isTransfer,
-                            bankDestination = bankDestinationName,
-                            transferReference,
-                            loan = loanName,
-                            errors
-                        });
+                        result.Pending.Add(new { description, amount, date = dateUtc, errors });
                         continue;
                     }
 
@@ -299,56 +258,33 @@ namespace PersonalFinance.Api.Services
                     int? categoryId = null;
                     Guid? loanId = null;
 
-                    // ✅ Buscar o crear categoría si no existe
-                    if (string.IsNullOrWhiteSpace(categoryName))
+                    // Categoría
+                    if (!categories.ContainsKey(categoryName))
                     {
-                        if (isTransfer)
+                        var newCat = new Category
                         {
-                            var transferCatName = "Transferencia";
-                            var existing = await _context.Categories.FirstOrDefaultAsync(c => c.UserId == userId && c.Name == transferCatName);
-                            if (existing != null)
-                                categoryId = existing.Id;
-                        }
-                        else
-                        {
-                            result.Pending.Add(new { description, reason = "Invalid category" });
-                            continue;
-                        }
+                            Name = categoryName,
+                            Description = "Categoria creada automáticamente por importación",
+                            UserId = userId,
+                            IsActive = true,
+                            IsSystem = false,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        _context.Categories.Add(newCat);
+                        await _context.SaveChangesAsync();
+                        categoryId = newCat.Id;
+                        categories[categoryName] = newCat.Id;
                     }
                     else
-                    {
-                        if (!categories.ContainsKey(categoryName))
-                        {
-                            var newCat = new Category
-                            {
-                                Name = categoryName,
-                                Description = "Categoria creada por el usuario",
-                                UserId = userId,
-                                IsActive = true,
-                                IsSystem = false,
-                                CreatedAt = DateTime.UtcNow
-                            };
-                            _context.Categories.Add(newCat);
-                            await _context.SaveChangesAsync();
-                            categoryId = newCat.Id;
-                            categories[CleanString(newCat.Name)] = newCat.Id;
-                        }
-                        else
-                        {
-                            categoryId = categories[categoryName];
-                        }
-                    }
+                        categoryId = categories[categoryName];
 
                     if (!string.IsNullOrWhiteSpace(loanName) && loansDict.ContainsKey(loanName))
                         loanId = loansDict[loanName];
 
-                    // ✅ Crear Income/Expense
-                    if (isTransfer)
+                    // ✅ CREAR SOLO EL MOVIMIENTO DEL BANCO ORIGEN
+                    if (movementType.Equals("Income", StringComparison.OrdinalIgnoreCase))
                     {
-                        var bankDestinationId = banksDict[bankDestinationName];
-                        var tId = Guid.NewGuid().ToString();
-
-                        var expense = new Expense
+                        _context.Incomes.Add(new Income
                         {
                             Description = description,
                             Amount = (decimal)amount,
@@ -358,16 +294,19 @@ namespace PersonalFinance.Api.Services
                             Type = type,
                             UserId = userId,
                             BankId = bankOriginId,
-                            IsTransfer = true,
-                            TransferId = tId,
-                            TransferCounterpartyBankId = bankDestinationId,
+                            IsTransfer = isTransfer,
+                            TransferCounterpartyBankId = !string.IsNullOrWhiteSpace(bankDestinationName) && banksDict.ContainsKey(bankDestinationName)
+                                ? banksDict[bankDestinationName]
+                                : null,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
                             LoanId = loanId,
                             Start_Date = dateUtc,
                             IsIndefinite = true
-                        };
-
-                        var income = new Income
+                        });
+                    }
+                    else
+                    {
+                        _context.Expenses.Add(new Expense
                         {
                             Description = description,
                             Amount = (decimal)amount,
@@ -376,54 +315,19 @@ namespace PersonalFinance.Api.Services
                             Notes = notes,
                             Type = type,
                             UserId = userId,
-                            BankId = bankDestinationId,
-                            IsTransfer = true,
-                            TransferId = tId,
-                            TransferCounterpartyBankId = bankOriginId,
+                            BankId = bankOriginId,
+                            IsTransfer = isTransfer,
+                            TransferCounterpartyBankId = !string.IsNullOrWhiteSpace(bankDestinationName) && banksDict.ContainsKey(bankDestinationName)
+                                ? banksDict[bankDestinationName]
+                                : null,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
                             LoanId = loanId,
                             Start_Date = dateUtc,
                             IsIndefinite = true
-                        };
+                        });
+                    }
 
-                        _context.Expenses.Add(expense);
-                        _context.Incomes.Add(income);
-                        result.Imported.Add(new { description, amount, transfer = true, transferId = tId });
-                    }
-                    else
-                    {
-                        if (movementType.Equals("Income", StringComparison.OrdinalIgnoreCase))
-                        {
-                            _context.Incomes.Add(new Income
-                            {
-                                Description = description,
-                                Amount = (decimal)amount,
-                                Date = dateUtc,
-                                CategoryId = categoryId!.Value,
-                                Notes = notes,
-                                Type = type,
-                                UserId = userId,
-                                BankId = bankOriginId,
-                                LoanId = loanId
-                            });
-                        }
-                        else
-                        {
-                            _context.Expenses.Add(new Expense
-                            {
-                                Description = description,
-                                Amount = (decimal)amount,
-                                Date = dateUtc,
-                                CategoryId = categoryId!.Value,
-                                Notes = notes,
-                                Type = type,
-                                UserId = userId,
-                                BankId = bankOriginId,
-                                LoanId = loanId
-                            });
-                        }
-                        result.Imported.Add(new { description, amount });
-                    }
+                    result.Imported.Add(new { description, amount, isTransfer });
                 }
                 catch (Exception ex)
                 {
@@ -434,8 +338,5 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
             return result;
         }
-
-
-
     }
 }
