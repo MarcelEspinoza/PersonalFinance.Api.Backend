@@ -77,73 +77,73 @@ namespace PersonalFinance.Api.Services
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
-            // Lista de bancos del usuario (para filtrar transferencias internas)
+            // Obtener todas las cuentas del usuario
             var userBankIds = await _db.Banks
                 .Where(b => b.UserId == userId)
                 .Select(b => b.Id)
                 .ToListAsync(ct);
 
+            // === 1️⃣ Saldo inicial (última conciliación anterior al mes actual) ===
+            decimal openingBalance = 0m;
+            if (bankId.HasValue)
+            {
+                var prevRecon = await _db.Reconciliations
+                    .Where(r => r.UserId == userId && r.BankId == bankId.Value &&
+                                (r.Year < year || (r.Year == year && r.Month < month)))
+                    .OrderByDescending(r => r.Year)
+                    .ThenByDescending(r => r.Month)
+                    .FirstOrDefaultAsync(ct);
+
+                if (prevRecon != null)
+                    openingBalance = prevRecon.ClosingBalance;
+            }
+
+            // === 2️⃣ Totales de ingresos y gastos (excluyendo transferencias internas) ===
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
-            // INGRESOS (excluye transferencias internas)
             if (_db.Model.FindEntityType(typeof(Income)) != null)
             {
                 incomeTotal = await _db.Set<Income>()
                     .Where(i => i.UserId == userId &&
                                 i.Date >= start && i.Date <= end &&
                                 (!bankId.HasValue || i.BankId == bankId.Value) &&
-                                (!i.IsTransfer ||
-                                 i.TransferCounterpartyBankId == null ||
-                                 !userBankIds.Contains(i.TransferCounterpartyBankId.Value)))
+                                (!i.IsTransfer
+                                 || i.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value)))
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
-            // GASTOS (excluye transferencias internas)
             if (_db.Model.FindEntityType(typeof(Expense)) != null)
             {
                 expenseTotal = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId &&
                                 e.Date >= start && e.Date <= end &&
                                 (!bankId.HasValue || e.BankId == bankId.Value) &&
-                                (!e.IsTransfer ||
-                                 e.TransferCounterpartyBankId == null ||
-                                 !userBankIds.Contains(e.TransferCounterpartyBankId.Value)))
+                                (!e.IsTransfer
+                                 || e.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value)))
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            // Suma neta de movimientos del mes
-            var monthlyNet = incomeTotal - expenseTotal;
+            // === 3️⃣ Saldo teórico del sistema ===
+            var systemClosingBalance = openingBalance + (incomeTotal - expenseTotal);
 
-            // Buscar saldo del mes anterior (para usar como saldo inicial)
-            Reconciliation? prevRecon = null;
-            if (bankId.HasValue)
-            {
-                prevRecon = await _db.Reconciliations
-                    .Where(r => r.UserId == userId && r.BankId == bankId.Value &&
-                           (r.Year < year || (r.Year == year && r.Month < month)))
-                    .OrderByDescending(r => r.Year)
-                    .ThenByDescending(r => r.Month)
-                    .FirstOrDefaultAsync(ct);
-            }
-
-            decimal openingBalance = prevRecon?.ClosingBalance ?? 0m;
-
-            // Suma teórica del sistema al cierre del mes
-            var systemClosingBalance = openingBalance + monthlyNet;
-
-            // Obtener el saldo real del banco para este mes
+            // === 4️⃣ Saldo bancario registrado (extracto) ===
             decimal closingBalance = 0m;
-            var reconQuery = _db.Reconciliations.Where(r => r.UserId == userId && r.Year == year && r.Month == month);
-            if (bankId.HasValue) reconQuery = reconQuery.Where(r => r.BankId == bankId.Value);
+            var reconQuery = _db.Reconciliations
+                .Where(r => r.UserId == userId && r.Year == year && r.Month == month);
+            if (bankId.HasValue)
+                reconQuery = reconQuery.Where(r => r.BankId == bankId.Value);
 
             var recon = await reconQuery.OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
-            if (recon != null) closingBalance = recon.ClosingBalance;
+            if (recon != null)
+                closingBalance = recon.ClosingBalance;
 
-            // Diferencia real
+            // === 5️⃣ Diferencia real (debería ser 0 cuando cuadra) ===
             var difference = closingBalance - systemClosingBalance;
 
-            // === Transacciones para mostrar en detalle ===
+            // === 6️⃣ Detalle de movimientos usados (para diagnóstico) ===
             var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
@@ -152,10 +152,17 @@ namespace PersonalFinance.Api.Services
                     .Where(i => i.UserId == userId &&
                                 i.Date >= start && i.Date <= end &&
                                 (!bankId.HasValue || i.BankId == bankId.Value) &&
-                                (!i.IsTransfer ||
-                                 i.TransferCounterpartyBankId == null ||
-                                 !userBankIds.Contains(i.TransferCounterpartyBankId.Value)))
-                    .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
+                                (!i.IsTransfer
+                                 || i.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value)))
+                    .Select(i => new
+                    {
+                        i.Id,
+                        i.Amount,
+                        i.Description,
+                        i.Date,
+                        CategoryName = i.Category != null ? i.Category.Name : ""
+                    })
                     .ToListAsync(ct);
 
                 txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date, i.CategoryName)));
@@ -167,16 +174,23 @@ namespace PersonalFinance.Api.Services
                     .Where(e => e.UserId == userId &&
                                 e.Date >= start && e.Date <= end &&
                                 (!bankId.HasValue || e.BankId == bankId.Value) &&
-                                (!e.IsTransfer ||
-                                 e.TransferCounterpartyBankId == null ||
-                                 !userBankIds.Contains(e.TransferCounterpartyBankId.Value)))
-                    .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
+                                (!e.IsTransfer
+                                 || e.TransferCounterpartyBankId == null
+                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value)))
+                    .Select(e => new
+                    {
+                        e.Id,
+                        e.Amount,
+                        e.Description,
+                        e.Date,
+                        CategoryName = e.Category != null ? e.Category.Name : ""
+                    })
                     .ToListAsync(ct);
 
                 txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
-            // Ordenar y empaquetar las sugerencias
+            // === 7️⃣ Construir detalles ===
             var suggestions = txList
                 .OrderByDescending(t => Math.Abs((double)t.Amount))
                 .Select(t => new
@@ -190,7 +204,7 @@ namespace PersonalFinance.Api.Services
                 })
                 .ToList<object>();
 
-            // Buscar coincidencias exactas con la diferencia
+            // Si hay alguna transacción que coincide con la diferencia, resaltarla
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
                 if (Math.Abs(tx.Amount - difference) <= 0.01m)
@@ -208,9 +222,10 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
-            // Devuelve la sugerencia final
+            // === 8️⃣ Resultado final ===
             return new ReconciliationSuggestionDto(systemClosingBalance, closingBalance, difference, suggestions);
         }
+
 
         public async Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt = null, CancellationToken ct = default)
         {
