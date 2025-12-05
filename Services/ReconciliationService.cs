@@ -161,7 +161,7 @@ namespace PersonalFinance.Api.Services
             var recon = await reconQuery.OrderByDescending(r => r.CreatedAt).FirstOrDefaultAsync(ct);
             if (recon != null) closingBalance = recon.ClosingBalance;
 
-            var difference = systemTotal - closingBalance;
+            var difference = closingBalance - systemTotal;
 
             // Build transaction list ignoring internal transfers (same filter as sums)
             var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
