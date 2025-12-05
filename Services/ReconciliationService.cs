@@ -24,6 +24,9 @@ namespace PersonalFinance.Api.Services
             return Guid.TryParse(uid, out var g) ? g : Guid.Empty;
         }
 
+        // =====================================================
+        // 📘 Obtener conciliaciones de un mes
+        // =====================================================
         public async Task<IEnumerable<Reconciliation>> GetForMonthAsync(int year, int month, CancellationToken ct = default)
         {
             var userId = CurrentUserId();
@@ -33,6 +36,9 @@ namespace PersonalFinance.Api.Services
                 .ToListAsync(ct);
         }
 
+        // =====================================================
+        // 🟢 Crear o actualizar conciliación manual
+        // =====================================================
         public async Task<Reconciliation?> CreateAsync(CreateReconciliationDto dto, CancellationToken ct = default)
         {
             if (dto == null) throw new ArgumentNullException(nameof(dto));
@@ -71,19 +77,22 @@ namespace PersonalFinance.Api.Services
             return rec;
         }
 
+        // =====================================================
+        // 🔍 Sugerir conciliación automática
+        // =====================================================
         public async Task<ReconciliationSuggestionDto> SuggestAsync(int year, int month, Guid? bankId = null, CancellationToken ct = default)
         {
             var userId = CurrentUserId();
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
-            // 1️⃣ Obtener todas las cuentas del usuario
+            // 1️⃣ Obtener las cuentas del usuario (para detectar transferencias internas)
             var userBankIds = await _db.Banks
                 .Where(b => b.UserId == userId)
                 .Select(b => b.Id)
                 .ToListAsync(ct);
 
-            // 2️⃣ Saldo inicial del mes anterior (si existe conciliación)
+            // 2️⃣ Obtener saldo final del mes anterior
             decimal openingBalance = 0m;
             if (bankId.HasValue)
             {
@@ -98,7 +107,7 @@ namespace PersonalFinance.Api.Services
                     openingBalance = prevRecon.ClosingBalance;
             }
 
-            // 3️⃣ Totales de ingresos y gastos (ignorando transferencias internas por IsTransfer o nombre)
+            // 3️⃣ Totales de ingresos y gastos (ignorando transferencias internas)
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
@@ -128,10 +137,25 @@ namespace PersonalFinance.Api.Services
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
-            // 4️⃣ Calcular saldo teórico del sistema
+            // 4️⃣ Saldo teórico del sistema = saldo anterior + ingresos - gastos
             var systemClosingBalance = openingBalance + incomeTotal - expenseTotal;
 
-            // 5️⃣ Saldo bancario (extracto)
+            // Si no existía conciliación previa, intenta usar la última registrada
+            if (openingBalance == 0m)
+            {
+                var lastPrevMonth = await _db.Reconciliations
+                    .Where(r => r.UserId == userId && (!bankId.HasValue || r.BankId == bankId.Value) &&
+                                (r.Year < year || (r.Year == year && r.Month < month)))
+                    .OrderByDescending(r => r.Year)
+                    .ThenByDescending(r => r.Month)
+                    .Select(r => r.ClosingBalance)
+                    .FirstOrDefaultAsync(ct);
+
+                if (lastPrevMonth != 0m)
+                    systemClosingBalance += lastPrevMonth;
+            }
+
+            // 5️⃣ Saldo bancario declarado (conciliación)
             decimal closingBalance = 0m;
             var reconQuery = _db.Reconciliations
                 .Where(r => r.UserId == userId && r.Year == year && r.Month == month);
@@ -142,10 +166,10 @@ namespace PersonalFinance.Api.Services
             if (recon != null)
                 closingBalance = recon.ClosingBalance;
 
-            // 6️⃣ Diferencia correcta (lo que falta o sobra para cuadrar)
+            // 6️⃣ Diferencia real
             var difference = closingBalance - systemClosingBalance;
 
-            // 7️⃣ Transacciones detalladas (sin transferencias internas)
+            // 7️⃣ Detalle de transacciones consideradas
             var txList = new List<(int Id, decimal Amount, string Description, DateTime Date, string? CategoryName)>();
 
             if (_db.Model.FindEntityType(typeof(Income)) != null)
@@ -180,7 +204,7 @@ namespace PersonalFinance.Api.Services
                 txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
-            // 8️⃣ Sugerencias ordenadas
+            // 8️⃣ Construir lista de detalles
             var suggestions = txList
                 .OrderByDescending(t => Math.Abs((double)t.Amount))
                 .Select(t => new
@@ -194,7 +218,7 @@ namespace PersonalFinance.Api.Services
                 })
                 .ToList<object>();
 
-            // Si hay transacciones que igualan la diferencia, márcalas
+            // Si hay alguna transacción que coincide exactamente con la diferencia, resáltala
             foreach (var tx in txList.OrderByDescending(t => Math.Abs((double)t.Amount)))
             {
                 if (Math.Abs(tx.Amount - difference) <= 0.01m)
@@ -212,11 +236,13 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
+            // 9️⃣ Resultado final
             return new ReconciliationSuggestionDto(systemClosingBalance, closingBalance, difference, suggestions);
         }
 
-
-
+        // =====================================================
+        // ✅ Marcar conciliación como completada
+        // =====================================================
         public async Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt = null, CancellationToken ct = default)
         {
             var recon = await _db.Reconciliations.FindAsync(new object[] { id }, ct);
