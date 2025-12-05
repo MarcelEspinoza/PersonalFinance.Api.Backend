@@ -86,7 +86,7 @@ namespace PersonalFinance.Api.Services
             var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
 
-            // 1️⃣ Obtener las cuentas del usuario (para detectar transferencias internas)
+            // 1️⃣ Obtener las cuentas del usuario (por si en el futuro vuelves a usar transferencias internas)
             var userBankIds = await _db.Banks
                 .Where(b => b.UserId == userId)
                 .Select(b => b.Id)
@@ -107,7 +107,7 @@ namespace PersonalFinance.Api.Services
                     openingBalance = prevRecon.ClosingBalance;
             }
 
-            // 3️⃣ Totales de ingresos y gastos (ignorando transferencias internas)
+            // 3️⃣ Totales de ingresos y gastos (ahora incluimos transferencias, ya no hay contrapartidas)
             decimal incomeTotal = 0m;
             decimal expenseTotal = 0m;
 
@@ -116,11 +116,7 @@ namespace PersonalFinance.Api.Services
                 incomeTotal = await _db.Set<Income>()
                     .Where(i => i.UserId == userId &&
                                 i.Date >= start && i.Date <= end &&
-                                (!bankId.HasValue || i.BankId == bankId.Value) &&
-                                (!i.IsTransfer
-                                 || i.TransferCounterpartyBankId == null
-                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value)) &&
-                                (i.Category == null || !i.Category.Name.Contains("Transferencia")))
+                                (!bankId.HasValue || i.BankId == bankId.Value))
                     .SumAsync(i => (decimal?)i.Amount, ct) ?? 0m;
             }
 
@@ -129,31 +125,12 @@ namespace PersonalFinance.Api.Services
                 expenseTotal = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId &&
                                 e.Date >= start && e.Date <= end &&
-                                (!bankId.HasValue || e.BankId == bankId.Value) &&
-                                (!e.IsTransfer
-                                 || e.TransferCounterpartyBankId == null
-                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value)) &&
-                                (e.Category == null || !e.Category.Name.Contains("Transferencia")))
+                                (!bankId.HasValue || e.BankId == bankId.Value))
                     .SumAsync(e => (decimal?)e.Amount, ct) ?? 0m;
             }
 
             // 4️⃣ Saldo teórico del sistema = saldo anterior + ingresos - gastos
             var systemClosingBalance = openingBalance + incomeTotal - expenseTotal;
-
-            // Si no existía conciliación previa, intenta usar la última registrada
-            if (openingBalance == 0m)
-            {
-                var lastPrevMonth = await _db.Reconciliations
-                    .Where(r => r.UserId == userId && (!bankId.HasValue || r.BankId == bankId.Value) &&
-                                (r.Year < year || (r.Year == year && r.Month < month)))
-                    .OrderByDescending(r => r.Year)
-                    .ThenByDescending(r => r.Month)
-                    .Select(r => r.ClosingBalance)
-                    .FirstOrDefaultAsync(ct);
-
-                if (lastPrevMonth != 0m)
-                    systemClosingBalance += lastPrevMonth;
-            }
 
             // 5️⃣ Saldo bancario declarado (conciliación)
             decimal closingBalance = 0m;
@@ -177,12 +154,15 @@ namespace PersonalFinance.Api.Services
                 var incomes = await _db.Set<Income>()
                     .Where(i => i.UserId == userId &&
                                 i.Date >= start && i.Date <= end &&
-                                (!bankId.HasValue || i.BankId == bankId.Value) &&
-                                (!i.IsTransfer
-                                 || i.TransferCounterpartyBankId == null
-                                 || !userBankIds.Contains(i.TransferCounterpartyBankId.Value)) &&
-                                (i.Category == null || !i.Category.Name.Contains("Transferencia")))
-                    .Select(i => new { i.Id, i.Amount, i.Description, i.Date, CategoryName = i.Category != null ? i.Category.Name : "" })
+                                (!bankId.HasValue || i.BankId == bankId.Value))
+                    .Select(i => new
+                    {
+                        i.Id,
+                        i.Amount,
+                        i.Description,
+                        i.Date,
+                        CategoryName = i.Category != null ? i.Category.Name : ""
+                    })
                     .ToListAsync(ct);
 
                 txList.AddRange(incomes.Select(i => (i.Id, i.Amount, i.Description ?? string.Empty, i.Date, i.CategoryName)));
@@ -193,14 +173,18 @@ namespace PersonalFinance.Api.Services
                 var expenses = await _db.Set<Expense>()
                     .Where(e => e.UserId == userId &&
                                 e.Date >= start && e.Date <= end &&
-                                (!bankId.HasValue || e.BankId == bankId.Value) &&
-                                (!e.IsTransfer
-                                 || e.TransferCounterpartyBankId == null
-                                 || !userBankIds.Contains(e.TransferCounterpartyBankId.Value)) &&
-                                (e.Category == null || !e.Category.Name.Contains("Transferencia")))
-                    .Select(e => new { e.Id, e.Amount, e.Description, e.Date, CategoryName = e.Category != null ? e.Category.Name : "" })
+                                (!bankId.HasValue || e.BankId == bankId.Value))
+                    .Select(e => new
+                    {
+                        e.Id,
+                        e.Amount,
+                        e.Description,
+                        e.Date,
+                        CategoryName = e.Category != null ? e.Category.Name : ""
+                    })
                     .ToListAsync(ct);
 
+                // 🔥 Convertimos los gastos a negativos para que cuadren con el saldo
                 txList.AddRange(expenses.Select(e => (e.Id, -e.Amount, e.Description ?? string.Empty, e.Date, e.CategoryName)));
             }
 
@@ -239,6 +223,7 @@ namespace PersonalFinance.Api.Services
             // 9️⃣ Resultado final
             return new ReconciliationSuggestionDto(systemClosingBalance, closingBalance, difference, suggestions);
         }
+
 
         // =====================================================
         // ✅ Marcar conciliación como completada
