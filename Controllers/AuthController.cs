@@ -135,13 +135,17 @@ namespace PersonalFinance.Api.Controllers
             var signRes = await _signInManager.CheckPasswordSignInAsync(user, dto.Password, false);
             if (!signRes.Succeeded)
             {
-                // Mejor diagnóstico para desarrollo (opcional)
                 if (signRes.IsLockedOut)
                     return StatusCode(StatusCodes.Status423Locked, "Account locked");
 
                 if (signRes.IsNotAllowed)
-                    // Devuelve 403 explícito con mensaje; NO pasar texto a Forbid()
-                    return StatusCode(StatusCodes.Status403Forbidden, "Email not confirmed");
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden, new
+                    {
+                        error = "email_not_confirmed",
+                        message = "You must confirm your email before logging in."
+                    });
+                }
 
                 return Unauthorized("Invalid credentials");
             }
@@ -149,8 +153,19 @@ namespace PersonalFinance.Api.Controllers
             var roles = await _userManager.GetRolesAsync(user);
             var token = GenerateJwtToken(user, roles);
 
-            return Ok(new { token });
+            return Ok(new
+            {
+                token,
+                user = new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    fullName = user.FullName,
+                    roles
+                }
+            });
         }
+
 
         [HttpPost("request-password-reset")]
         [AllowAnonymous]
