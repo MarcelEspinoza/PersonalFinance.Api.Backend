@@ -210,21 +210,37 @@ namespace PersonalFinance.Api.Services
 
                     amount = Math.Abs(amount);
 
-                    // ✅ Fecha sin UTC
+                    // ✅ Bloque robusto para parsear fechas (soporta formato europeo dd/MM/yyyy)
                     DateTime dateLocal = DateTime.MinValue;
                     bool dateOk = false;
+
                     try
                     {
                         if (row.Cell(3).DataType == XLDataType.DateTime)
                         {
+                            // Excel guarda la fecha correctamente como número serial
                             dateLocal = row.Cell(3).GetDateTime().Date;
                             dateOk = true;
                         }
                         else
                         {
-                            var dateStr = row.Cell(3).GetString();
-                            dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
-                                     || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.None, out parsedDate);
+                            var dateStr = row.Cell(3).GetString().Trim();
+                            string[] dateFormats = { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy" };
+
+                            dateOk = DateTime.TryParseExact(
+                                dateStr,
+                                dateFormats,
+                                CultureInfo.InvariantCulture,
+                                DateTimeStyles.None,
+                                out var parsedDate
+                            );
+
+                            if (!dateOk)
+                            {
+                                // Último intento con cultura española
+                                dateOk = DateTime.TryParse(dateStr, new CultureInfo("es-ES"), DateTimeStyles.None, out parsedDate);
+                            }
+
                             if (dateOk)
                                 dateLocal = parsedDate.Date;
                         }
@@ -363,6 +379,7 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
             return result;
         }
+
 
     }
 }
