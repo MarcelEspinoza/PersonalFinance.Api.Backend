@@ -204,30 +204,29 @@ namespace PersonalFinance.Api.Services
 
                     var errors = new List<string>();
 
+                    // ✅ Importe
                     var amountOk = double.TryParse(amountStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var amount)
                                    || double.TryParse(amountStr, NumberStyles.Any, CultureInfo.CurrentCulture, out amount);
 
-                    // ✅ fuerza el importe a positivo
                     amount = Math.Abs(amount);
 
-                    // ✅ fecha
-                    DateTime dateUtc = DateTime.MinValue;
+                    // ✅ Fecha sin UTC
+                    DateTime dateLocal = DateTime.MinValue;
                     bool dateOk = false;
                     try
                     {
                         if (row.Cell(3).DataType == XLDataType.DateTime)
                         {
-                            var parsedDate = row.Cell(3).GetDateTime();
-                            dateUtc = DateTime.SpecifyKind(parsedDate, DateTimeKind.Utc);
+                            dateLocal = row.Cell(3).GetDateTime().Date;
                             dateOk = true;
                         }
                         else
                         {
                             var dateStr = row.Cell(3).GetString();
-                            dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate)
-                                     || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out parsedDate);
+                            dateOk = DateTime.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
+                                     || DateTime.TryParse(dateStr, CultureInfo.CurrentCulture, DateTimeStyles.None, out parsedDate);
                             if (dateOk)
-                                dateUtc = parsedDate.ToUniversalTime();
+                                dateLocal = parsedDate.Date;
                         }
                     }
                     catch
@@ -235,6 +234,7 @@ namespace PersonalFinance.Api.Services
                         errors.Add("Invalid date format");
                     }
 
+                    // ✅ Validaciones básicas
                     if (string.IsNullOrWhiteSpace(description)) errors.Add("Empty description");
                     if (!amountOk) errors.Add("Invalid amount");
                     if (!dateOk) errors.Add("Invalid date");
@@ -242,15 +242,12 @@ namespace PersonalFinance.Api.Services
                     if (!validMovements.Contains(movementType, StringComparer.OrdinalIgnoreCase)) errors.Add("Invalid movement type");
                     if (string.IsNullOrWhiteSpace(bankOriginName) || !banksDict.ContainsKey(bankOriginName)) errors.Add("Invalid or empty Bank (Origin)");
 
-                    if (isTransfer)
-                    {
-                        if (string.IsNullOrWhiteSpace(transferReference))
-                            errors.Add("Transfer Reference is required");
-                    }
+                    if (isTransfer && string.IsNullOrWhiteSpace(transferReference))
+                        errors.Add("Transfer Reference is required");
 
                     if (errors.Any())
                     {
-                        result.Pending.Add(new { description, amount, date = dateUtc, errors });
+                        result.Pending.Add(new { description, amount, date = dateLocal, errors });
                         continue;
                     }
 
@@ -258,13 +255,13 @@ namespace PersonalFinance.Api.Services
                     int? categoryId = null;
                     Guid? loanId = null;
 
-                    // Categoría
+                    // ✅ Categoría
                     if (!categories.ContainsKey(categoryName))
                     {
                         var newCat = new Category
                         {
                             Name = categoryName,
-                            Description = "Categoria creada automáticamente por importación",
+                            Description = "Categoría creada automáticamente por importación",
                             UserId = userId,
                             IsActive = true,
                             IsSystem = false,
@@ -281,14 +278,40 @@ namespace PersonalFinance.Api.Services
                     if (!string.IsNullOrWhiteSpace(loanName) && loansDict.ContainsKey(loanName))
                         loanId = loansDict[loanName];
 
-                    // ✅ CREAR SOLO EL MOVIMIENTO DEL BANCO ORIGEN
+                    // ✅ Fechas según el tipo
+                    DateTime startDate = dateLocal;
+                    DateTime? endDate = null;
+                    bool isIndefinite = false;
+
+                    switch (type.ToLowerInvariant())
+                    {
+                        case "temporary":
+                            startDate = dateLocal;
+                            endDate = dateLocal;
+                            isIndefinite = false;
+                            break;
+
+                        case "variable":
+                            startDate = dateLocal;
+                            endDate = dateLocal.AddDays(1);
+                            isIndefinite = false;
+                            break;
+
+                        case "fixed":
+                            startDate = dateLocal;
+                            endDate = null;
+                            isIndefinite = true;
+                            break;
+                    }
+
+                    // ✅ Crear registro
                     if (movementType.Equals("Income", StringComparison.OrdinalIgnoreCase))
                     {
                         _context.Incomes.Add(new Income
                         {
                             Description = description,
                             Amount = (decimal)amount,
-                            Date = dateUtc,
+                            Date = dateLocal,
                             CategoryId = categoryId!.Value,
                             Notes = notes,
                             Type = type,
@@ -300,8 +323,9 @@ namespace PersonalFinance.Api.Services
                                 : null,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
                             LoanId = loanId,
-                            Start_Date = dateUtc,
-                            IsIndefinite = true
+                            Start_Date = startDate,
+                            End_Date = endDate,
+                            IsIndefinite = isIndefinite
                         });
                     }
                     else
@@ -310,7 +334,7 @@ namespace PersonalFinance.Api.Services
                         {
                             Description = description,
                             Amount = (decimal)amount,
-                            Date = dateUtc,
+                            Date = dateLocal,
                             CategoryId = categoryId!.Value,
                             Notes = notes,
                             Type = type,
@@ -322,12 +346,13 @@ namespace PersonalFinance.Api.Services
                                 : null,
                             TransferReference = string.IsNullOrWhiteSpace(transferReference) ? null : transferReference,
                             LoanId = loanId,
-                            Start_Date = dateUtc,
-                            IsIndefinite = true
+                            Start_Date = startDate,
+                            End_Date = endDate,
+                            IsIndefinite = isIndefinite
                         });
                     }
 
-                    result.Imported.Add(new { description, amount, isTransfer });
+                    result.Imported.Add(new { description, amount, type, dateLocal, startDate, endDate, isIndefinite });
                 }
                 catch (Exception ex)
                 {
@@ -338,5 +363,6 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
             return result;
         }
+
     }
 }
