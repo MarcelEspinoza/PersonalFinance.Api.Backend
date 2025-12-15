@@ -4,11 +4,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using PersonalFinance.Api.Api.Utils;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
-using PersonalFinance.Api.Utils;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -183,6 +183,7 @@ builder.Services.AddSingleton<IEmailSender, SendGridEmailSender>();
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<IReconciliationService, ReconciliationService>();
 builder.Services.AddScoped<ITransferService, TransferService>();
+builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 
 
 // -------------------------------

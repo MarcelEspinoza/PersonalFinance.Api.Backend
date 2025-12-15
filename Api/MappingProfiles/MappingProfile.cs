@@ -8,7 +8,7 @@ using PersonalFinance.Api.Models.Dtos.Category;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Models.Entities;
 
-namespace PersonalFinance.Api.MappingProfiles
+namespace PersonalFinance.Api.Api.MappingProfiles
 {
     /*
     PSEUDOCÓDIGO / PLAN (detallado):
