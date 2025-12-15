@@ -25,9 +25,12 @@ namespace PersonalFinance.Api.Services
 
         public async Task<MonthlyInsightsDto> GetMonthlyAsync(int year, int month, Guid? bankId = null, CancellationToken ct = default)
         {
-            var userId = CurrentUserId();
-            var start = new DateTime(year, month, 1);
+            if (month < 1 || month > 12) throw new ArgumentException("month inválido");
+            if (year < 1900 || year > 2100) throw new ArgumentException("year inválido");
+
+            var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
             var end = start.AddMonths(1).AddTicks(-1);
+            var userId = CurrentUserId();
 
             // ============ INCOMES ============
             var incomesQuery = _db.Incomes

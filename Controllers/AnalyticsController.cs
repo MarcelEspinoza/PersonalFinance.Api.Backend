@@ -1,33 +1,51 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿// Controllers/AnalyticsController.cs
 using Microsoft.AspNetCore.Mvc;
-using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 
-namespace PersonalFinance.Api.Controllers
+[ApiController]
+[Route("api/[controller]")]
+public class AnalyticsController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    [Authorize]
-    public class AnalyticsController : ControllerBase
+    private readonly IAnalyticsService _analytics;
+
+    public AnalyticsController(IAnalyticsService analytics)
     {
-        private readonly AnalyticsService _analytics;
+        _analytics = analytics;
+    }
 
-        public AnalyticsController(AnalyticsService analytics)
+    [HttpGet("monthly")]
+    public async Task<IActionResult> GetMonthly(
+        [FromQuery] int? year,
+        [FromQuery] int? month,
+        [FromQuery] Guid? bankId,
+        CancellationToken ct)
+    {
+        try
         {
-            _analytics = analytics;
+            // Defaults si faltan: mes/año actuales (o devuelve 400 si prefieres estricta)
+            var now = DateTime.UtcNow;
+            int y = year ?? now.Year;
+            int m = month ?? now.Month;
+
+            if (m < 1 || m > 12)
+                return BadRequest("Query param 'month' debe estar entre 1 y 12.");
+            if (y < 1900 || y > 2100)
+                return BadRequest("Query param 'year' no es válido.");
+
+            var dto = await _analytics.GetMonthlyAsync(y, m, bankId, ct);
+            return Ok(dto);
         }
-
-        [HttpGet("monthly")]
-        public async Task<IActionResult> GetMonthly(
-            [FromQuery] int year,
-            [FromQuery] int month,
-            [FromQuery] Guid? bankId,
-            CancellationToken ct)
+        catch (ArgumentException ex)
         {
-            if (year < 2000 || month < 1 || month > 12)
-                return BadRequest("Parámetros de fecha inválidos.");
-
-            var result = await _analytics.GetMonthlyAsync(year, month, bankId, ct);
-            return Ok(result);
+            // Parámetros inválidos → 400
+            return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            // Loguea el error y devuelve 500 con un requestId
+            var rid = HttpContext.TraceIdentifier;
+            Console.Error.WriteLine($"[MonthlyAnalytics][{rid}] {ex}");
+            return StatusCode(500, new { message = "Internal error", requestId = rid });
         }
     }
 }
