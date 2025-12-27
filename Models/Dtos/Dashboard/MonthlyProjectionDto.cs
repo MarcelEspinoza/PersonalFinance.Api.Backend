@@ -37,5 +37,8 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         // Ahorro proyectado para meses futuros (y opcionalmente para el actual si quieres un objetivo)
         public decimal ProjectedSavings { get; set; }
         public decimal? PlannedBalance { get; set; }
+
+        public CommitmentSummaryDto? Commitments { get; set; }
+
     }
 }

@@ -22,6 +22,9 @@ namespace PersonalFinance.Api.Data
         public DbSet<PasanacoPayment> PasanacoPayments { get; set; }
         public DbSet<Bank> Banks { get; set; }
         public DbSet<Reconciliation> Reconciliations { get; set; }
+        public DbSet<FinancialCommitment> FinancialCommitments { get; set; }
+        public DbSet<Budget> Budgets { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -148,6 +151,13 @@ namespace PersonalFinance.Api.Data
             // index para consultas por BankId (opcional pero recomendable)
             modelBuilder.Entity<Income>().HasIndex(i => i.BankId);
             modelBuilder.Entity<Expense>().HasIndex(e => e.BankId);
+
+            modelBuilder.Entity<FinancialCommitment>()
+                .HasIndex(c => new { c.UserId, c.StartMonth });
+
+            modelBuilder.Entity<Budget>()
+                .HasIndex(b => new { b.UserId, b.CategoryId });
+
 
         }
 

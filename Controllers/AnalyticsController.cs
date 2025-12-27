@@ -48,4 +48,6 @@ public class AnalyticsController : ControllerBase
             return StatusCode(500, new { message = "Internal error", requestId = rid });
         }
     }
+
+
 }

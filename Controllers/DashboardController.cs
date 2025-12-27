@@ -17,13 +17,8 @@ public class DashboardController : ControllerBase
     [HttpGet("projection")]
     [Authorize]
     public async Task<IActionResult> GetProjection()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                              ?? User.FindFirst("id")?.Value;
-        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
-            return Unauthorized();
-
-        var (monthlyData, summary) = await _dashboardService.GetFutureProjectionAsync(userId);
+    {        
+        var (monthlyData, summary) = await _dashboardService.GetFutureProjectionAsync();
 
         return Ok(new
         {

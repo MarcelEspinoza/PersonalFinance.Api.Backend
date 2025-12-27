@@ -184,6 +184,10 @@ builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<IReconciliationService, ReconciliationService>();
 builder.Services.AddScoped<ITransferService, TransferService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
+builder.Services.AddScoped<ICommitmentService, CommitmentService>();
+builder.Services.AddScoped<IBudgetService, BudgetService>();
+builder.Services.AddScoped<ICommitmentMatchingService, CommitmentMatchingService>();
+
 
 
 // -------------------------------
