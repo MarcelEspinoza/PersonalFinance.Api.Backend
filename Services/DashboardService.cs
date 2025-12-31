@@ -35,13 +35,11 @@ namespace PersonalFinance.Api.Services
 
         private Guid CurrentUserId()
         {
-            var id = _http.HttpContext?
-                .User?
-                .FindFirst(ClaimTypes.NameIdentifier)?
-                .Value;
+            var id = _http.HttpContext?.User?
+                .FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             if (!Guid.TryParse(id, out var userId))
-                throw new UnauthorizedAccessException("Usuario no autenticado");
+                throw new UnauthorizedAccessException();
 
             return userId;
         }
@@ -63,14 +61,9 @@ namespace PersonalFinance.Api.Services
                 .Where(e => e.UserId == userId && !e.IsTransfer)
                 .ToListAsync(ct);
 
-            var currentMonthRealSavings =
-                await _savingService.GetSavingsForMonthAsync(userId, now);
-
             var projections = new List<MonthlyProjectionDto>();
+            var alerts = new DashboardAlertsDto();
             var culture = new CultureInfo("es-ES");
-
-            int commitmentsOutOfRangeTotal = 0;
-            int budgetsExceededTotal = 0;
 
             for (int i = 0; i <= 6; i++)
             {
@@ -79,7 +72,6 @@ namespace PersonalFinance.Api.Services
                 var month = target.Month;
                 var isCurrent = i == 0;
 
-                // ================= REAL =================
                 var monthIncomes = incomes
                     .Where(i => i.Date.Year == year && i.Date.Month == month)
                     .Sum(i => i.Amount);
@@ -93,51 +85,43 @@ namespace PersonalFinance.Api.Services
 
                 var balance = monthIncomes - monthExpenses;
 
-                // ================= COMPROMISOS =================
-                var commitments =
-                    await _commitmentService.GetForMonthAsync(year, month, ct);
-
-                var committedIncome = commitments
-                    .Where(c => c.Type == "Income")
-                    .Sum(c => c.ExpectedAmount);
-
-                var committedExpense = commitments
-                    .Where(c => c.Type == "Expense")
-                    .Sum(c => c.ExpectedAmount);
-
-                // ================= MATCHING =================
+                // ---------- COMPROMISOS ----------
                 var commitmentStatus =
                     await _commitmentMatchingService.GetMonthlyStatusAsync(year, month, ct);
 
-                var outOfRange = commitmentStatus.Count(c => c.IsOutOfRange);
-                commitmentsOutOfRangeTotal += outOfRange;
-
-                var commitmentSummary = new CommitmentSummaryDto
+                if (isCurrent && commitmentStatus.Any(c => c.IsOutOfRange))
                 {
-                    Total = commitmentStatus.Count,
-                    Ok = commitmentStatus.Count(c => c.IsSatisfied),
-                    Pending = commitmentStatus.Count(c => c.ActualAmount == 0),
-                    OutOfRange = outOfRange
-                };
+                    alerts.Items.Add(new AlertItemDto
+                    {
+                        Type = "Commitment",
+                        Message = "Tienes compromisos fuera de rango este mes",
+                        Action = "/commitments"
+                    });
+                }
 
-                // ================= PRESUPUESTOS =================
-                var budgets =
-                    await _budgetService.GetForMonthAsync(year, month, ct);
+                // ---------- PRESUPUESTOS ----------
+                var budgets = await _budgetService.GetForMonthAsync(year, month, ct);
 
-                var budgetedExpenses = budgets.Sum(b => b.MonthlyLimit);
+                if (isCurrent && budgets.Any())
+                {
+                    alerts.Items.Add(new AlertItemDto
+                    {
+                        Type = "Budget",
+                        Message = "Revisa tus presupuestos: algunos pueden estar cerca del límite",
+                        Action = "/budgets"
+                    });
+                }
 
-                budgetsExceededTotal += budgets.Count(b => b.MonthlyLimit < 0); // simple contador, afinaremos luego
-
-                // ================= AHORRO =================
-                var savingsReal = isCurrent ? currentMonthRealSavings : 0m;
-
-                var projectedSavings = isCurrent
-                    ? 0m
-                    : Math.Max(0, (monthIncomes - monthExpenses) * 0.2m);
-
-                var plannedBalance =
-                    (committedIncome - committedExpense - budgetedExpenses)
-                    - projectedSavings;
+                // ---------- BALANCE FUTURO ----------
+                if (!isCurrent && balance < 0)
+                {
+                    alerts.Items.Add(new AlertItemDto
+                    {
+                        Type = "Balance",
+                        Message = $"Balance negativo previsto en {target.ToString("MMMM", culture)}",
+                        Action = "/dashboard"
+                    });
+                }
 
                 projections.Add(new MonthlyProjectionDto
                 {
@@ -145,29 +129,17 @@ namespace PersonalFinance.Api.Services
                     Income = monthIncomes,
                     Expense = monthExpenses,
                     Balance = balance,
-                    IsCurrent = isCurrent,
-                    Savings = savingsReal,
-                    ProjectedSavings = projectedSavings,
-                    PlannedBalance = plannedBalance,
-                    Commitments = commitmentSummary
+                    IsCurrent = isCurrent
                 });
             }
+
+            alerts.HasCriticalAlerts = alerts.Items.Any(a => a.Type != "Info");
 
             var summary = new SummaryDto
             {
                 TotalIncome = projections.Sum(p => p.Income),
                 TotalExpense = projections.Sum(p => p.Expense),
-                Balance = projections.Sum(p => p.Balance),
-                Savings = projections.Where(p => p.IsCurrent).Sum(p => p.Savings),
-                ProjectedSavings = projections.Where(p => !p.IsCurrent).Sum(p => p.ProjectedSavings),
-                PlannedBalance = projections.Sum(p => p.PlannedBalance ?? 0m)
-            };
-
-            var alerts = new DashboardAlertsDto
-            {
-                CommitmentsOutOfRange = commitmentsOutOfRangeTotal,
-                BudgetsExceeded = budgetsExceededTotal,
-                NegativePlannedBalance = summary.PlannedBalance < 0
+                Balance = projections.Sum(p => p.Balance)
             };
 
             return (projections, summary, alerts);
