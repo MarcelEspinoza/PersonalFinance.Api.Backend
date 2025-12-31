@@ -46,8 +46,11 @@ namespace PersonalFinance.Api.Services
             return userId;
         }
 
-        public async Task<(List<MonthlyProjectionDto> monthlyData, SummaryDto summary)>
-            GetFutureProjectionAsync(CancellationToken ct = default)
+        public async Task<(
+            List<MonthlyProjectionDto> monthlyData,
+            SummaryDto summary,
+            DashboardAlertsDto alerts
+        )> GetFutureProjectionAsync(CancellationToken ct = default)
         {
             var userId = CurrentUserId();
             var now = DateTime.UtcNow;
@@ -65,6 +68,9 @@ namespace PersonalFinance.Api.Services
 
             var projections = new List<MonthlyProjectionDto>();
             var culture = new CultureInfo("es-ES");
+
+            int commitmentsOutOfRangeTotal = 0;
+            int budgetsExceededTotal = 0;
 
             for (int i = 0; i <= 6; i++)
             {
@@ -88,7 +94,8 @@ namespace PersonalFinance.Api.Services
                 var balance = monthIncomes - monthExpenses;
 
                 // ================= COMPROMISOS =================
-                var commitments = await _commitmentService.GetForMonthAsync(year, month, ct);
+                var commitments =
+                    await _commitmentService.GetForMonthAsync(year, month, ct);
 
                 var committedIncome = commitments
                     .Where(c => c.Type == "Income")
@@ -98,32 +105,39 @@ namespace PersonalFinance.Api.Services
                     .Where(c => c.Type == "Expense")
                     .Sum(c => c.ExpectedAmount);
 
-                // ================= MATCHING (estado) =================
+                // ================= MATCHING =================
                 var commitmentStatus =
                     await _commitmentMatchingService.GetMonthlyStatusAsync(year, month, ct);
+
+                var outOfRange = commitmentStatus.Count(c => c.IsOutOfRange);
+                commitmentsOutOfRangeTotal += outOfRange;
 
                 var commitmentSummary = new CommitmentSummaryDto
                 {
                     Total = commitmentStatus.Count,
                     Ok = commitmentStatus.Count(c => c.IsSatisfied),
                     Pending = commitmentStatus.Count(c => c.ActualAmount == 0),
-                    OutOfRange = commitmentStatus.Count(c => c.IsOutOfRange)
+                    OutOfRange = outOfRange
                 };
 
                 // ================= PRESUPUESTOS =================
-                var budgets = await _budgetService.GetForMonthAsync(year, month, ct);
+                var budgets =
+                    await _budgetService.GetForMonthAsync(year, month, ct);
+
                 var budgetedExpenses = budgets.Sum(b => b.MonthlyLimit);
+
+                budgetsExceededTotal += budgets.Count(b => b.MonthlyLimit < 0); // simple contador, afinaremos luego
 
                 // ================= AHORRO =================
                 var savingsReal = isCurrent ? currentMonthRealSavings : 0m;
 
-                var projectedSavings =
-                    isCurrent
-                        ? 0m
-                        : Math.Max(0, (monthIncomes - monthExpenses) * 0.2m);
+                var projectedSavings = isCurrent
+                    ? 0m
+                    : Math.Max(0, (monthIncomes - monthExpenses) * 0.2m);
 
                 var plannedBalance =
-                    (committedIncome - committedExpense - budgetedExpenses) - projectedSavings;
+                    (committedIncome - committedExpense - budgetedExpenses)
+                    - projectedSavings;
 
                 projections.Add(new MonthlyProjectionDto
                 {
@@ -149,7 +163,14 @@ namespace PersonalFinance.Api.Services
                 PlannedBalance = projections.Sum(p => p.PlannedBalance ?? 0m)
             };
 
-            return (projections, summary);
+            var alerts = new DashboardAlertsDto
+            {
+                CommitmentsOutOfRange = commitmentsOutOfRangeTotal,
+                BudgetsExceeded = budgetsExceededTotal,
+                NegativePlannedBalance = summary.PlannedBalance < 0
+            };
+
+            return (projections, summary, alerts);
         }
     }
 }
