@@ -1,11 +1,14 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Interfaces;
+using PersonalFinance.Api.Data.Configuration;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Domain.Ledger.Entities;
 
 namespace PersonalFinance.Api.Data
 {
-    public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
+    public class AppDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>, IAppDbContext
     {
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -24,6 +27,25 @@ namespace PersonalFinance.Api.Data
         public DbSet<Reconciliation> Reconciliations { get; set; }
         public DbSet<FinancialCommitment> FinancialCommitments { get; set; }
         public DbSet<Budget> Budgets { get; set; }
+
+        // Modelo de dominio nuevo (ledger). Convive con el anterior hasta que
+        // se porten controladores y servicios. Se expone vía IAppDbContext
+        // para que los casos de uso no alcancen a las tablas legadas.
+        public DbSet<Account> Accounts => Set<Account>();
+        public DbSet<ConceptGroup> ConceptGroups => Set<ConceptGroup>();
+        public DbSet<Concept> Concepts => Set<Concept>();
+        public DbSet<MonthlyPeriod> MonthlyPeriods => Set<MonthlyPeriod>();
+        public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
+        public DbSet<RecurringRule> RecurringRules => Set<RecurringRule>();
+        public DbSet<MonthlyBudget> MonthlyBudgets => Set<MonthlyBudget>();
+        public DbSet<Debt> Debts => Set<Debt>();
+        public DbSet<DebtScheduleItem> DebtScheduleItems => Set<DebtScheduleItem>();
+        public DbSet<Counterparty> Counterparties => Set<Counterparty>();
+        public DbSet<PersonalLoan> PersonalLoans => Set<PersonalLoan>();
+        public DbSet<SavingsGoal> SavingsGoals => Set<SavingsGoal>();
+        public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
+        public DbSet<ImportRow> ImportRows => Set<ImportRow>();
+        public DbSet<ConceptMapping> ConceptMappings => Set<ConceptMapping>();
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -158,7 +180,7 @@ namespace PersonalFinance.Api.Data
             modelBuilder.Entity<Budget>()
                 .HasIndex(b => new { b.UserId, b.CategoryId });
 
-
+            modelBuilder.ApplyLedgerModel();
         }
 
 

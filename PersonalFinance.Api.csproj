@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.2" />
+    <PackageReference Include="MediatR" Version="12.4.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.10">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -31,6 +32,18 @@
 
   <ItemGroup>
     <Folder Include="Models\Dtos\NewFolder\" />
+  </ItemGroup>
+
+  <!-- El SDK Web incluye todos los .cs bajo el proyecto; el dominio y el
+       proyecto de tests se compilan por separado. -->
+  <ItemGroup>
+    <Compile Remove="tests\**;src\**" />
+    <Content Remove="tests\**;src\**" />
+    <EmbeddedResource Remove="tests\**;src\**" />
+    <None Remove="tests\**;src\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="src\PersonalFinance.Domain\PersonalFinance.Domain.csproj" />
   </ItemGroup>
 
 </Project>

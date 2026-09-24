@@ -22,7 +22,9 @@
                 ?? "Server=localhost;Port=3306;Database=PersonalFinanceDb;User=root;Password=1234;SslMode=Preferred;";
 
             // 👇 Usa el proveedor MySQL (Pomelo)
-            builder.UseMySql(conn, ServerVersion.AutoDetect(conn));
+            // Versión fijada en lugar de AutoDetect: generar una migración no
+            // debe exigir una base de datos accesible.
+            builder.UseMySql(conn, new MySqlServerVersion(new Version(8, 0, 0)));
 
             return new AppDbContext(builder.Options);
         }

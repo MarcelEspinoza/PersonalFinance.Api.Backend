@@ -1,0 +1,12 @@
+# Los artefactos locales de Windows no deben entrar en la imagen: sus rutas
+# absolutas en obj/project.assets.json rompen el restore dentro del contenedor.
+**/bin/
+**/obj/
+**/.vs/
+**/.git/
+**/.github/
+**/node_modules/
+**/*.user
+**/appsettings.Development.json
+Dockerfile
+.dockerignore

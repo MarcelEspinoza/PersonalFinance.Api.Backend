@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PersonalFinance.Api.Api.Utils;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Features.Ledger;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
@@ -188,6 +189,11 @@ builder.Services.AddScoped<ICommitmentService, CommitmentService>();
 builder.Services.AddScoped<IBudgetService, BudgetService>();
 builder.Services.AddScoped<ICommitmentMatchingService, CommitmentMatchingService>();
 
+// Dominio nuevo (ledger): MediatR descubre los handlers del ensamblado.
+builder.Services.AddLedgerModule();
+builder.Services.AddScoped<PersonalFinance.Api.Common.Interfaces.IAppDbContext>(
+    sp => sp.GetRequiredService<AppDbContext>());
+
 
 
 // -------------------------------
@@ -250,6 +256,8 @@ using (var scope = app.Services.CreateScope())
 // -------------------------------
 // Middleware pipeline
 // -------------------------------
+
+app.UseMiddleware<PersonalFinance.Api.Common.Middleware.ApiExceptionMiddleware>();
 
 app.UseSwagger();
 app.UseSwaggerUI();

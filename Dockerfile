@@ -4,9 +4,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /app
 
-# Copiar solo csproj y restaurar paquetes para aprovechar caching
+# Copiar solo los csproj y restaurar paquetes para aprovechar caching.
+# El dominio vive en su propio proyecto, así que también hay que copiarlo
+# antes del restore o este falla al resolver la ProjectReference.
 COPY PersonalFinance.Api.csproj ./
-RUN dotnet restore
+COPY src/PersonalFinance.Domain/PersonalFinance.Domain.csproj src/PersonalFinance.Domain/
+RUN dotnet restore PersonalFinance.Api.csproj
 
 # Copiar el resto del código y publicar
 COPY . . 
