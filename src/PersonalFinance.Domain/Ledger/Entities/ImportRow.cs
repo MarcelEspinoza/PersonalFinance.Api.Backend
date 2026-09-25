@@ -22,6 +22,12 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// <summary>Importe con signo tal y como viene del extracto.</summary>
         public decimal Amount { get; set; }
 
+        /// <summary>Comisión bancaria de la línea, si la hubo (siempre en positivo).</summary>
+        public decimal Fee { get; set; }
+
+        /// <summary>Estado que determinó el clasificador (Paid/Pending) al importar la fila.</summary>
+        public EntryStatus ClassifiedStatus { get; set; } = EntryStatus.Paid;
+
         public string? Currency { get; set; }
 
         public string RawDescription { get; set; } = string.Empty;

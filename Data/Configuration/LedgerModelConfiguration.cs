@@ -290,6 +290,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.ToTable("ImportRows");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Amount).HasColumnType(Money);
+                e.Property(x => x.Fee).HasColumnType(Money);
                 e.Property(x => x.Currency).HasMaxLength(3);
                 e.Property(x => x.RawDescription).IsRequired().HasMaxLength(500);
                 e.Property(x => x.NormalizedDescription).HasMaxLength(500);

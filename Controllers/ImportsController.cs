@@ -20,11 +20,14 @@ namespace PersonalFinance.Api.Controllers
     {
         private readonly IAppDbContext _db;
         private readonly IImportAiSuggestionService _aiSuggestions;
+        private readonly PeriodProvisioner _periods;
 
-        public ImportsController(IAppDbContext db, IImportAiSuggestionService aiSuggestions)
+        public ImportsController(
+            IAppDbContext db, IImportAiSuggestionService aiSuggestions, PeriodProvisioner periods)
         {
             _db = db;
             _aiSuggestions = aiSuggestions;
+            _periods = periods;
         }
 
         [HttpGet("{batchId:guid}")]
@@ -127,6 +130,8 @@ namespace PersonalFinance.Api.Controllers
             var concepts = await _db.Concepts
                 .Where(c => c.UserId == userId.Value)
                 .ToDictionaryAsync(c => c.Id, ct);
+            var feeConcept = concepts.Values.FirstOrDefault(
+                c => string.Equals(c.Name, "Bank fees", StringComparison.OrdinalIgnoreCase));
             var existingFingerprints = (await _db.LedgerEntries
                 .Where(e => e.UserId == userId.Value && e.Fingerprint != null)
                 .Select(e => e.Fingerprint!)
@@ -144,10 +149,20 @@ namespace PersonalFinance.Api.Controllers
                     row.Status = ImportRowStatus.Duplicate;
                     continue;
                 }
+                if (row.Fee != 0m && feeConcept is null)
+                    return BadRequest(
+                        "Falta el concepto 'Bank fees': siembra el plan de cuentas antes de aplicar.");
 
-                var period = await GetPeriodAsync(userId.Value, row.ValueDate, ct);
+                var period = await _periods.GetOrOpenAsync(
+                    userId.Value, row.ValueDate.Year, row.ValueDate.Month, ct);
                 if (period.Status == PeriodStatus.Closed)
                     return Conflict($"El periodo {period.Year}-{period.Month:D2} está cerrado.");
+
+                // El estado real (Paid/Pending) lo decidió el clasificador al
+                // importar: un movimiento aún no liquidado no puede entrar como
+                // pagado sólo porque ya se ha revisado su concepto.
+                var isPaid = row.ClassifiedStatus == EntryStatus.Paid;
+                var amount = Math.Abs(row.Amount);
 
                 _db.LedgerEntries.Add(new LedgerEntry
                 {
@@ -157,15 +172,43 @@ namespace PersonalFinance.Api.Controllers
                     AccountId = accountId,
                     Direction = row.Amount >= 0 ? EntryDirection.In : EntryDirection.Out,
                     IsTransfer = concept.Kind == ConceptKind.Transfer,
-                    Status = EntryStatus.Paid,
+                    Status = row.ClassifiedStatus,
                     DueDate = row.ValueDate,
-                    ValueDate = row.ValueDate,
-                    ForecastAmount = Math.Abs(row.Amount),
-                    ActualAmount = Math.Abs(row.Amount),
+                    ValueDate = isPaid ? row.ValueDate : null,
+                    ForecastAmount = amount,
+                    ActualAmount = isPaid ? amount : null,
                     Description = row.RawDescription,
                     ImportRowId = row.Id,
                     Fingerprint = row.Fingerprint
                 });
+
+                // La comisión es un gasto aparte: el banco resta el importe y la
+                // comisión por separado del saldo, y así lo refleja el libro.
+                if (row.Fee != 0m && feeConcept is not null)
+                {
+                    var feeFingerprint = row.Fingerprint + "#fee";
+                    if (existingFingerprints.Add(feeFingerprint))
+                    {
+                        _db.LedgerEntries.Add(new LedgerEntry
+                        {
+                            UserId = userId.Value,
+                            PeriodId = period.Id,
+                            ConceptId = feeConcept.Id,
+                            AccountId = accountId,
+                            Direction = EntryDirection.Out,
+                            IsTransfer = false,
+                            Status = row.ClassifiedStatus,
+                            DueDate = row.ValueDate,
+                            ValueDate = isPaid ? row.ValueDate : null,
+                            ForecastAmount = row.Fee,
+                            ActualAmount = isPaid ? row.Fee : null,
+                            Description = $"Comisión: {row.RawDescription}",
+                            ImportRowId = row.Id,
+                            Fingerprint = feeFingerprint
+                        });
+                    }
+                }
+
                 row.Status = ImportRowStatus.Accepted;
                 applied++;
             }
@@ -311,6 +354,8 @@ namespace PersonalFinance.Api.Controllers
                     RowNumber = movement.RowNumber,
                     ValueDate = DateOnly.FromDateTime(movement.StartedAt),
                     Amount = movement.Amount,
+                    Fee = movement.Fee,
+                    ClassifiedStatus = classified.Status,
                     Currency = movement.Currency,
                     RawDescription = movement.Description,
                     NormalizedDescription = classified.NormalizedDescription,
@@ -354,27 +399,6 @@ namespace PersonalFinance.Api.Controllers
                 .FirstOrDefault();
         }
 
-        private async Task<MonthlyPeriod> GetPeriodAsync(
-            Guid userId, DateOnly date, CancellationToken ct)
-        {
-            var period = await _db.MonthlyPeriods
-                .FirstOrDefaultAsync(
-                    p => p.UserId == userId && p.Year == date.Year && p.Month == date.Month, ct);
-            if (period is not null) return period;
-
-            period = new MonthlyPeriod
-            {
-                UserId = userId,
-                Year = date.Year,
-                Month = date.Month,
-                Status = PeriodStatus.Open,
-                CarryOverAmount = 0m
-            };
-            _db.MonthlyPeriods.Add(period);
-            await _db.SaveChangesAsync(ct);
-            return period;
-        }
-
         private static ImportRowDto MapRow(ImportRow row) => new()
         {
             Id = row.Id,
@@ -390,6 +414,12 @@ namespace PersonalFinance.Api.Controllers
             SuggestionSource = row.SuggestionSource
         };
 
+        /// <summary>
+        /// Incluye el número de línea del extracto: dos movimientos distintos
+        /// pueden compartir fecha, importe y descripción normalizada (por
+        /// ejemplo, dos cajeros del mismo importe el mismo minuto), y sin el
+        /// número de fila la huella los trataría como el mismo duplicado.
+        /// </summary>
         private static string CreateFingerprint(Guid accountId, RevolutMovement movement)
         {
             var raw = string.Join(
@@ -397,7 +427,8 @@ namespace PersonalFinance.Api.Controllers
                 accountId.ToString("N"),
                 movement.StartedAt.ToString("O", CultureInfo.InvariantCulture),
                 movement.Amount.ToString(CultureInfo.InvariantCulture),
-                RevolutMovementClassifier.Normalize(movement.Description));
+                RevolutMovementClassifier.Normalize(movement.Description),
+                movement.RowNumber.ToString(CultureInfo.InvariantCulture));
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
         }
     }

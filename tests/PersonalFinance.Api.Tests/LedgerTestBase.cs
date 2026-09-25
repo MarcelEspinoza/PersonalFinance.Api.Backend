@@ -39,6 +39,7 @@ public abstract class LedgerTestBase : IDisposable
 
     protected readonly AppDbContext Db;
     protected readonly IMediator Mediator;
+    protected IServiceProvider Provider => _provider;
     protected readonly TestClock Clock = new();
     protected readonly RecordingAuditLog Audit = new();
     protected readonly Guid UserId = Guid.NewGuid();

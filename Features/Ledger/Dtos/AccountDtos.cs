@@ -29,4 +29,12 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public decimal OpeningBalance { get; set; }
         public DateOnly OpeningDate { get; set; }
     }
+
+    public sealed class AccountBalanceDto
+    {
+        public Guid AccountId { get; set; }
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public decimal Balance { get; set; }
+    }
 }
