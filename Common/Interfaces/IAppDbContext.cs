@@ -11,6 +11,8 @@ namespace PersonalFinance.Api.Common.Interfaces
     public interface IAppDbContext
     {
         DbSet<Account> Accounts { get; }
+        /// <summary>Tabla legada "Banco", mantenida en sincronía con Accounts para no romper Gastos/Ingresos/Compromisos/Conciliación.</summary>
+        DbSet<PersonalFinance.Api.Models.Entities.Bank> Banks { get; }
         DbSet<ConceptGroup> ConceptGroups { get; }
         DbSet<Concept> Concepts { get; }
         DbSet<MonthlyPeriod> MonthlyPeriods { get; }

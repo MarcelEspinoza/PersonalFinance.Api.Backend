@@ -16,6 +16,16 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public string Currency { get; set; } = "EUR";
 
+        /// <summary>
+        /// Metadatos opcionales heredados del antiguo concepto "Banco": entidad,
+        /// número de cuenta y color de UI. Viven aquí para que exista una sola
+        /// lista de cuentas en toda la app; el módulo legado (Gastos/Ingresos)
+        /// sigue leyendo la tabla Banks, que se mantiene sincronizada desde aquí.
+        /// </summary>
+        public string? Entity { get; set; }
+        public string? AccountNumber { get; set; }
+        public string? Color { get; set; }
+
         /// <summary>Saldo conocido en <see cref="OpeningDate"/>; ancla el arrastre mensual.</summary>
         public decimal OpeningBalance { get; set; }
 

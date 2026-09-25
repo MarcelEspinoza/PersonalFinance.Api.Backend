@@ -7,6 +7,7 @@ using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Domain.Ledger.Calculations;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
+using LegacyBank = PersonalFinance.Api.Models.Entities.Bank;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -30,16 +31,7 @@ namespace PersonalFinance.Api.Controllers
                 .AsNoTracking()
                 .Where(a => a.UserId == userId.Value && (includeInactive || a.IsActive))
                 .OrderBy(a => a.Name)
-                .Select(a => new AccountDto
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    Type = a.Type,
-                    Currency = a.Currency,
-                    OpeningBalance = a.OpeningBalance,
-                    OpeningDate = a.OpeningDate,
-                    IsActive = a.IsActive
-                })
+                .Select(a => ToDto(a))
                 .ToListAsync(ct);
 
             return Ok(accounts);
@@ -68,22 +60,64 @@ namespace PersonalFinance.Api.Controllers
                 Type = dto.Type,
                 Currency = currency,
                 OpeningBalance = dto.OpeningBalance,
-                OpeningDate = dto.OpeningDate
+                OpeningDate = dto.OpeningDate,
+                Entity = dto.Entity?.Trim(),
+                AccountNumber = dto.AccountNumber?.Trim(),
+                Color = dto.Color?.Trim()
             };
 
             _db.Accounts.Add(account);
+            MirrorToBank(account);
             await _db.SaveChangesAsync(ct);
 
-            return Ok(new AccountDto
-            {
-                Id = account.Id,
-                Name = account.Name,
-                Type = account.Type,
-                Currency = account.Currency,
-                OpeningBalance = account.OpeningBalance,
-                OpeningDate = account.OpeningDate,
-                IsActive = account.IsActive
-            });
+            return Ok(ToDto(account));
+        }
+
+        [HttpPut("{id:guid}")]
+        public async Task<ActionResult<AccountDto>> Update(
+            Guid id, [FromBody] UpdateAccountDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var account = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId.Value, ct);
+            if (account is null) return NotFound();
+
+            var name = dto.Name.Trim();
+            var currency = dto.Currency.Trim().ToUpperInvariant();
+            if (name.Length == 0 || currency.Length != 3)
+                return BadRequest("Nombre y divisa son obligatorios.");
+
+            account.Name = name;
+            account.Type = dto.Type;
+            account.Currency = currency;
+            account.Entity = dto.Entity?.Trim();
+            account.AccountNumber = dto.AccountNumber?.Trim();
+            account.Color = dto.Color?.Trim();
+            account.IsActive = dto.IsActive;
+
+            MirrorToBank(account);
+            await _db.SaveChangesAsync(ct);
+
+            return Ok(ToDto(account));
+        }
+
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var account = await _db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == userId.Value, ct);
+            if (account is null) return NotFound();
+
+            _db.Accounts.Remove(account);
+
+            var bank = await _db.Banks.FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId.Value, ct);
+            if (bank is not null) _db.Banks.Remove(bank);
+
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
         }
 
         /// <summary>
@@ -119,6 +153,44 @@ namespace PersonalFinance.Api.Controllers
                 Month = month,
                 Balance = balance
             });
+        }
+
+        private static AccountDto ToDto(Account a) => new()
+        {
+            Id = a.Id,
+            Name = a.Name,
+            Type = a.Type,
+            Currency = a.Currency,
+            OpeningBalance = a.OpeningBalance,
+            OpeningDate = a.OpeningDate,
+            IsActive = a.IsActive,
+            Entity = a.Entity,
+            AccountNumber = a.AccountNumber,
+            Color = a.Color
+        };
+
+        /// <summary>
+        /// El módulo legado (Gastos/Ingresos/Compromisos/Conciliación) todavía lee la
+        /// tabla Banks por su cuenta; para que exista una sola lista de cuentas
+        /// visible en toda la app, cada alta/edición aquí crea o actualiza también
+        /// su fila espejo en Banks, reutilizando el mismo Id.
+        /// </summary>
+        private void MirrorToBank(Account account)
+        {
+            var bank = _db.Banks.Local.FirstOrDefault(b => b.Id == account.Id)
+                ?? _db.Banks.FirstOrDefault(b => b.Id == account.Id);
+
+            if (bank is null)
+            {
+                bank = new LegacyBank { Id = account.Id, UserId = account.UserId };
+                _db.Banks.Add(bank);
+            }
+
+            bank.Name = account.Name;
+            bank.Entity = account.Entity;
+            bank.AccountNumber = account.AccountNumber;
+            bank.Currency = account.Currency;
+            bank.Color = account.Color;
         }
     }
 }
