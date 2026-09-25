@@ -8,10 +8,16 @@
         Cash = 3
     }
 
+    /// <summary>
+    /// Transfer es dinero moviéndose entre cuentas propias (cuenta corriente a
+    /// hucha, por ejemplo). No es ni gasto ni ingreso: cambia dónde está el
+    /// dinero, no cuánto hay.
+    /// </summary>
     public enum ConceptKind
     {
         Income = 0,
-        Expense = 1
+        Expense = 1,
+        Transfer = 2
     }
 
     public enum ConceptNature

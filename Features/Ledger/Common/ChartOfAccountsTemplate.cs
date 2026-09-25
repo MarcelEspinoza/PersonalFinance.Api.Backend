@@ -83,12 +83,26 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 new("Food & Beverage", ConceptNature.Variable, 10, 230m),
                 new("Personal costs", ConceptNature.Variable, 20, 150m),
-                new("Transport", ConceptNature.Variable, 30, 25m)
+                new("Transport", ConceptNature.Variable, 30, 25m),
+                // El Excel no la tenía porque allí no se veían las comisiones.
+                // El extracto sí las trae, y escondidas dentro de otro gasto
+                // no hay forma de saber cuánto cuesta el banco al año.
+                new("Bank fees", ConceptNature.Variable, 40)
             }),
 
             new("Savings", ConceptKind.Expense, 60, new List<ConceptTemplate>
             {
                 new("Savings", ConceptNature.Fixed, 10)
+            }),
+
+            // Grupo nuevo, ajeno al Excel: dinero que cambia de sitio sin
+            // dejar de ser tuyo. No suma en gastos ni en ingresos, pero sí
+            // mueve el saldo, que es lo que hace que cuadre con el banco.
+            new("Traspasos", ConceptKind.Transfer, 70, new List<ConceptTemplate>
+            {
+                new("Hucha y fondos Revolut", ConceptNature.Variable, 10),
+                new("Recarga desde mis tarjetas", ConceptNature.Variable, 20),
+                new("Movimiento entre mis bancos", ConceptNature.Variable, 30)
             })
         };
     }

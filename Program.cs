@@ -160,6 +160,8 @@ builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 // -------------------------------
 builder.Services.AddScoped<IRoleSeeder, RoleSeeder>();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient<PersonalFinance.Api.Features.Ledger.Common.IImportAiSuggestionService,
+    PersonalFinance.Api.Features.Ledger.Common.ImportAiSuggestionService>();
 
 builder.Services.AddAuthorization(options =>
 {

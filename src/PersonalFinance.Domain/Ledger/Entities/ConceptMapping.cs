@@ -10,6 +10,16 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public Guid Id { get; set; } = Guid.NewGuid();
         public Guid UserId { get; set; }
 
+        /// <summary>
+        /// Cuenta a la que se limita la regla. Null = vale para todas.
+        /// Hace falta porque un mismo texto significa cosas distintas según
+        /// dónde caiga: "Transferencia de JENNY MABEL ESPINOZA SEJAS" es una
+        /// devolución de préstamo en la cuenta personal y una aportación a los
+        /// gastos en la conjunta.
+        /// </summary>
+        public Guid? AccountId { get; set; }
+        public Account? Account { get; set; }
+
         /// <summary>Texto normalizado a buscar dentro de la descripción del movimiento.</summary>
         public string Pattern { get; set; } = string.Empty;
 

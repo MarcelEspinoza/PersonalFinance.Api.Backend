@@ -322,7 +322,12 @@ namespace PersonalFinance.Api.Data.Configuration
                     .HasForeignKey(x => x.ConceptId)
                     .OnDelete(DeleteBehavior.Cascade);
 
-                e.HasIndex(x => new { x.UserId, x.Pattern }).IsUnique();
+                e.HasOne(x => x.Account)
+                    .WithMany()
+                    .HasForeignKey(x => x.AccountId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
+                e.HasIndex(x => new { x.UserId, x.AccountId, x.Pattern }).IsUnique();
             });
         }
     }

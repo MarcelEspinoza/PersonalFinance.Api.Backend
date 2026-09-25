@@ -27,6 +27,13 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public EntryDirection Direction { get; set; }
 
+        /// <summary>
+        /// Traspaso entre cuentas propias. Mueve el saldo pero no cuenta como
+        /// gasto ni como ingreso: sumarlo contaría dos veces el mismo dinero,
+        /// una al salir de la cuenta y otra al volver.
+        /// </summary>
+        public bool IsTransfer { get; set; }
+
         public EntryStatus Status { get; set; } = EntryStatus.Planned;
 
         /// <summary>Fecha prevista de cargo o abono.</summary>
