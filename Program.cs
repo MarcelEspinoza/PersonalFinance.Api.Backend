@@ -162,6 +162,8 @@ builder.Services.AddScoped<IRoleSeeder, RoleSeeder>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Ledger.Common.IImportAiSuggestionService,
     PersonalFinance.Api.Features.Ledger.Common.ImportAiSuggestionService>();
+builder.Services.AddHttpClient<PersonalFinance.Api.Features.Ledger.Common.IImportChatService,
+    PersonalFinance.Api.Features.Ledger.Common.ImportChatService>();
 
 builder.Services.AddAuthorization(options =>
 {

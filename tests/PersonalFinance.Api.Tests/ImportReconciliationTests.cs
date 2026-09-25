@@ -21,6 +21,18 @@ public sealed class NullAiSuggestionService : IImportAiSuggestionService
             new Dictionary<string, ImportAiSuggestion>());
 }
 
+/// <summary>Chat inerte: no hace falta Anthropic para probar el cuadre contable.</summary>
+public sealed class NullChatService : IImportChatService
+{
+    public Task<ImportChatResult> AskAsync(
+        string userMessage,
+        IReadOnlyList<ImportChatMessage> history,
+        IReadOnlyList<ImportChatRowContext> rows,
+        IReadOnlyList<ImportAiCandidate> concepts,
+        CancellationToken ct) =>
+        Task.FromResult(new ImportChatResult(string.Empty, Array.Empty<ImportChatChange>(), Array.Empty<string>()));
+}
+
 /// <summary>
 /// Reproduce, con un extracto sintético, los cinco bloqueantes detectados por
 /// la validación contable: arrastre ignorado, colisión de huella entre
@@ -35,7 +47,7 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     private ImportsController CreateController(Guid userId)
     {
         var periods = Provider.GetRequiredService<PeriodProvisioner>();
-        var controller = new ImportsController(Db, new NullAiSuggestionService(), periods);
+        var controller = new ImportsController(Db, new NullAiSuggestionService(), new NullChatService(), periods);
 
         var httpContext = new DefaultHttpContext
         {

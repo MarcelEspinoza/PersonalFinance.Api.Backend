@@ -48,4 +48,23 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public int ExcludedRows { get; set; }
         public IReadOnlyList<string> Problems { get; set; } = Array.Empty<string>();
     }
+
+    public sealed class ImportChatMessageDto
+    {
+        public string Role { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+
+    public sealed class ImportChatRequestDto
+    {
+        public string Message { get; set; } = string.Empty;
+        public IReadOnlyList<ImportChatMessageDto> History { get; set; } = Array.Empty<ImportChatMessageDto>();
+    }
+
+    public sealed class ImportChatResponseDto
+    {
+        public string Reply { get; set; } = string.Empty;
+        public int AppliedChanges { get; set; }
+        public IReadOnlyList<string> Unrecognized { get; set; } = Array.Empty<string>();
+    }
 }

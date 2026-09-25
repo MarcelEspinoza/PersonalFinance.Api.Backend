@@ -20,13 +20,18 @@ namespace PersonalFinance.Api.Controllers
     {
         private readonly IAppDbContext _db;
         private readonly IImportAiSuggestionService _aiSuggestions;
+        private readonly IImportChatService _chat;
         private readonly PeriodProvisioner _periods;
 
         public ImportsController(
-            IAppDbContext db, IImportAiSuggestionService aiSuggestions, PeriodProvisioner periods)
+            IAppDbContext db,
+            IImportAiSuggestionService aiSuggestions,
+            IImportChatService chat,
+            PeriodProvisioner periods)
         {
             _db = db;
             _aiSuggestions = aiSuggestions;
+            _chat = chat;
             _periods = periods;
         }
 
@@ -97,6 +102,71 @@ namespace PersonalFinance.Api.Controllers
             await _db.SaveChangesAsync(ct);
 
             return Ok(MapRow(row));
+        }
+
+        [HttpPost("{batchId:guid}/chat")]
+        public async Task<ActionResult<ImportChatResponseDto>> Chat(
+            Guid batchId, [FromBody] ImportChatRequestDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            if (string.IsNullOrWhiteSpace(dto.Message)) return BadRequest("El mensaje no puede estar vacío.");
+
+            var batch = await _db.ImportBatches
+                .Include(b => b.Rows)
+                .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+
+            var concepts = await _db.Concepts
+                .AsNoTracking()
+                .Where(c => c.UserId == userId.Value && c.IsActive)
+                .Select(c => new ImportAiCandidate(c.Id, c.Name, c.Kind.ToString()))
+                .ToListAsync(ct);
+            var conceptNames = concepts.ToDictionary(c => c.Id, c => c.Name);
+
+            // Sólo las filas aún pendientes de decisión: aplicadas o duplicadas
+            // no tiene sentido tocarlas desde el chat.
+            var rowContexts = batch.Rows
+                .Where(r => r.Status == ImportRowStatus.Pending)
+                .OrderBy(r => r.RowNumber)
+                .Select(r => new ImportChatRowContext(
+                    r.Id,
+                    r.RowNumber,
+                    r.ValueDate.ToString("yyyy-MM-dd"),
+                    r.Amount,
+                    r.RawDescription,
+                    (r.ConfirmedConceptId ?? r.SuggestedConceptId) is { } cid && conceptNames.TryGetValue(cid, out var name)
+                        ? name
+                        : null))
+                .ToList();
+
+            var history = dto.History
+                .Where(h => h.Role is "user" or "assistant")
+                .Select(h => new ImportChatMessage(h.Role, h.Content))
+                .ToList();
+
+            var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, ct);
+
+            var applied = 0;
+            foreach (var change in result.Changes)
+            {
+                var row = batch.Rows.FirstOrDefault(r => r.Id == change.RowId);
+                if (row is null || row.Status != ImportRowStatus.Pending) continue;
+
+                row.ConfirmedConceptId = change.ConceptId;
+                row.SuggestionSource = "chat";
+                row.SuggestionConfidence = change.ConceptId is null ? null : 1m;
+                applied++;
+            }
+
+            if (applied > 0) await _db.SaveChangesAsync(ct);
+
+            return Ok(new ImportChatResponseDto
+            {
+                Reply = result.Reply,
+                AppliedChanges = applied,
+                Unrecognized = result.Unrecognized
+            });
         }
 
         [HttpPost("{batchId:guid}/apply")]
