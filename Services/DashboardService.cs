@@ -125,6 +125,9 @@ namespace PersonalFinance.Api.Services
             var variableExpenseConcepts = concepts
                 .Where(concept => concept.Kind == ConceptKind.Expense && concept.Nature == ConceptNature.Variable)
                 .ToList();
+            var variableIncomeConcepts = concepts
+                .Where(concept => concept.Kind == ConceptKind.Income && concept.Nature == ConceptNature.Variable)
+                .ToList();
 
             for (int i = 0; i <= 6; i++)
             {
@@ -157,7 +160,31 @@ namespace PersonalFinance.Api.Services
                     .Where(rule => rule.Direction == EntryDirection.Out)
                     .Sum(rule => rule.ForecastAmount);
 
-                var income = ledgerTotals.ActualIncome + ledgerTotals.PendingIncome + recurringIncome;
+                var fixedIncome = monthEntries
+                    .Where(entry =>
+                        entry.Direction == EntryDirection.In &&
+                        (!conceptById.TryGetValue(entry.ConceptId, out var concept) ||
+                         concept.Nature == ConceptNature.Fixed))
+                    .Sum(entry => entry.Status == EntryStatus.Paid
+                        ? entry.ActualAmount ?? entry.ForecastAmount
+                        : entry.ForecastAmount);
+                var variableIncome = variableIncomeConcepts.Sum(concept =>
+                {
+                    var planned = monthEntries
+                        .Where(entry =>
+                            entry.Direction == EntryDirection.In &&
+                            entry.ConceptId == concept.Id)
+                        .Sum(entry => entry.Status == EntryStatus.Paid
+                            ? entry.ActualAmount ?? entry.ForecastAmount
+                            : entry.ForecastAmount);
+                    var overrideEstimate = monthlyBudgets.FirstOrDefault(budget =>
+                        budget.ConceptId == concept.Id &&
+                        budget.Year == year &&
+                        budget.Month == month)?.LimitAmount;
+                    var estimate = overrideEstimate ?? concept.DefaultMonthlyBudget ?? 0m;
+                    return Math.Max(planned, estimate);
+                });
+                var income = fixedIncome + recurringIncome + variableIncome;
                 var fixedExpense = monthEntries
                     .Where(entry =>
                         entry.Direction == EntryDirection.Out &&
@@ -185,7 +212,7 @@ namespace PersonalFinance.Api.Services
                 var expense = fixedExpense + recurringExpense + variableExpense;
                 var source = income == 0m && expense == 0m
                     ? "Sin planificación"
-                    : "Tus gastos fijos y límites variables";
+                    : "Tus ingresos y gastos planificados";
 
                 var balance = income - expense;
 

@@ -11,6 +11,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     public sealed class ExpensePlanningGroupDto
     {
         public string Name { get; set; } = string.Empty;
+        public ConceptKind Kind { get; set; }
         public int SortOrder { get; set; }
         public List<ExpensePlanningItemDto> Items { get; set; } = new();
     }

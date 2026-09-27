@@ -34,5 +34,8 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927221500_EnsureJointAccount",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20260927222500_SeedIncomeAndHouseholdPlanning",
+            context.Database.GetMigrations());
     }
 }

@@ -32,12 +32,18 @@ namespace PersonalFinance.Api.Controllers
 
             var groups = await _db.ConceptGroups
                 .AsNoTracking()
-                .Where(group => group.UserId == userId.Value && group.IsActive && group.Kind == ConceptKind.Expense)
+                .Where(group =>
+                    group.UserId == userId.Value &&
+                    group.IsActive &&
+                    (group.Kind == ConceptKind.Income || group.Kind == ConceptKind.Expense))
                 .OrderBy(group => group.SortOrder)
                 .ToListAsync(ct);
             var concepts = await _db.Concepts
                 .AsNoTracking()
-                .Where(concept => concept.UserId == userId.Value && concept.IsActive && concept.Kind == ConceptKind.Expense)
+                .Where(concept =>
+                    concept.UserId == userId.Value &&
+                    concept.IsActive &&
+                    (concept.Kind == ConceptKind.Income || concept.Kind == ConceptKind.Expense))
                 .OrderBy(concept => concept.SortOrder)
                 .ToListAsync(ct);
             var rules = await _db.RecurringRules
@@ -45,7 +51,6 @@ namespace PersonalFinance.Api.Controllers
                 .Where(rule =>
                     rule.UserId == userId.Value &&
                     rule.IsActive &&
-                    rule.Direction == EntryDirection.Out &&
                     rule.Frequency == RecurrenceFrequency.Monthly)
                 .OrderBy(rule => rule.CreatedAt)
                 .ToListAsync(ct);
@@ -65,6 +70,7 @@ namespace PersonalFinance.Api.Controllers
                 Groups = groups.Select(group => new ExpensePlanningGroupDto
                 {
                     Name = group.Name,
+                    Kind = group.Kind,
                     SortOrder = group.SortOrder,
                     Items = conceptsByGroup[group.Id].Select(concept =>
                     {
@@ -103,7 +109,7 @@ namespace PersonalFinance.Api.Controllers
                     item.Id == conceptId &&
                     item.UserId == userId.Value &&
                     item.IsActive &&
-                    item.Kind == ConceptKind.Expense,
+                    (item.Kind == ConceptKind.Income || item.Kind == ConceptKind.Expense),
                 ct);
             if (concept is null) return NotFound();
 
@@ -122,7 +128,6 @@ namespace PersonalFinance.Api.Controllers
                 .Where(rule =>
                     rule.UserId == userId.Value &&
                     rule.ConceptId == conceptId &&
-                    rule.Direction == EntryDirection.Out &&
                     rule.Frequency == RecurrenceFrequency.Monthly)
                 .OrderBy(rule => rule.CreatedAt)
                 .ToListAsync(ct);
@@ -136,19 +141,26 @@ namespace PersonalFinance.Api.Controllers
                     return BadRequest("Indica un importe mensual mayor que cero.");
                 if (dto.DayOfMonth is null or < 1 or > 31)
                     return BadRequest("El día de cobro debe estar entre 1 y 31.");
+                if (dto.AccountId is null)
+                    return BadRequest("Selecciona la cuenta del movimiento fijo.");
 
                 concept.DefaultMonthlyBudget = null;
                 var rule = rules.FirstOrDefault() ?? new RecurringRule
                 {
                     UserId = userId.Value,
                     ConceptId = concept.Id,
-                    Direction = EntryDirection.Out,
+                    Direction = concept.Kind == ConceptKind.Income
+                        ? EntryDirection.In
+                        : EntryDirection.Out,
                     Frequency = RecurrenceFrequency.Monthly,
                     StartDate = monthStart
                 };
                 if (rules.Count == 0) _db.RecurringRules.Add(rule);
 
                 rule.AccountId = dto.AccountId;
+                rule.Direction = concept.Kind == ConceptKind.Income
+                    ? EntryDirection.In
+                    : EntryDirection.Out;
                 rule.Description = concept.Name;
                 rule.DayOfMonth = dto.DayOfMonth.Value;
                 rule.ForecastAmount = dto.MonthlyAmount.Value;
