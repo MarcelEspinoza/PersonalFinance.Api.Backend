@@ -430,7 +430,14 @@ namespace PersonalFinance.Api.Controllers
                 Guid? accountId = null;
                 if (template.AccountName is not null)
                 {
-                    if (!accounts.TryGetValue(template.AccountName, out var account))
+                    var found = accounts.TryGetValue(template.AccountName, out var account);
+                    if (!found &&
+                        string.Equals(template.AccountName, "Personal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        found = accounts.TryGetValue("Revolut 6931", out account);
+                    }
+
+                    if (!found)
                         continue;
                     accountId = account.Id;
                 }

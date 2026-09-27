@@ -29,7 +29,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Aportaciones familiares", ConceptNature.Fixed, 20),
                 new("Ingresos adicionales", ConceptNature.Variable, 30),
                 new("Reembolsos y devoluciones", ConceptNature.Variable, 40),
-                new("Préstamos cobrados", ConceptNature.Variable, 50)
+                new("Liquidaciones familiares", ConceptNature.Variable, 50),
+                new("Préstamos cobrados", ConceptNature.Variable, 60)
             }),
 
             new("Hogar", ConceptKind.Expense, 10, new List<ConceptTemplate>
@@ -71,7 +72,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Ocio y entretenimiento", ConceptNature.Variable, 30),
                 new("Regalos y celebraciones", ConceptNature.Variable, 40),
                 new("Formación", ConceptNature.Variable, 50),
-                new("Mascotas", ConceptNature.Variable, 60),
+                new("Mascotas (Zoey y Zeus)", ConceptNature.Variable, 60, 100m),
                 new("Belleza y peluquería", ConceptNature.Variable, 70)
             }),
 
@@ -80,7 +81,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Netflix", ConceptNature.Fixed, 10),
                 new("Disney+", ConceptNature.Fixed, 20),
                 new("Spotify", ConceptNature.Fixed, 30),
-                new("Software y servicios digitales", ConceptNature.Fixed, 40)
+                new("Amazon Prime", ConceptNature.Fixed, 40),
+                new("Apple", ConceptNature.Fixed, 50),
+                new("Spliiit", ConceptNature.Variable, 60),
+                new("Software y servicios digitales", ConceptNature.Fixed, 70)
             }),
 
             new("Finanzas y compromisos", ConceptKind.Expense, 70, new List<ConceptTemplate>

@@ -26,6 +26,21 @@ public class ChartOfAccountsTests : LedgerTestBase
         Assert.Equal(ExpectedGroups, chart.Groups.Count);
         Assert.Single(chart.Groups, g => g.Kind == ConceptKind.Income);
         Assert.Contains(chart.Groups, g => g.Name == "Suscripciones y servicios digitales");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Suscripciones y servicios digitales").Concepts,
+            concept => concept.Name == "Amazon Prime");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Suscripciones y servicios digitales").Concepts,
+            concept => concept.Name == "Apple");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Suscripciones y servicios digitales").Concepts,
+            concept => concept.Name == "Spliiit");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Vida personal").Concepts,
+            concept => concept.Name == "Mascotas (Zoey y Zeus)");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Ingresos").Concepts,
+            concept => concept.Name == "Liquidaciones familiares");
     }
 
     [Fact]
