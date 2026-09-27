@@ -214,6 +214,40 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Un_borrador_anterior_no_convierte_el_reintento_en_duplicados()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        var row =
+            "Pago con tarjeta;Actual;05/01/2026 14:22;05/01/2026 14:22;MERCADONA;-50.00;0.00;EUR;COMPLETADO;-50.00";
+
+        var first = Assert.IsType<OkObjectResult>(
+            (await CreateController(UserId).Create(
+                accountId,
+                BuildCsv(row),
+                CancellationToken.None)).Result).Value as ImportBatchDto;
+        var retry = Assert.IsType<OkObjectResult>(
+            (await CreateController(UserId).Create(
+                accountId,
+                BuildCsv(row),
+                CancellationToken.None)).Result).Value as ImportBatchDto;
+
+        Assert.NotNull(first);
+        Assert.NotNull(retry);
+        Assert.Equal(1, first!.AcceptedRows);
+        Assert.Equal(1, retry!.AcceptedRows);
+        Assert.Equal(0, retry.DuplicateRows);
+
+        await CreateController(UserId).Apply(first.Id, CancellationToken.None);
+
+        var afterApply = await CreateController(UserId).Create(
+            accountId,
+            BuildCsv(row),
+            CancellationToken.None);
+        Assert.IsType<ConflictObjectResult>(afterApply.Result);
+    }
+
+    [Fact]
     public async Task Sin_IA_ni_mappings_clasifica_todas_las_filas_con_reglas_generales()
     {
         await SeedChartOfAccountsAsync();

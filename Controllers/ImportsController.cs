@@ -526,10 +526,10 @@ namespace PersonalFinance.Api.Controllers
                 .ToList();
             var aiSuggestions = await _aiSuggestions.SuggestAsync(unmappedDescriptions, concepts, ct);
 
-            var existingFingerprints = await _db.ImportRows
+            var existingFingerprints = await _db.LedgerEntries
                 .AsNoTracking()
-                .Where(r => r.UserId == userId.Value)
-                .Select(r => r.Fingerprint)
+                .Where(entry => entry.UserId == userId.Value && entry.Fingerprint != null)
+                .Select(entry => entry.Fingerprint!)
                 .ToListAsync(ct);
             var fingerprints = existingFingerprints.ToHashSet(StringComparer.Ordinal);
 
@@ -597,6 +597,18 @@ namespace PersonalFinance.Api.Controllers
 
             batch.AcceptedRows = batch.Rows.Count;
             batch.DuplicateRows = duplicateRows;
+            if (batch.AcceptedRows == 0)
+            {
+                return Conflict(new
+                {
+                    message = duplicateRows > 0
+                        ? "Todos los movimientos del archivo ya están aplicados al libro contable."
+                        : "El archivo no contiene movimientos importables.",
+                    duplicateRows,
+                    excludedRows
+                });
+            }
+
             _db.ImportBatches.Add(batch);
             await _db.SaveChangesAsync(ct);
 

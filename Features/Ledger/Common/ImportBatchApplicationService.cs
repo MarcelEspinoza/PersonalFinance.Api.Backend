@@ -44,6 +44,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 return new(false, 0, batchId, NotFound: true);
             if (batch.Status == ImportBatchStatus.Applied)
                 return new(false, 0, batchId, "El lote ya se ha aplicado.", Conflict: true);
+            if (batch.Rows.Count == 0)
+                return new(false, 0, batchId, "El lote no contiene movimientos para aplicar.");
 
             var unassigned = batch.Rows.Count(row =>
                 row.Status == ImportRowStatus.Pending &&
