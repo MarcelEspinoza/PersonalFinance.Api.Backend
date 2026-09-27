@@ -263,4 +263,36 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             await Db.ImportRows.AsNoTracking().ToListAsync(),
             row => Assert.NotNull(row.SuggestedConceptId));
     }
+
+    [Fact]
+    public async Task Preparar_reglas_ignora_conceptos_antiguos_inactivos_con_el_mismo_nombre()
+    {
+        await SeedChartOfAccountsAsync();
+        var activePasanaco = await Db.Concepts.SingleAsync(
+            concept => concept.Name == "Pasanaco" && concept.IsActive);
+        var legacyGroup = new ConceptGroup
+        {
+            UserId = UserId,
+            Name = "Legacy Pasanaco",
+            Kind = ConceptKind.Expense,
+            IsActive = false
+        };
+        Db.ConceptGroups.Add(legacyGroup);
+        Db.Concepts.Add(new Concept
+        {
+            UserId = UserId,
+            GroupId = legacyGroup.Id,
+            Name = "Pasanaco",
+            Kind = ConceptKind.Expense,
+            IsActive = false
+        });
+        await Db.SaveChangesAsync();
+
+        var result = await CreateController(UserId).SeedMappings(CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.True(await Db.ConceptMappings.AnyAsync(item => item.Pattern == "MERCADONA"));
+        Assert.Equal(2, await Db.Concepts.CountAsync(concept => concept.Name == "Pasanaco"));
+        Assert.NotEqual(Guid.Empty, activePasanaco.Id);
+    }
 }

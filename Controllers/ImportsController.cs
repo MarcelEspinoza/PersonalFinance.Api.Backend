@@ -417,7 +417,7 @@ namespace PersonalFinance.Api.Controllers
                 .Where(a => a.UserId == userId && a.IsActive)
                 .ToDictionaryAsync(a => a.Name, StringComparer.OrdinalIgnoreCase, ct);
             var concepts = await _db.Concepts
-                .Where(c => c.UserId == userId)
+                .Where(c => c.UserId == userId && c.IsActive)
                 .ToDictionaryAsync(c => c.Name, StringComparer.OrdinalIgnoreCase, ct);
             var existing = await _db.ConceptMappings
                 .Where(m => m.UserId == userId)
