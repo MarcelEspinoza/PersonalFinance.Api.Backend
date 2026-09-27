@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Dashboard;
 using PersonalFinance.Api.Services.Contracts;
@@ -60,6 +61,19 @@ namespace PersonalFinance.Api.Services
             var expenses = await _db.Expenses
                 .Where(e => e.UserId == userId && !e.IsTransfer)
                 .ToListAsync(ct);
+            var lastProjectedMonth = now.AddMonths(6);
+            var firstDay = new DateOnly(now.Year, now.Month, 1);
+            var lastDay = new DateOnly(
+                lastProjectedMonth.Year,
+                lastProjectedMonth.Month,
+                DateTime.DaysInMonth(lastProjectedMonth.Year, lastProjectedMonth.Month));
+            var ledgerEntries = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry =>
+                    entry.UserId == userId &&
+                    entry.DueDate >= firstDay &&
+                    entry.DueDate <= lastDay)
+                .ToListAsync(ct);
 
             var projections = new List<MonthlyProjectionDto>();
             var alerts = new DashboardAlertsDto();
@@ -82,6 +96,12 @@ namespace PersonalFinance.Api.Services
                         e.Date.Month == month &&
                         !(e.Type == "Temporary" && e.CategoryId == DefaultCategories.Savings))
                     .Sum(e => e.Amount);
+                var ledgerTotals = DashboardLedgerCalculator.ForMonth(
+                    ledgerEntries,
+                    year,
+                    month);
+                monthIncomes += ledgerTotals.Income;
+                monthExpenses += ledgerTotals.Expense;
 
                 var balance = monthIncomes - monthExpenses;
 
