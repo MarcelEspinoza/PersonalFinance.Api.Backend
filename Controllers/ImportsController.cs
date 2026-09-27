@@ -74,6 +74,25 @@ namespace PersonalFinance.Api.Controllers
             });
         }
 
+        [HttpDelete("{batchId:guid}")]
+        public async Task<IActionResult> Discard(Guid batchId, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var batch = await _db.ImportBatches
+                .FirstOrDefaultAsync(
+                    item => item.Id == batchId && item.UserId == userId.Value,
+                    ct);
+            if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Applied)
+                return Conflict("Una importación aplicada no se puede descartar.");
+
+            _db.ImportBatches.Remove(batch);
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
         [HttpPut("{batchId:guid}/rows/{rowId:guid}/concept")]
         public async Task<ActionResult<ImportRowDto>> SelectConcept(
             Guid batchId, Guid rowId, [FromBody] SelectImportConceptDto dto, CancellationToken ct)
