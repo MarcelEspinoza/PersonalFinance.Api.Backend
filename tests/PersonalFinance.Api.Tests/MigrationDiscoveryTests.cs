@@ -43,5 +43,8 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927230000_SeparateFamilySettlements",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20260927231000_ForceHouseholdPlanningValues",
+            context.Database.GetMigrations());
     }
 }
