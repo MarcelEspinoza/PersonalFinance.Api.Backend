@@ -2,15 +2,12 @@
 {
     public class SummaryDto
     {
-        public decimal TotalIncome { get; set; }
-        public decimal TotalExpense { get; set; }
-        public decimal Balance { get; set; }
-        public decimal Savings { get; set; }
-
-        // Ahorro proyectado para meses futuros (y opcionalmente para el actual si quieres un objetivo)
-        public decimal ProjectedSavings { get; set; }
-
-        public decimal PlannedBalance { get; set; }
+        public decimal CurrentBalance { get; set; }
+        public decimal MonthOpeningBalance { get; set; }
+        public decimal CurrentMonthIncome { get; set; }
+        public decimal CurrentMonthExpense { get; set; }
+        public decimal CurrentMonthResult { get; set; }
+        public decimal ProjectedBalance { get; set; }
+        public decimal ProjectionChange { get; set; }
     }
-
 }

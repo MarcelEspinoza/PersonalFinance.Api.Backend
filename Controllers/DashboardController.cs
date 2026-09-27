@@ -17,14 +17,15 @@ public class DashboardController : ControllerBase
     [Authorize]
     public async Task<IActionResult> GetProjection(CancellationToken ct)
     {
-        var (monthlyData, summary, alerts) =
+        var (monthlyData, summary, alerts, accounts) =
             await _dashboardService.GetFutureProjectionAsync(ct);
 
         return Ok(new
         {
             monthlyData,
             summary,
-            alerts
+            alerts,
+            accounts
         });
     }
 

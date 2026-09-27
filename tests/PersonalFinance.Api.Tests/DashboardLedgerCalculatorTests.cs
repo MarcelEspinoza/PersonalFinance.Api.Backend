@@ -26,6 +26,25 @@ public sealed class DashboardLedgerCalculatorTests
         Assert.Equal(57m, totals.Expense);
     }
 
+    [Fact]
+    public void Separa_resultado_real_de_importes_pendientes()
+    {
+        var entries = new[]
+        {
+            Entry(EntryDirection.In, EntryStatus.Paid, 100m, 95m),
+            Entry(EntryDirection.Out, EntryStatus.Paid, 40m, 42m),
+            Entry(EntryDirection.In, EntryStatus.Planned, 20m, null),
+            Entry(EntryDirection.Out, EntryStatus.Pending, 15m, null)
+        };
+
+        var totals = DashboardLedgerCalculator.BreakdownForMonth(entries, 2026, 9);
+
+        Assert.Equal(95m, totals.ActualIncome);
+        Assert.Equal(42m, totals.ActualExpense);
+        Assert.Equal(20m, totals.PendingIncome);
+        Assert.Equal(15m, totals.PendingExpense);
+    }
+
     private static LedgerEntry Entry(
         EntryDirection direction,
         EntryStatus status,

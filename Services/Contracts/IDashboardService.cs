@@ -7,8 +7,8 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<(
             List<MonthlyProjectionDto> monthlyData,
             SummaryDto summary,
-            DashboardAlertsDto alerts
+            DashboardAlertsDto alerts,
+            List<DashboardAccountBalanceDto> accounts
         )> GetFutureProjectionAsync(CancellationToken ct = default);
-
     }
 }
