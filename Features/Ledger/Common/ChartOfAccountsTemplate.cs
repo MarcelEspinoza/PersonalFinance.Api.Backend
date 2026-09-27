@@ -29,8 +29,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Aportaciones familiares", ConceptNature.Fixed, 20),
                 new("Ingresos adicionales", ConceptNature.Variable, 30),
                 new("Reembolsos y devoluciones", ConceptNature.Variable, 40),
-                new("Liquidaciones familiares", ConceptNature.Variable, 50),
-                new("Préstamos cobrados", ConceptNature.Variable, 60)
+                new("Reembolsos de Vanessa", ConceptNature.Variable, 50),
+                new("Liquidaciones recibidas de mamá", ConceptNature.Variable, 60),
+                new("Préstamos cobrados", ConceptNature.Variable, 70)
             }),
 
             new("Hogar", ConceptKind.Expense, 10, new List<ConceptTemplate>
@@ -97,7 +98,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Otros seguros", ConceptNature.Fixed, 60),
                 new("Transferencias y Bizum enviados", ConceptNature.Variable, 70),
                 new("Retiradas de efectivo", ConceptNature.Variable, 80),
-                new("Servicios legales y gestión de deudas", ConceptNature.Variable, 90)
+                new("Servicios legales y gestión de deudas", ConceptNature.Variable, 90),
+                new("Liquidaciones pagadas a mamá", ConceptNature.Variable, 100)
             }),
 
             new("Ahorro e inversión", ConceptKind.Expense, 80, new List<ConceptTemplate>

@@ -41,17 +41,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("PAGO DE WOLTERS KLUWER", "Nómina", "Personal", 100),
                 new(
                     "TRANSFERENCIA DE JENNY MABEL ESPINOZA SEJAS",
-                    "Préstamos cobrados",
+                    "Liquidaciones recibidas de mamá",
                     "Personal",
-                    90),
+                    100),
                 new(
                     "TRANSFERENCIA A JENNY MABEL ESPINOZA SEJAS",
-                    "Préstamos entregados",
+                    "Liquidaciones pagadas a mamá",
                     "Personal",
-                    90),
+                    100),
                 new(
                     "TRANSFERENCIA DE VANESSA ISABEL MARQUEZ DE CABALLERO",
-                    "Liquidaciones familiares",
+                    "Reembolsos de Vanessa",
                     "Personal",
                     100),
                 new(

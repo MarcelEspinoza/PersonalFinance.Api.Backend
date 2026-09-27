@@ -40,7 +40,13 @@ public class ChartOfAccountsTests : LedgerTestBase
             concept => concept.Name == "Mascotas (Zoey y Zeus)");
         Assert.Contains(
             chart.Groups.Single(g => g.Name == "Ingresos").Concepts,
-            concept => concept.Name == "Liquidaciones familiares");
+            concept => concept.Name == "Reembolsos de Vanessa");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Ingresos").Concepts,
+            concept => concept.Name == "Liquidaciones recibidas de mamá");
+        Assert.Contains(
+            chart.Groups.Single(g => g.Name == "Finanzas y compromisos").Concepts,
+            concept => concept.Name == "Liquidaciones pagadas a mamá");
     }
 
     [Fact]
