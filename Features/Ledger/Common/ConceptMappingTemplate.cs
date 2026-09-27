@@ -60,6 +60,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("FRUITES I VERDURES", "Supermercado y alimentación del hogar", null, 80),
                 new("MCDONALD'S", "Restaurantes y cafeterías", null, 80),
                 new("HECTAREA INMOBILIARIA", "Alquiler", "Conjunta", 80),
+                new("HECTAREA SERVICIOS INMOBILIARIOS", "Alquiler", "Conjunta", 90),
                 new("SECURITAS DIRECT", "Seguridad del hogar", "Conjunta", 80),
                 new("O2 FIBRA", "Internet y telefonía", "Conjunta", 80),
                 new("ENI PLENITUDE", "Gas", "Conjunta", 80),

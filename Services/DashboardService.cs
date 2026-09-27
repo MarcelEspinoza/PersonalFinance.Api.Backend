@@ -55,7 +55,19 @@ namespace PersonalFinance.Api.Services
         {
             var userId = CurrentUserId();
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            var currentMonth = new DateOnly(today.Year, today.Month, 1);
+            var accounts = await _db.Accounts
+                .AsNoTracking()
+                .Where(account => account.UserId == userId && account.IsActive)
+                .OrderBy(account => account.Name)
+                .ToListAsync(ct);
+            var calendarMonth = new DateOnly(today.Year, today.Month, 1);
+            var latestOpeningMonth = accounts.Count == 0
+                ? calendarMonth
+                : new DateOnly(
+                    accounts.Max(account => account.OpeningDate).Year,
+                    accounts.Max(account => account.OpeningDate).Month,
+                    1);
+            var currentMonth = latestOpeningMonth > calendarMonth ? latestOpeningMonth : calendarMonth;
             var lastProjectedMonth = currentMonth.AddMonths(6);
             var lastDay = new DateOnly(
                 lastProjectedMonth.Year,
@@ -80,11 +92,6 @@ namespace PersonalFinance.Api.Services
                      (budget.Year == currentMonth.Year && budget.Month >= currentMonth.Month)) &&
                     (budget.Year < lastProjectedMonth.Year ||
                      (budget.Year == lastProjectedMonth.Year && budget.Month <= lastProjectedMonth.Month)))
-                .ToListAsync(ct);
-            var accounts = await _db.Accounts
-                .AsNoTracking()
-                .Where(account => account.UserId == userId && account.IsActive)
-                .OrderBy(account => account.Name)
                 .ToListAsync(ct);
             var paidEntries = await _db.LedgerEntries
                 .AsNoTracking()

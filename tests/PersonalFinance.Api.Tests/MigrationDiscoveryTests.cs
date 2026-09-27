@@ -28,5 +28,8 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927210000_AddExpensePlanningDefaults",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20260927212000_RebaseRevolutFromOctober",
+            context.Database.GetMigrations());
     }
 }

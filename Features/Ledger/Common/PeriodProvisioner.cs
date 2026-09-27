@@ -78,6 +78,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// </summary>
         private async Task<decimal> ResolveCarryOverAsync(Guid userId, int year, int month, CancellationToken ct)
         {
+            var firstDay = new DateOnly(year, month, 1);
+            var rebasedAccounts = await _db.Accounts
+                .AsNoTracking()
+                .Where(a =>
+                    a.UserId == userId &&
+                    a.IsActive &&
+                    a.OpeningDate == firstDay)
+                .ToListAsync(ct);
+
+            if (rebasedAccounts.Count > 0)
+                return rebasedAccounts.Sum(account => account.OpeningBalance);
+
             var (prevYear, prevMonth) = PreviousMonth(year, month);
 
             var previous = await _db.MonthlyPeriods
@@ -87,11 +99,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (previous?.ClosingBalance is not null) return previous.ClosingBalance.Value;
             if (previous is not null) return 0m;
 
-            var firstDay = new DateOnly(year, month, 1);
-
             return await _db.Accounts
                 .AsNoTracking()
-                .Where(a => a.UserId == userId && a.IsActive && a.OpeningDate < firstDay)
+                .Where(a => a.UserId == userId && a.IsActive && a.OpeningDate <= firstDay)
                 .SumAsync(a => (decimal?)a.OpeningBalance, ct) ?? 0m;
         }
 

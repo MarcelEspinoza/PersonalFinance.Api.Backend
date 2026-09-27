@@ -13,9 +13,9 @@ namespace PersonalFinance.Domain.Ledger.Calculations
     {
         /// <summary>
         /// Saldo de apertura + todos los asientos ya liquidados (Status=Paid)
-        /// de la cuenta con fecha real hasta <paramref name="asOf"/>, ambos
-        /// inclusive. Los traspasos cuentan: mueven dinero real de la cuenta.
-        /// Las líneas descartadas (Skipped) no.
+        /// de la cuenta desde su fecha de apertura contable hasta
+        /// <paramref name="asOf"/>, ambos inclusive. Los movimientos anteriores
+        /// siguen en el histórico, pero no alteran un saldo rebasado.
         /// </summary>
         public static decimal ComputeBalance(
             Account account, IEnumerable<LedgerEntry> entries, DateOnly asOf)
@@ -29,6 +29,7 @@ namespace PersonalFinance.Domain.Ledger.Calculations
                     e.AccountId == account.Id &&
                     e.Status == EntryStatus.Paid &&
                     e.ValueDate is not null &&
+                    e.ValueDate.Value >= account.OpeningDate &&
                     e.ValueDate.Value <= asOf)
                 .Sum(e => e.SignedEffectiveAmount);
 

@@ -215,6 +215,58 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Rebasar_una_cuenta_conserva_el_historico_pero_no_lo_suma_al_nuevo_saldo()
+    {
+        var accountId = await SeedAccountAsync(18.42m, new DateOnly(2026, 10, 1), "Revolut");
+        var period = new MonthlyPeriod
+        {
+            UserId = UserId,
+            Year = 2026,
+            Month = 9,
+            Status = PeriodStatus.Open
+        };
+        Db.MonthlyPeriods.Add(period);
+        var (_, concept) = SeedConcept("Prueba", "Movimiento de prueba", ConceptKind.Expense);
+        Db.LedgerEntries.AddRange(
+            new LedgerEntry
+            {
+                UserId = UserId,
+                AccountId = accountId,
+                PeriodId = period.Id,
+                ConceptId = concept.Id,
+                Direction = EntryDirection.In,
+                Status = EntryStatus.Paid,
+                DueDate = new DateOnly(2026, 9, 20),
+                ValueDate = new DateOnly(2026, 9, 20),
+                ForecastAmount = 500m,
+                ActualAmount = 500m
+            },
+            new LedgerEntry
+            {
+                UserId = UserId,
+                AccountId = accountId,
+                PeriodId = period.Id,
+                ConceptId = concept.Id,
+                Direction = EntryDirection.Out,
+                Status = EntryStatus.Paid,
+                DueDate = new DateOnly(2026, 10, 2),
+                ValueDate = new DateOnly(2026, 10, 2),
+                ForecastAmount = 3m,
+                ActualAmount = 3m
+            });
+        await Db.SaveChangesAsync();
+
+        var account = await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId);
+        var entries = await Db.LedgerEntries.AsNoTracking().ToListAsync();
+
+        var balance = PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
+            account, entries, new DateOnly(2026, 10, 31));
+
+        Assert.Equal(15.42m, balance);
+        Assert.Equal(2, entries.Count);
+    }
+
+    [Fact]
     public async Task Un_borrador_anterior_no_convierte_el_reintento_en_duplicados()
     {
         await SeedChartOfAccountsAsync();

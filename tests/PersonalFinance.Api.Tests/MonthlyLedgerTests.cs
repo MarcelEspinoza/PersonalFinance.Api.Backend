@@ -59,6 +59,41 @@ public class MonthlyLedgerTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Una_nueva_apertura_mensual_prevalece_sobre_el_cierre_historico()
+    {
+        Db.Accounts.AddRange(
+            new Account
+            {
+                UserId = UserId,
+                Name = "Revolut",
+                OpeningBalance = 18.42m,
+                OpeningDate = new DateOnly(2026, 10, 1)
+            },
+            new Account
+            {
+                UserId = UserId,
+                Name = "Conjunta",
+                OpeningBalance = 14.26m,
+                OpeningDate = new DateOnly(2026, 10, 1)
+            });
+        Db.MonthlyPeriods.Add(new MonthlyPeriod
+        {
+            UserId = UserId,
+            Year = 2026,
+            Month = 9,
+            Status = PeriodStatus.Closed,
+            CarryOverAmount = 1000m,
+            ClosingBalance = 28.78m,
+            ClosedAt = DateTime.UtcNow
+        });
+        await Db.SaveChangesAsync();
+
+        var summary = await Summary(2026, 10);
+
+        Assert.Equal(32.68m, summary.CarryOverAmount);
+    }
+
+    [Fact]
     public async Task Un_mes_sin_validez_se_rechaza()
     {
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => Summary(2026, 13));
