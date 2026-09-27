@@ -22,5 +22,8 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927152000_AddPasanacoCompletion",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20260927171000_RenameRevolutAccount",
+            context.Database.GetMigrations());
     }
 }
