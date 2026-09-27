@@ -166,6 +166,7 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         var feeEntry = entries.Single(e => e.Description!.StartsWith("Comisión"));
         Assert.Equal(2.00m, feeEntry.ActualAmount);
         Assert.False(feeEntry.IsTransfer);
+        Assert.Equal(64, feeEntry.Fingerprint!.Length);
 
         // El PENDIENTE se guardó como Pending, sin importe real, y no en la lista "Paid".
         var pendingRow = (await Db.ImportRows.AsNoTracking().ToListAsync())

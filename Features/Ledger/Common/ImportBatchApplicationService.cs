@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Domain.Ledger.Entities;
@@ -71,6 +73,27 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .Select(entry => entry.Fingerprint!)
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
+            var periods = new Dictionary<(int Year, int Month), MonthlyPeriod>();
+            foreach (var month in batch.Rows
+                         .Where(row => row.Status == ImportRowStatus.Pending)
+                         .Select(row => (row.ValueDate.Year, row.ValueDate.Month))
+                         .Distinct())
+            {
+                var period = await _periods.GetOrOpenAsync(
+                    userId,
+                    month.Year,
+                    month.Month,
+                    ct);
+                if (period.Status == PeriodStatus.Closed)
+                    return new(
+                        false,
+                        0,
+                        batchId,
+                        $"El periodo {period.Year}-{period.Month:D2} está cerrado.",
+                        Conflict: true);
+
+                periods[month] = period;
+            }
 
             var applied = 0;
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
@@ -90,18 +113,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         batchId,
                         "Falta el concepto 'Comisiones bancarias': prepara el plan de cuentas antes de aplicar.");
 
-                var period = await _periods.GetOrOpenAsync(
-                    userId,
-                    row.ValueDate.Year,
-                    row.ValueDate.Month,
-                    ct);
-                if (period.Status == PeriodStatus.Closed)
-                    return new(
-                        false,
-                        0,
-                        batchId,
-                        $"El periodo {period.Year}-{period.Month:D2} está cerrado.",
-                        Conflict: true);
+                var period = periods[(row.ValueDate.Year, row.ValueDate.Month)];
 
                 var isPaid = row.ClassifiedStatus == EntryStatus.Paid;
                 var amount = Math.Abs(row.Amount);
@@ -125,7 +137,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 if (row.Fee != 0m && feeConcept is not null)
                 {
-                    var feeFingerprint = row.Fingerprint + "#fee";
+                    var feeFingerprint = CreateFeeFingerprint(row.Fingerprint);
                     if (existingFingerprints.Add(feeFingerprint))
                     {
                         _db.LedgerEntries.Add(new LedgerEntry
@@ -159,6 +171,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             await _db.SaveChangesAsync(ct);
 
             return new(true, applied, batch.Id);
+        }
+
+        private static string CreateFeeFingerprint(string rowFingerprint)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{rowFingerprint}|fee"));
+            return Convert.ToHexString(bytes);
         }
     }
 }
