@@ -14,21 +14,16 @@ namespace PersonalFinance.Api.Migrations
         {
             migrationBuilder.Sql("""
                 UPDATE `LedgerAccounts` AS account
+                INNER JOIN `ImportBatches` AS importBatch
+                    ON importBatch.`AccountId` = account.`Id`
+                    AND importBatch.`Source` = 0
+                LEFT JOIN `LedgerAccounts` AS existingAccount
+                    ON existingAccount.`UserId` = account.`UserId`
+                    AND existingAccount.`Name` = 'Revolut 6931'
+                    AND existingAccount.`Id` <> account.`Id`
                 SET account.`Name` = 'Revolut 6931'
                 WHERE account.`Name` = '6931'
-                  AND EXISTS (
-                      SELECT 1
-                      FROM `ImportBatches` AS importBatch
-                      WHERE importBatch.`AccountId` = account.`Id`
-                        AND importBatch.`Source` = 0
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM `LedgerAccounts` AS existingAccount
-                      WHERE existingAccount.`UserId` = account.`UserId`
-                        AND existingAccount.`Name` = 'Revolut 6931'
-                        AND existingAccount.`Id` <> account.`Id`
-                  );
+                  AND existingAccount.`Id` IS NULL;
                 """);
 
             migrationBuilder.Sql("""
