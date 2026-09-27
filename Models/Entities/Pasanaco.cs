@@ -24,6 +24,8 @@
         public int StartMonth { get; set; } // 1–12
         [Required]
         public int StartYear { get; set; }
+        public bool IsCompleted { get; set; }
+        public DateTime? CompletedAt { get; set; }
 
         public ICollection<Participant> Participants { get; set; } = new List<Participant>();
         public ICollection<PasanacoPayment> Payments { get; set; } = new List<PasanacoPayment>();

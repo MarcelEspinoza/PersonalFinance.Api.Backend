@@ -47,7 +47,12 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     private ImportsController CreateController(Guid userId)
     {
         var periods = Provider.GetRequiredService<PeriodProvisioner>();
-        var controller = new ImportsController(Db, new NullAiSuggestionService(), new NullChatService(), periods);
+        var application = new ImportBatchApplicationService(Db, periods);
+        var controller = new ImportsController(
+            Db,
+            new NullAiSuggestionService(),
+            new NullChatService(),
+            application);
 
         var httpContext = new DefaultHttpContext
         {
@@ -109,10 +114,10 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         var accountId = await SeedAccountAsync(100.00m, new DateOnly(2026, 1, 1), "Personal");
         await SeedMappingForAllAsync(accountId, new[]
         {
-            ("NAVAS EXPRESS", "Personal costs"),
-            ("PAGO GENERICO", "My Salary"),
-            ("ATM CAIXABANK", "Transport"),
-            ("PAGO PENDIENTE COSA", "Food & Beverage")
+            ("NAVAS EXPRESS", "Compras personales"),
+            ("PAGO GENERICO", "Nómina"),
+            ("ATM CAIXABANK", "Transporte diario"),
+            ("PAGO PENDIENTE COSA", "Supermercado y alimentación del hogar")
         });
 
         var file = BuildCsv(
@@ -172,8 +177,8 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         await SeedChartOfAccountsAsync();
         var personal = await SeedAccountAsync(10.52m, new DateOnly(2026, 1, 1), "Personal");
         var conjunta = await SeedAccountAsync(0.00m, new DateOnly(2026, 1, 1), "Conjunta");
-        await SeedMappingForAllAsync(personal, new[] { ("NOMINA", "My Salary") });
-        await SeedMappingForAllAsync(conjunta, new[] { ("ALQUILER", "Rent Aparment") });
+        await SeedMappingForAllAsync(personal, new[] { ("NOMINA", "Nómina") });
+        await SeedMappingForAllAsync(conjunta, new[] { ("ALQUILER", "Alquiler") });
 
         var filePersonal = BuildCsv(
             "Transferencia;Actual;05/09/2026 09:00;05/09/2026 09:00;NOMINA;18.26;0.00;EUR;COMPLETADO;28.78");

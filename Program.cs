@@ -164,6 +164,8 @@ builder.Services.AddHttpClient<PersonalFinance.Api.Features.Ledger.Common.IImpor
     PersonalFinance.Api.Features.Ledger.Common.ImportAiSuggestionService>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Ledger.Common.IImportChatService,
     PersonalFinance.Api.Features.Ledger.Common.ImportChatService>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Ledger.Common.IImportBatchApplicationService,
+    PersonalFinance.Api.Features.Ledger.Common.ImportBatchApplicationService>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IGlobalChatService,
     PersonalFinance.Api.Features.Chat.GlobalChatService>();
 

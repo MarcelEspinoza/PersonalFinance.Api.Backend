@@ -46,6 +46,20 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        [HttpPost("{id}/complete")]
+        public async Task<IActionResult> Complete(string id)
+        {
+            await _service.CompleteAsync(id);
+            return NoContent();
+        }
+
+        [HttpPost("{id}/reopen")]
+        public async Task<IActionResult> Reopen(string id)
+        {
+            await _service.ReopenAsync(id);
+            return NoContent();
+        }
+
         // Delete with related-summary check and optional force flag
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(string id, [FromQuery] bool force = false)
@@ -120,18 +134,48 @@ namespace PersonalFinance.Api.Controllers
         public async Task<IActionResult> AdvanceRound(string id, [FromQuery] bool createLoans = false)
         {
             var userId = GetCurrentUserId();
-            var success = await _service.AdvanceRoundAsync(id, userId!.Value);
+            if (userId is null) return Unauthorized();
+
+            var success = await _service.AdvanceRoundAsync(id, userId.Value, createLoans);
             if (!success)
-                return BadRequest("No se puede avanzar: hay pagos pendientes");
+                return BadRequest("No se puede avanzar: hay pagos pendientes o ya estás en la última ronda.");
 
             return Ok("Ronda avanzada correctamente");
+        }
+
+        [HttpPost("{id}/retreat")]
+        public async Task<IActionResult> RetreatRound(string id)
+        {
+            var success = await _service.RetreatRoundAsync(id);
+            if (!success) return BadRequest("No se puede retroceder desde la primera ronda.");
+            return Ok("Ronda retrocedida correctamente");
+        }
+
+        [HttpPost("{id}/participants/{participantId}/loan")]
+        public async Task<IActionResult> CreateLoanForParticipant(
+            string id,
+            string participantId,
+            [FromBody] CreateLoanForParticipantDto dto)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var loan = await _service.CreateLoanForParticipantAsync(
+                id,
+                participantId,
+                dto.Amount,
+                userId.Value,
+                dto.Note);
+            return Ok(loan);
         }
 
         [HttpPost("payments/{paymentId}/mark-paid")]
         public async Task<IActionResult> MarkPaymentAsPaid(Guid paymentId)
         {
             var userId = GetCurrentUserId();
-            var success = await _service.MarkPaymentAsPaidAsync(paymentId, userId!.Value);
+            if (userId is null) return Unauthorized();
+
+            var success = await _service.MarkPaymentAsPaidAsync(paymentId, userId.Value);
             if (!success) return BadRequest("No se pudo marcar como pagado");
             return Ok("Pago registrado y ingreso creado");
         }

@@ -702,6 +702,12 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<int>("CurrentRound")
                         .HasColumnType("int");
 
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("IsCompleted")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<decimal>("MonthlyAmount")
                         .HasColumnType("decimal(18,2)");
 

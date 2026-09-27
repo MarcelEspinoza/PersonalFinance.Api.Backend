@@ -3,8 +3,8 @@
 namespace PersonalFinance.Domain.Ledger.Entities
 {
     /// <summary>
-    /// Línea del plan de cuentas: "Rent Apartment", "My Salary", "Netflix",
-    /// "Food &amp; Beverage". Sustituye a la antigua Category.
+    /// Línea del plan de cuentas: "Alquiler", "Nómina", "Netflix" o
+    /// "Supermercado y alimentación del hogar". Sustituye a la antigua Category.
     /// </summary>
     public class Concept
     {

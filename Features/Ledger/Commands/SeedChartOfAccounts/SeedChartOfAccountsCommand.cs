@@ -26,10 +26,11 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
             SeedChartOfAccountsCommand request, CancellationToken ct)
         {
             var result = new SeedChartOfAccountsResultDto();
+            await NormalizeLegacyTemplateAsync(request.UserId, ct);
 
             var existingGroups = await _db.ConceptGroups
                 .Where(g => g.UserId == request.UserId)
-                .ToDictionaryAsync(g => g.Name, ct);
+                .ToDictionaryAsync(g => g.Name, StringComparer.OrdinalIgnoreCase, ct);
 
             var existingConcepts = (await _db.Concepts
                     .Where(c => c.UserId == request.UserId)
@@ -91,6 +92,9 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
                 }
             }
 
+            await _db.SaveChangesAsync(ct);
+            await MigrateLegacyConceptDataAsync(request.UserId, ct);
+
             if (request.BudgetYear.HasValue && request.BudgetMonth.HasValue && budgetTargets.Count > 0)
             {
                 result.BudgetsCreated = await SeedBudgetsAsync(
@@ -100,6 +104,147 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
             await _db.SaveChangesAsync(ct);
 
             return result;
+        }
+
+        private async Task NormalizeLegacyTemplateAsync(Guid userId, CancellationToken ct)
+        {
+            var groups = await _db.ConceptGroups
+                .Include(group => group.Concepts)
+                .Where(group => group.UserId == userId)
+                .ToListAsync(ct);
+
+            var legacyGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "INCOMES",
+                "Apartment costs",
+                "Extra Payments",
+                "Extra Fixed Payments",
+                "Subscriptions",
+                "Variable Costs",
+                "Savings"
+            };
+
+            foreach (var group in groups.Where(group => legacyGroups.Contains(group.Name)))
+            {
+                group.IsActive = false;
+                foreach (var concept in group.Concepts)
+                    concept.IsActive = false;
+            }
+
+            await _db.SaveChangesAsync(ct);
+        }
+
+        private async Task MigrateLegacyConceptDataAsync(Guid userId, CancellationToken ct)
+        {
+            var aliases = new[]
+            {
+                ("My Salary", "Nómina", "Ingresos"),
+                ("Income 2 (Mama Jenny)", "Aportaciones familiares", "Ingresos"),
+                ("Additional Income 2 (Vane)", "Ingresos adicionales", "Ingresos"),
+                ("Loans Done", "Préstamos cobrados", "Ingresos"),
+                ("Loans TBP", "Préstamos cobrados", "Ingresos"),
+                ("Rent Aparment", "Alquiler", "Hogar"),
+                ("Electric Bill", "Electricidad", "Hogar"),
+                ("Water Bill", "Agua", "Hogar"),
+                ("Gas Bill", "Gas", "Hogar"),
+                ("Internet + Mobile phone and Landline", "Internet y telefonía", "Hogar"),
+                ("Food & Beverage", "Supermercado y alimentación del hogar", "Alimentación"),
+                ("Personal costs", "Compras personales", "Vida personal"),
+                ("Transport", "Transporte diario", "Transporte y viajes"),
+                ("Bank fees", "Comisiones bancarias", "Finanzas y compromisos"),
+                ("Loans TBP (Paid)", "Préstamos entregados", "Finanzas y compromisos"),
+                ("Loans TBP (Pending)", "Préstamos entregados", "Finanzas y compromisos"),
+                ("Pasanaco", "Pasanaco", "Finanzas y compromisos"),
+                ("Savings", "Ahorro e inversión", "Ahorro e inversión"),
+                ("Netflix", "Netflix", "Suscripciones y servicios digitales"),
+                ("Disney+", "Disney+", "Suscripciones y servicios digitales"),
+                ("Spotify", "Spotify", "Suscripciones y servicios digitales")
+            };
+
+            var groups = await _db.ConceptGroups
+                .Where(group => group.UserId == userId)
+                .ToListAsync(ct);
+            var concepts = await _db.Concepts
+                .Where(concept => concept.UserId == userId)
+                .ToListAsync(ct);
+
+            foreach (var (oldName, newName, targetGroupName) in aliases)
+            {
+                var targetGroup = groups.FirstOrDefault(group =>
+                    group.IsActive &&
+                    string.Equals(group.Name, targetGroupName, StringComparison.OrdinalIgnoreCase));
+                if (targetGroup is null) continue;
+
+                var target = concepts.FirstOrDefault(concept =>
+                    concept.GroupId == targetGroup.Id &&
+                    concept.IsActive &&
+                    string.Equals(concept.Name, newName, StringComparison.OrdinalIgnoreCase));
+                if (target is null) continue;
+
+                var sources = concepts
+                    .Where(concept =>
+                        concept.Id != target.Id &&
+                        !concept.IsActive &&
+                        string.Equals(concept.Name, oldName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                foreach (var source in sources)
+                {
+                    foreach (var entry in await _db.LedgerEntries
+                                 .Where(item => item.UserId == userId && item.ConceptId == source.Id)
+                                 .ToListAsync(ct))
+                        entry.ConceptId = target.Id;
+
+                    foreach (var rule in await _db.RecurringRules
+                                 .Where(item => item.UserId == userId && item.ConceptId == source.Id)
+                                 .ToListAsync(ct))
+                        rule.ConceptId = target.Id;
+
+                    foreach (var debt in await _db.Debts
+                                 .Where(item => item.UserId == userId && item.ConceptId == source.Id)
+                                 .ToListAsync(ct))
+                        debt.ConceptId = target.Id;
+
+                    foreach (var row in await _db.ImportRows
+                                 .Where(item => item.UserId == userId &&
+                                     (item.SuggestedConceptId == source.Id || item.ConfirmedConceptId == source.Id))
+                                 .ToListAsync(ct))
+                    {
+                        if (row.SuggestedConceptId == source.Id) row.SuggestedConceptId = target.Id;
+                        if (row.ConfirmedConceptId == source.Id) row.ConfirmedConceptId = target.Id;
+                    }
+
+                    foreach (var mapping in await _db.ConceptMappings
+                                 .Where(item => item.UserId == userId && item.ConceptId == source.Id)
+                                 .ToListAsync(ct))
+                        mapping.ConceptId = target.Id;
+
+                    var sourceBudgets = await _db.MonthlyBudgets
+                        .Where(item => item.UserId == userId && item.ConceptId == source.Id)
+                        .ToListAsync(ct);
+                    foreach (var sourceBudget in sourceBudgets)
+                    {
+                        var targetBudget = await _db.MonthlyBudgets.FirstOrDefaultAsync(
+                            item =>
+                                item.UserId == userId &&
+                                item.ConceptId == target.Id &&
+                                item.Year == sourceBudget.Year &&
+                                item.Month == sourceBudget.Month,
+                            ct);
+                        if (targetBudget is null)
+                        {
+                            sourceBudget.ConceptId = target.Id;
+                        }
+                        else
+                        {
+                            targetBudget.LimitAmount = sourceBudget.LimitAmount;
+                            _db.MonthlyBudgets.Remove(sourceBudget);
+                        }
+                    }
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
         }
 
         private async Task<int> SeedBudgetsAsync(

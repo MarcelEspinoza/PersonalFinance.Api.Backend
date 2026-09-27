@@ -38,22 +38,42 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     "Movimiento entre mis bancos",
                     "Personal",
                     100),
-                new("PAGO DE WOLTERS KLUWER", "My Salary", "Personal", 100),
+                new("PAGO DE WOLTERS KLUWER", "Nómina", "Personal", 100),
                 new(
                     "TRANSFERENCIA DE JENNY MABEL ESPINOZA SEJAS",
-                    "Loans Done",
+                    "Préstamos cobrados",
                     "Personal",
                     90),
                 new(
                     "TRANSFERENCIA A JENNY MABEL ESPINOZA SEJAS",
-                    "Loans TBP (Paid)",
+                    "Préstamos entregados",
                     "Personal",
                     90),
                 new(
                     "TRANSFERENCIA DE JENNY MABEL ESPINOZA SEJAS",
-                    "Income 2 (Mama Jenny)",
+                    "Aportaciones familiares",
                     "Conjunta",
-                    90)
+                    90),
+                new("MERCADONA", "Supermercado y alimentación del hogar", null, 80),
+                new("LIDL", "Supermercado y alimentación del hogar", null, 80),
+                new("ULFAT FRUTAS I VERDURAS", "Supermercado y alimentación del hogar", null, 80),
+                new("FRUITES I VERDURES", "Supermercado y alimentación del hogar", null, 80),
+                new("MCDONALD'S", "Restaurantes y cafeterías", null, 80),
+                new("HECTAREA INMOBILIARIA", "Alquiler", "Conjunta", 80),
+                new("SECURITAS DIRECT", "Seguridad del hogar", "Conjunta", 80),
+                new("O2 FIBRA", "Internet y telefonía", "Conjunta", 80),
+                new("ENI PLENITUDE", "Gas", "Conjunta", 80),
+                new("AIGUES DE BARCELONA", "Agua", "Conjunta", 80),
+                new("COMERCIALIZADORA", "Electricidad", "Conjunta", 80),
+                new("ASISTENCIA SANITARIA", "Seguro médico", "Conjunta", 80),
+                new("ASSISTENCIA SANITARIA", "Seguro médico", "Conjunta", 80),
+                new("CAJA DE SEGUROS REUNIDOS", "Seguro del hogar", "Conjunta", 80),
+                new("FREENOW", "Transporte diario", null, 80),
+                new("TRAINLINE", "Viajes y alojamiento", null, 80),
+                new("NETFLIX", "Netflix", null, 80),
+                new("GOOGLE ONE", "Software y servicios digitales", null, 80),
+                new("RAILWAY", "Software y servicios digitales", null, 80),
+                new("AMAZON", "Compras personales", null, 70)
             };
     }
 }

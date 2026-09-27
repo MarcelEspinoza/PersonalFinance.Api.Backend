@@ -2,7 +2,7 @@
 {
     /// <summary>
     /// Tope mensual de gasto de un concepto variable (hoja Variables del Excel:
-    /// Food &amp; Beverage 230, Personal costs 150, Transport 25).
+    /// Supermercado 300, compras personales 150, transporte 75).
     /// </summary>
     public class MonthlyBudget
     {

@@ -36,8 +36,13 @@ namespace PersonalFinance.Api.Services
                     TotalParticipants = p.TotalParticipants,
                     CurrentRound = p.CurrentRound,
                     StartMonth = p.StartMonth,
-                    StartYear = p.StartYear
+                    StartYear = p.StartYear,
+                    IsCompleted = p.IsCompleted,
+                    CompletedAt = p.CompletedAt
                 })
+                .OrderBy(p => p.IsCompleted)
+                .ThenByDescending(p => p.StartYear)
+                .ThenByDescending(p => p.StartMonth)
                 .ToListAsync();
         }
 
@@ -54,7 +59,9 @@ namespace PersonalFinance.Api.Services
                 TotalParticipants = pasanaco.TotalParticipants,
                 CurrentRound = pasanaco.CurrentRound,
                 StartMonth = pasanaco.StartMonth,
-                StartYear = pasanaco.StartYear
+                StartYear = pasanaco.StartYear,
+                IsCompleted = pasanaco.IsCompleted,
+                CompletedAt = pasanaco.CompletedAt
             };
         }
 
@@ -95,6 +102,7 @@ namespace PersonalFinance.Api.Services
         {
             var pasanaco = await _context.Pasanacos.FindAsync(id);
             if (pasanaco == null) throw new Exception("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             pasanaco.Name = dto.Name;
             pasanaco.MonthlyAmount = dto.MonthlyAmount;
@@ -103,6 +111,28 @@ namespace PersonalFinance.Api.Services
             pasanaco.StartMonth = dto.StartMonth;
             pasanaco.StartYear = dto.StartYear;
 
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task CompleteAsync(string id)
+        {
+            var pasanaco = await _context.Pasanacos.FindAsync(id);
+            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            if (pasanaco.IsCompleted) return;
+
+            pasanaco.IsCompleted = true;
+            pasanaco.CompletedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task ReopenAsync(string id)
+        {
+            var pasanaco = await _context.Pasanacos.FindAsync(id);
+            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            if (!pasanaco.IsCompleted) return;
+
+            pasanaco.IsCompleted = false;
+            pasanaco.CompletedAt = null;
             await _context.SaveChangesAsync();
         }
 
@@ -139,6 +169,7 @@ namespace PersonalFinance.Api.Services
 
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             if (dto.AssignedNumber > pasanaco.TotalParticipants)
                 throw new ValidationException($"El número asignado debe estar entre 1 y {pasanaco.TotalParticipants}");
@@ -174,6 +205,10 @@ namespace PersonalFinance.Api.Services
 
         public async Task DeleteParticipantAsync(string pasanacoId, string participantId)
         {
+            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
+            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
+
             var participant = await _context.Participants
                 .FirstOrDefaultAsync(p => p.Id == participantId && p.PasanacoId == pasanacoId);
 
@@ -204,6 +239,10 @@ namespace PersonalFinance.Api.Services
 
         public async Task GeneratePaymentsAsync(string pasanacoId, int month, int year)
         {
+            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
+            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
+
             var participants = await _context.Participants
                 .Where(p => p.PasanacoId == pasanacoId)
                 .ToListAsync();
@@ -226,7 +265,7 @@ namespace PersonalFinance.Api.Services
                         Year = year,
                         Paid = false,
                         Participant = participant,
-                        Pasanaco = await _context.Pasanacos.FindAsync(pasanacoId)
+                        Pasanaco = pasanaco
                     });
                 }
             }
@@ -253,13 +292,15 @@ namespace PersonalFinance.Api.Services
 
             var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
             var participant = await _context.Participants.FindAsync(payment.ParticipantId);
+            if (pasanaco == null) return false;
+            EnsureActive(pasanaco);
 
             payment.Paid = true;
             payment.PaymentDate = DateTime.UtcNow;
 
             _context.Incomes.Add(new Income
             {
-                Amount = pasanaco!.MonthlyAmount,
+                Amount = pasanaco.MonthlyAmount,
                 Date = payment.PaymentDate.Value,
                 Description = $"Pago de {participant!.Name} en pasanaco {pasanaco.Name}",
                 Type = "Fixed",
@@ -279,6 +320,7 @@ namespace PersonalFinance.Api.Services
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             var participant = await _context.Participants.FindAsync(participantId);
             if (participant == null || participant.PasanacoId != pasanacoId) throw new ValidationException("Participante no válido");
@@ -340,6 +382,7 @@ namespace PersonalFinance.Api.Services
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             var date = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
             var month = date.Month;
@@ -394,6 +437,8 @@ namespace PersonalFinance.Api.Services
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
+            if (pasanaco.CurrentRound >= pasanaco.TotalParticipants) return false;
 
             var date = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1, 0, 0, 0, DateTimeKind.Utc)
                        .AddMonths(pasanaco.CurrentRound - 1);
@@ -474,6 +519,7 @@ namespace PersonalFinance.Api.Services
         {
             var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             if (pasanaco.CurrentRound <= 1) return false;
 
@@ -508,6 +554,7 @@ namespace PersonalFinance.Api.Services
 
             var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
             if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            EnsureActive(pasanaco);
 
             var currentDate = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
             var currentMonth = currentDate.Month;
@@ -633,6 +680,12 @@ namespace PersonalFinance.Api.Services
                 await tx.RollbackAsync();
                 throw;
             }
+        }
+
+        private static void EnsureActive(Pasanaco pasanaco)
+        {
+            if (pasanaco.IsCompleted)
+                throw new ValidationException("El pasanaco está finalizado. Reábrelo para modificarlo.");
         }
     }
 

@@ -21,18 +21,18 @@ namespace PersonalFinance.Api.Controllers
         private readonly IAppDbContext _db;
         private readonly IImportAiSuggestionService _aiSuggestions;
         private readonly IImportChatService _chat;
-        private readonly PeriodProvisioner _periods;
+        private readonly IImportBatchApplicationService _application;
 
         public ImportsController(
             IAppDbContext db,
             IImportAiSuggestionService aiSuggestions,
             IImportChatService chat,
-            PeriodProvisioner periods)
+            IImportBatchApplicationService application)
         {
             _db = db;
             _aiSuggestions = aiSuggestions;
             _chat = chat;
-            _periods = periods;
+            _application = application;
         }
 
         [HttpGet("{batchId:guid}")]
@@ -123,6 +123,169 @@ namespace PersonalFinance.Api.Controllers
             return Ok(MapRow(row));
         }
 
+        [HttpPut("{batchId:guid}/groups/concept")]
+        public async Task<ActionResult<object>> SelectGroupConcept(
+            Guid batchId,
+            [FromBody] SelectImportGroupConceptDto dto,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var normalizedDescription = dto.NormalizedDescription.Trim();
+            if (normalizedDescription.Length == 0)
+                return BadRequest("La descripción normalizada es obligatoria.");
+
+            var batch = await _db.ImportBatches
+                .FirstOrDefaultAsync(
+                    item => item.Id == batchId && item.UserId == userId.Value,
+                    ct);
+            if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Applied)
+                return Conflict("El lote ya se ha aplicado.");
+
+            if (dto.ConceptId is not null)
+            {
+                var valid = await _db.Concepts.AnyAsync(
+                    concept =>
+                        concept.Id == dto.ConceptId.Value &&
+                        concept.UserId == userId.Value &&
+                        concept.IsActive,
+                    ct);
+                if (!valid) return BadRequest("El concepto no existe o no está activo.");
+            }
+
+            var rows = await _db.ImportRows
+                .Where(row =>
+                    row.BatchId == batchId &&
+                    row.UserId == userId.Value &&
+                    row.Status == ImportRowStatus.Pending &&
+                    row.NormalizedDescription == normalizedDescription)
+                .ToListAsync(ct);
+
+            foreach (var row in rows)
+            {
+                row.ConfirmedConceptId = dto.ConceptId;
+                row.SuggestionSource = dto.ConceptId is null ? null : "group";
+                row.SuggestionConfidence = dto.ConceptId is null ? null : 1m;
+            }
+
+            if (dto.ConceptId is not null && batch.AccountId is not null)
+            {
+                var mapping = await _db.ConceptMappings.FirstOrDefaultAsync(
+                    item =>
+                        item.UserId == userId.Value &&
+                        item.AccountId == batch.AccountId &&
+                        item.Pattern == normalizedDescription,
+                    ct);
+                if (mapping is null)
+                {
+                    _db.ConceptMappings.Add(new ConceptMapping
+                    {
+                        UserId = userId.Value,
+                        AccountId = batch.AccountId,
+                        Pattern = normalizedDescription,
+                        ConceptId = dto.ConceptId.Value,
+                        Priority = 120,
+                        IsActive = true
+                    });
+                }
+                else
+                {
+                    mapping.ConceptId = dto.ConceptId.Value;
+                    mapping.Priority = Math.Max(mapping.Priority, 120);
+                    mapping.IsActive = true;
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
+            return Ok(new { updated = rows.Count });
+        }
+
+        [HttpPost("{batchId:guid}/suggest")]
+        public async Task<ActionResult<object>> SuggestPending(
+            Guid batchId,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var batch = await _db.ImportBatches
+                .Include(item => item.Rows)
+                .FirstOrDefaultAsync(
+                    item => item.Id == batchId && item.UserId == userId.Value,
+                    ct);
+            if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Applied)
+                return Conflict("El lote ya se ha aplicado.");
+            if (batch.AccountId is null)
+                return BadRequest("El lote no tiene una cuenta asociada.");
+
+            var mappings = await _db.ConceptMappings
+                .AsNoTracking()
+                .Include(mapping => mapping.Concept)
+                .Where(mapping => mapping.UserId == userId.Value && mapping.IsActive)
+                .ToListAsync(ct);
+            var concepts = await _db.Concepts
+                .AsNoTracking()
+                .Where(concept => concept.UserId == userId.Value && concept.IsActive)
+                .Select(concept => new ImportAiCandidate(
+                    concept.Id,
+                    concept.Name,
+                    concept.Kind.ToString()))
+                .ToListAsync(ct);
+
+            var pendingRows = batch.Rows
+                .Where(row =>
+                    row.Status == ImportRowStatus.Pending &&
+                    row.ConfirmedConceptId is null)
+                .ToList();
+            var descriptionsForAi = pendingRows
+                .Where(row =>
+                    FindMapping(
+                        mappings,
+                        batch.AccountId.Value,
+                        row.NormalizedDescription ?? string.Empty) is null)
+                .Select(row => row.NormalizedDescription ?? string.Empty)
+                .Where(description => !string.IsNullOrWhiteSpace(description))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var aiSuggestions = await _aiSuggestions.SuggestAsync(
+                descriptionsForAi,
+                concepts,
+                ct);
+
+            var mapped = 0;
+            var suggested = 0;
+            foreach (var row in pendingRows)
+            {
+                var mapping = FindMapping(
+                    mappings,
+                    batch.AccountId.Value,
+                    row.NormalizedDescription ?? string.Empty);
+                if (mapping is not null)
+                {
+                    row.SuggestedConceptId = mapping.ConceptId;
+                    row.SuggestionSource = "mapping";
+                    row.SuggestionConfidence = 1m;
+                    mapped++;
+                    continue;
+                }
+
+                if (aiSuggestions.TryGetValue(row.NormalizedDescription ?? string.Empty, out var suggestion))
+                {
+                    row.SuggestedConceptId = suggestion.ConceptId;
+                    row.SuggestionSource = "ai";
+                    row.SuggestionConfidence = suggestion.Confidence;
+                    suggested++;
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
+            var remaining = pendingRows.Count(row => row.SuggestedConceptId is null);
+            return Ok(new { mapped, suggested, remaining });
+        }
+
         [HttpPost("{batchId:guid}/chat")]
         public async Task<ActionResult<ImportChatResponseDto>> Chat(
             Guid batchId, [FromBody] ImportChatRequestDto dto, CancellationToken ct)
@@ -194,121 +357,13 @@ namespace PersonalFinance.Api.Controllers
         {
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
+            var result = await _application.ApplyAsync(userId.Value, batchId, ct);
+            if (result.NotFound) return NotFound();
+            if (!result.Success && result.Conflict) return Conflict(result.Error);
+            if (!result.Success)
+                return BadRequest(new { message = result.Error, unassignedRows = result.UnassignedRows });
 
-            var batch = await _db.ImportBatches
-                .Include(b => b.Rows)
-                .FirstOrDefaultAsync(
-                    b => b.Id == batchId && b.UserId == userId.Value, ct);
-            if (batch is null) return NotFound();
-            if (batch.Status == ImportBatchStatus.Applied)
-                return Conflict("El lote ya se ha aplicado.");
-
-            var unassigned = batch.Rows.Count(r =>
-                r.Status == ImportRowStatus.Pending &&
-                r.ConfirmedConceptId is null &&
-                r.SuggestedConceptId is null);
-            if (unassigned > 0)
-                return BadRequest(new
-                {
-                    message = "Hay filas sin concepto asignado.",
-                    unassignedRows = unassigned
-                });
-
-            var accountId = batch.AccountId
-                ?? throw new InvalidOperationException("El lote no tiene cuenta.");
-            var concepts = await _db.Concepts
-                .Where(c => c.UserId == userId.Value)
-                .ToDictionaryAsync(c => c.Id, ct);
-            var feeConcept = concepts.Values.FirstOrDefault(
-                c => string.Equals(c.Name, "Bank fees", StringComparison.OrdinalIgnoreCase));
-            var existingFingerprints = (await _db.LedgerEntries
-                .Where(e => e.UserId == userId.Value && e.Fingerprint != null)
-                .Select(e => e.Fingerprint!)
-                .ToListAsync(ct))
-                .ToHashSet(StringComparer.Ordinal);
-
-            var applied = 0;
-            foreach (var row in batch.Rows.Where(r => r.Status == ImportRowStatus.Pending))
-            {
-                var conceptId = row.ConfirmedConceptId ?? row.SuggestedConceptId;
-                if (conceptId is null || !concepts.TryGetValue(conceptId.Value, out var concept))
-                    continue;
-                if (!existingFingerprints.Add(row.Fingerprint))
-                {
-                    row.Status = ImportRowStatus.Duplicate;
-                    continue;
-                }
-                if (row.Fee != 0m && feeConcept is null)
-                    return BadRequest(
-                        "Falta el concepto 'Bank fees': siembra el plan de cuentas antes de aplicar.");
-
-                var period = await _periods.GetOrOpenAsync(
-                    userId.Value, row.ValueDate.Year, row.ValueDate.Month, ct);
-                if (period.Status == PeriodStatus.Closed)
-                    return Conflict($"El periodo {period.Year}-{period.Month:D2} está cerrado.");
-
-                // El estado real (Paid/Pending) lo decidió el clasificador al
-                // importar: un movimiento aún no liquidado no puede entrar como
-                // pagado sólo porque ya se ha revisado su concepto.
-                var isPaid = row.ClassifiedStatus == EntryStatus.Paid;
-                var amount = Math.Abs(row.Amount);
-
-                _db.LedgerEntries.Add(new LedgerEntry
-                {
-                    UserId = userId.Value,
-                    PeriodId = period.Id,
-                    ConceptId = concept.Id,
-                    AccountId = accountId,
-                    Direction = row.Amount >= 0 ? EntryDirection.In : EntryDirection.Out,
-                    IsTransfer = concept.Kind == ConceptKind.Transfer,
-                    Status = row.ClassifiedStatus,
-                    DueDate = row.ValueDate,
-                    ValueDate = isPaid ? row.ValueDate : null,
-                    ForecastAmount = amount,
-                    ActualAmount = isPaid ? amount : null,
-                    Description = row.RawDescription,
-                    ImportRowId = row.Id,
-                    Fingerprint = row.Fingerprint
-                });
-
-                // La comisión es un gasto aparte: el banco resta el importe y la
-                // comisión por separado del saldo, y así lo refleja el libro.
-                if (row.Fee != 0m && feeConcept is not null)
-                {
-                    var feeFingerprint = row.Fingerprint + "#fee";
-                    if (existingFingerprints.Add(feeFingerprint))
-                    {
-                        _db.LedgerEntries.Add(new LedgerEntry
-                        {
-                            UserId = userId.Value,
-                            PeriodId = period.Id,
-                            ConceptId = feeConcept.Id,
-                            AccountId = accountId,
-                            Direction = EntryDirection.Out,
-                            IsTransfer = false,
-                            Status = row.ClassifiedStatus,
-                            DueDate = row.ValueDate,
-                            ValueDate = isPaid ? row.ValueDate : null,
-                            ForecastAmount = row.Fee,
-                            ActualAmount = isPaid ? row.Fee : null,
-                            Description = $"Comisión: {row.RawDescription}",
-                            ImportRowId = row.Id,
-                            Fingerprint = feeFingerprint
-                        });
-                    }
-                }
-
-                row.Status = ImportRowStatus.Accepted;
-                applied++;
-            }
-
-            batch.AcceptedRows = batch.Rows.Count(r => r.Status == ImportRowStatus.Accepted);
-            batch.DuplicateRows = batch.Rows.Count(r => r.Status == ImportRowStatus.Duplicate);
-            batch.Status = ImportBatchStatus.Applied;
-            batch.AppliedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
-
-            return Ok(new { applied, batchId = batch.Id });
+            return Ok(new { applied = result.Applied, batchId = result.BatchId });
         }
 
         [HttpPost("mappings/seed")]
@@ -328,6 +383,7 @@ namespace PersonalFinance.Api.Controllers
                 .ToListAsync(ct);
 
             var created = 0;
+            var updated = 0;
             foreach (var template in ConceptMappingTemplates.Rules)
             {
                 Guid? accountId = null;
@@ -341,10 +397,22 @@ namespace PersonalFinance.Api.Controllers
                 if (!concepts.TryGetValue(template.ConceptName, out var concept))
                     continue;
 
-                var alreadyExists = existing.Any(m =>
+                var current = existing.FirstOrDefault(m =>
                     m.AccountId == accountId &&
                     string.Equals(m.Pattern, template.Pattern, StringComparison.OrdinalIgnoreCase));
-                if (alreadyExists) continue;
+                if (current is not null)
+                {
+                    if (current.ConceptId != concept.Id ||
+                        current.Priority != template.Priority ||
+                        !current.IsActive)
+                    {
+                        updated++;
+                    }
+                    current.ConceptId = concept.Id;
+                    current.Priority = template.Priority;
+                    current.IsActive = true;
+                    continue;
+                }
 
                 var mapping = new ConceptMapping
                 {
@@ -360,7 +428,7 @@ namespace PersonalFinance.Api.Controllers
             }
 
             await _db.SaveChangesAsync(ct);
-            return Ok(new { created });
+            return Ok(new { created, updated });
         }
 
         [HttpPost]
@@ -396,7 +464,16 @@ namespace PersonalFinance.Api.Controllers
                 .Select(c => new ImportAiCandidate(c.Id, c.Name, c.Kind.ToString()))
                 .ToListAsync(ct);
             var unmappedDescriptions = parsed.Movements
-                .Select(m => RevolutMovementClassifier.Normalize(m.Description))
+                .Select(m => new
+                {
+                    Movement = m,
+                    Classification = RevolutMovementClassifier.Classify(m),
+                    Normalized = RevolutMovementClassifier.Normalize(m.Description)
+                })
+                .Where(item =>
+                    item.Classification.Disposition != MovementDisposition.Excluded &&
+                    FindMapping(mappings, account.Id, item.Normalized) is null)
+                .Select(item => item.Normalized)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var aiSuggestions = await _aiSuggestions.SuggestAsync(unmappedDescriptions, concepts, ct);

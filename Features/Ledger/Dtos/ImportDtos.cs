@@ -37,6 +37,12 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? ConceptId { get; set; }
     }
 
+    public sealed class SelectImportGroupConceptDto
+    {
+        public string NormalizedDescription { get; set; } = string.Empty;
+        public Guid? ConceptId { get; set; }
+    }
+
     public sealed class ImportBatchDto
     {
         public Guid Id { get; set; }

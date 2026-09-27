@@ -49,6 +49,26 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 return result;
             }
 
+            var uniqueDescriptions = descriptions
+                .Where(description => !string.IsNullOrWhiteSpace(description))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var batch in uniqueDescriptions.Chunk(40))
+            {
+                await SuggestBatchAsync(batch, concepts, apiKey, result, ct);
+            }
+
+            return result;
+        }
+
+        private async Task SuggestBatchAsync(
+            IReadOnlyList<string> descriptions,
+            IReadOnlyList<ImportAiCandidate> concepts,
+            string apiKey,
+            Dictionary<string, ImportAiSuggestion> result,
+            CancellationToken ct)
+        {
             var model = _configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
             var prompt = $$"""
                 Clasifica cada descripción bancaria en uno de los conceptos permitidos.
@@ -83,16 +103,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "Anthropic devolvió HTTP {StatusCode}; las filas sin mapping quedan para revisión manual.",
-                    (int)response.StatusCode);
-                return result;
+                    "Anthropic devolvió HTTP {StatusCode} al clasificar un bloque de {Count} descripciones.",
+                    (int)response.StatusCode,
+                    descriptions.Count);
+                return;
             }
 
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             if (!document.RootElement.TryGetProperty("content", out var content) ||
                 content.GetArrayLength() == 0 ||
                 !content[0].TryGetProperty("text", out var text))
-                return result;
+                return;
 
             var json = text.GetString()?.Trim() ?? string.Empty;
             if (json.StartsWith("```", StringComparison.Ordinal))
@@ -120,8 +141,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 _logger.LogWarning(ex, "La respuesta de Anthropic no tenía el JSON esperado.");
             }
-
-            return result;
         }
 
         private sealed class AiResponseItem

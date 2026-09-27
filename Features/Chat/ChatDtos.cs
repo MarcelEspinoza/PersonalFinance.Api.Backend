@@ -13,13 +13,13 @@ namespace PersonalFinance.Api.Features.Chat
     }
 
     /// <summary>
-    /// Acción concreta que el asistente propone (crear un gasto/ingreso). Nunca
+    /// Acción concreta que el asistente propone. Nunca
     /// se ejecuta sola: el frontend la muestra como tarjeta de confirmación y
-    /// sólo se aplica si el usuario pulsa "Confirmar", llamando a /api/chat/actions/*.
+    /// sólo se aplica si el usuario pulsa "Confirmar".
     /// </summary>
     public sealed class ProposedActionDto
     {
-        public string Type { get; set; } = string.Empty; // "create_expense" | "create_income"
+        public string Type { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
         public decimal Amount { get; set; }
         public string Description { get; set; } = string.Empty;
@@ -27,6 +27,14 @@ namespace PersonalFinance.Api.Features.Chat
         public int CategoryId { get; set; }
         public string CategoryName { get; set; } = string.Empty;
         public string ExpenseType { get; set; } = "Temporary"; // Fixed | Temporary
+        public string? TargetId { get; set; }
+        public string? Name { get; set; }
+        public string? Notes { get; set; }
+        public int? Year { get; set; }
+        public int? Month { get; set; }
+        public Guid? ConceptId { get; set; }
+        public Guid? AccountId { get; set; }
+        public string? NormalizedDescription { get; set; }
     }
 
     public sealed class ChatResponseDto

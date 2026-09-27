@@ -9,6 +9,8 @@
         public int CurrentRound { get; set; }
         public int StartMonth { get; set; }
         public int StartYear { get; set; }
+        public bool IsCompleted { get; set; }
+        public DateTime? CompletedAt { get; set; }
     }
 
 }

@@ -19,5 +19,8 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927143500_RemoveErroneousRevolutImport",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20260927152000_AddPasanacoCompletion",
+            context.Database.GetMigrations());
     }
 }
