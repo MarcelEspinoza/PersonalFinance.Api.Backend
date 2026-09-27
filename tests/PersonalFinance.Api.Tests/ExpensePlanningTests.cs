@@ -91,6 +91,113 @@ public sealed class ExpensePlanningTests : LedgerTestBase
         Assert.Contains(planning.Groups, group => group.Kind == ConceptKind.Expense);
     }
 
+    [Fact]
+    public async Task La_planificacion_repara_los_valores_conocidos_con_las_cuentas_importadas()
+    {
+        var incomeGroup = new ConceptGroup
+        {
+            UserId = UserId,
+            Name = "Ingresos",
+            Kind = ConceptKind.Income
+        };
+        var householdGroup = new ConceptGroup
+        {
+            UserId = UserId,
+            Name = "Hogar",
+            Kind = ConceptKind.Expense
+        };
+        var healthGroup = new ConceptGroup
+        {
+            UserId = UserId,
+            Name = "Salud y cuidado personal",
+            Kind = ConceptKind.Expense
+        };
+        var salary = new Concept
+        {
+            UserId = UserId,
+            GroupId = incomeGroup.Id,
+            Name = "Nómina",
+            Kind = ConceptKind.Income,
+            Nature = ConceptNature.Fixed
+        };
+        var rent = new Concept
+        {
+            UserId = UserId,
+            GroupId = householdGroup.Id,
+            Name = "Alquiler",
+            Kind = ConceptKind.Expense,
+            Nature = ConceptNature.Fixed
+        };
+        var dentalInsurance = new Concept
+        {
+            UserId = UserId,
+            GroupId = healthGroup.Id,
+            Name = "Seguro dental",
+            Kind = ConceptKind.Expense,
+            Nature = ConceptNature.Fixed
+        };
+        var personalAccount = new Account
+        {
+            UserId = UserId,
+            Name = "Importación personal",
+            OpeningDate = new DateOnly(2026, 10, 1)
+        };
+        var jointAccount = new Account
+        {
+            UserId = UserId,
+            Name = "Importación compartida",
+            OpeningDate = new DateOnly(2026, 10, 1)
+        };
+
+        Db.AddRange(incomeGroup, householdGroup, healthGroup, salary, rent, dentalInsurance);
+        Db.Accounts.AddRange(personalAccount, jointAccount);
+        Db.ImportBatches.AddRange(
+            new ImportBatch
+            {
+                UserId = UserId,
+                AccountId = personalAccount.Id,
+                FileName = "account-statement_2026-01-01_2026-09-25_es-es_547cf9.csv"
+            },
+            new ImportBatch
+            {
+                UserId = UserId,
+                AccountId = jointAccount.Id,
+                FileName = "account-statement_2026-03-01_2026-09-25_es-es_fad8bc.csv"
+            });
+        Db.RecurringRules.Add(new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = rent.Id,
+            ForecastAmount = 0m,
+            StartDate = new DateOnly(2026, 10, 1)
+        });
+        await Db.SaveChangesAsync();
+
+        var result = await CreateController().Get(default);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("Revolut 6931", personalAccount.Name);
+        Assert.Equal("Conjunta", jointAccount.Name);
+
+        var rules = await Db.RecurringRules.OrderBy(rule => rule.Description).ToListAsync();
+        Assert.Contains(rules, rule =>
+            rule.ConceptId == salary.Id &&
+            rule.AccountId == personalAccount.Id &&
+            rule.Direction == EntryDirection.In &&
+            rule.ForecastAmount == 2360m &&
+            rule.DayOfMonth == 29);
+        Assert.Contains(rules, rule =>
+            rule.ConceptId == rent.Id &&
+            rule.AccountId == jointAccount.Id &&
+            rule.ForecastAmount == 737.97m &&
+            rule.DayOfMonth == 7);
+        Assert.Contains(rules, rule =>
+            rule.ConceptId == dentalInsurance.Id &&
+            rule.AccountId == jointAccount.Id &&
+            rule.ForecastAmount == 21.58m &&
+            rule.DayOfMonth == 1);
+    }
+
     private Account SeedAccount()
     {
         var account = new Account
