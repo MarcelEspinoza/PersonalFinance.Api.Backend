@@ -56,7 +56,6 @@ namespace PersonalFinance.Api.Services
             var userId = CurrentUserId();
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             var currentMonth = new DateOnly(today.Year, today.Month, 1);
-            var historyStart = currentMonth.AddMonths(-3);
             var lastProjectedMonth = currentMonth.AddMonths(6);
             var lastDay = new DateOnly(
                 lastProjectedMonth.Year,
@@ -66,8 +65,21 @@ namespace PersonalFinance.Api.Services
                 .AsNoTracking()
                 .Where(entry =>
                     entry.UserId == userId &&
-                    entry.DueDate >= historyStart &&
+                    entry.DueDate >= currentMonth &&
                     entry.DueDate <= lastDay)
+                .ToListAsync(ct);
+            var concepts = await _db.Concepts
+                .AsNoTracking()
+                .Where(concept => concept.UserId == userId && concept.IsActive)
+                .ToListAsync(ct);
+            var monthlyBudgets = await _db.MonthlyBudgets
+                .AsNoTracking()
+                .Where(budget =>
+                    budget.UserId == userId &&
+                    (budget.Year > currentMonth.Year ||
+                     (budget.Year == currentMonth.Year && budget.Month >= currentMonth.Month)) &&
+                    (budget.Year < lastProjectedMonth.Year ||
+                     (budget.Year == lastProjectedMonth.Year && budget.Month <= lastProjectedMonth.Month)))
                 .ToListAsync(ct);
             var accounts = await _db.Accounts
                 .AsNoTracking()
@@ -102,18 +114,10 @@ namespace PersonalFinance.Api.Services
             var monthOpeningBalance = accounts.Sum(account =>
                 AccountBalanceCalculator.ComputeBalance(account, paidEntries, previousMonthEnd));
 
-            var historical = Enumerable.Range(1, 3)
-                .Select(offset =>
-                {
-                    var month = currentMonth.AddMonths(-offset);
-                    return DashboardLedgerCalculator.BreakdownForMonth(
-                        ledgerEntries, month.Year, month.Month);
-                })
+            var conceptById = concepts.ToDictionary(concept => concept.Id);
+            var variableExpenseConcepts = concepts
+                .Where(concept => concept.Kind == ConceptKind.Expense && concept.Nature == ConceptNature.Variable)
                 .ToList();
-            var historicalIncome = historical.Count == 0 ? 0m : historical.Average(item => item.ActualIncome);
-            var historicalExpense = historical.Count == 0 ? 0m : historical.Average(item => item.ActualExpense);
-            var projectedClosingBalance = currentBalance;
-            var negativeBalanceAlertAdded = false;
 
             for (int i = 0; i <= 6; i++)
             {
@@ -121,6 +125,13 @@ namespace PersonalFinance.Api.Services
                 var year = target.Year;
                 var month = target.Month;
                 var isCurrent = i == 0;
+                var monthEntries = ledgerEntries
+                    .Where(entry =>
+                        entry.Status != EntryStatus.Skipped &&
+                        !entry.IsTransfer &&
+                        entry.DueDate.Year == year &&
+                        entry.DueDate.Month == month)
+                    .ToList();
                 var ledgerTotals = DashboardLedgerCalculator.BreakdownForMonth(ledgerEntries, year, month);
                 var materializedRuleIds = ledgerEntries
                     .Where(entry =>
@@ -139,45 +150,35 @@ namespace PersonalFinance.Api.Services
                     .Where(rule => rule.Direction == EntryDirection.Out)
                     .Sum(rule => rule.ForecastAmount);
 
-                decimal income;
-                decimal expense;
-                bool isEstimate;
-                string source;
-
-                if (isCurrent)
+                var income = ledgerTotals.ActualIncome + ledgerTotals.PendingIncome + recurringIncome;
+                var fixedExpense = monthEntries
+                    .Where(entry =>
+                        entry.Direction == EntryDirection.Out &&
+                        (!conceptById.TryGetValue(entry.ConceptId, out var concept) ||
+                         concept.Nature == ConceptNature.Fixed))
+                    .Sum(entry => entry.Status == EntryStatus.Paid
+                        ? entry.ActualAmount ?? entry.ForecastAmount
+                        : entry.ForecastAmount);
+                var variableExpense = variableExpenseConcepts.Sum(concept =>
                 {
-                    income = ledgerTotals.ActualIncome + ledgerTotals.PendingIncome + recurringIncome;
-                    expense = ledgerTotals.ActualExpense + ledgerTotals.PendingExpense + recurringExpense;
-                    isEstimate = ledgerTotals.PendingIncome + ledgerTotals.PendingExpense + recurringIncome + recurringExpense > 0;
-                    source = isEstimate ? "Real hasta hoy + pendiente" : "Real hasta hoy";
-                    projectedClosingBalance += ledgerTotals.PendingIncome + recurringIncome
-                        - ledgerTotals.PendingExpense - recurringExpense;
-                }
-                else
-                {
-                    income = ledgerTotals.ActualIncome + ledgerTotals.PendingIncome + recurringIncome;
-                    expense = ledgerTotals.ActualExpense + ledgerTotals.PendingExpense + recurringExpense;
-                    var estimatedIncome = income == 0m;
-                    var estimatedExpense = expense == 0m;
-                    isEstimate = estimatedIncome || estimatedExpense;
-                    if (estimatedIncome) income = historicalIncome;
-                    if (estimatedExpense) expense = historicalExpense;
-
-                    if (estimatedIncome && estimatedExpense)
-                    {
-                        source = "Media real de los últimos 3 meses";
-                    }
-                    else if (isEstimate)
-                    {
-                        source = "Planificación completada con media histórica";
-                    }
-                    else
-                    {
-                        source = "Planificación y movimientos previstos";
-                    }
-
-                    projectedClosingBalance += income - expense;
-                }
+                    var planned = monthEntries
+                        .Where(entry =>
+                            entry.Direction == EntryDirection.Out &&
+                            entry.ConceptId == concept.Id)
+                        .Sum(entry => entry.Status == EntryStatus.Paid
+                            ? entry.ActualAmount ?? entry.ForecastAmount
+                            : entry.ForecastAmount);
+                    var overrideBudget = monthlyBudgets.FirstOrDefault(budget =>
+                        budget.ConceptId == concept.Id &&
+                        budget.Year == year &&
+                        budget.Month == month)?.LimitAmount;
+                    var limit = overrideBudget ?? concept.DefaultMonthlyBudget ?? 0m;
+                    return Math.Max(planned, limit);
+                });
+                var expense = fixedExpense + recurringExpense + variableExpense;
+                var source = income == 0m && expense == 0m
+                    ? "Sin planificación"
+                    : "Tus gastos fijos y límites variables";
 
                 var balance = income - expense;
 
@@ -208,18 +209,6 @@ namespace PersonalFinance.Api.Services
                     });
                 }
 
-                // ---------- BALANCE FUTURO ----------
-                if (!isCurrent && projectedClosingBalance < 0 && !negativeBalanceAlertAdded)
-                {
-                    alerts.Items.Add(new AlertItemDto
-                    {
-                        Type = "Balance",
-                        Message = $"El saldo disponible podría ser negativo en {target.ToString("MMMM", culture)}",
-                        Action = "/dashboard"
-                    });
-                    negativeBalanceAlertAdded = true;
-                }
-
                 projections.Add(new MonthlyProjectionDto
                 {
                     Month = target.ToString("MMMM yyyy", culture),
@@ -228,9 +217,7 @@ namespace PersonalFinance.Api.Services
                     Income = income,
                     Expense = expense,
                     Balance = balance,
-                    ClosingBalance = projectedClosingBalance,
                     IsCurrent = isCurrent,
-                    IsEstimate = isEstimate,
                     ProjectionSource = source,
                     PendingIncome = ledgerTotals.PendingIncome + recurringIncome,
                     PendingExpense = ledgerTotals.PendingExpense + recurringExpense
@@ -246,11 +233,9 @@ namespace PersonalFinance.Api.Services
                 CurrentMonthIncome = DashboardLedgerCalculator
                     .BreakdownForMonth(ledgerEntries, today.Year, today.Month).ActualIncome,
                 CurrentMonthExpense = DashboardLedgerCalculator
-                    .BreakdownForMonth(ledgerEntries, today.Year, today.Month).ActualExpense,
-                ProjectedBalance = projections[^1].ClosingBalance
+                    .BreakdownForMonth(ledgerEntries, today.Year, today.Month).ActualExpense
             };
             summary.CurrentMonthResult = summary.CurrentMonthIncome - summary.CurrentMonthExpense;
-            summary.ProjectionChange = summary.ProjectedBalance - summary.CurrentBalance;
 
             return (projections, summary, alerts, accountBalances);
         }

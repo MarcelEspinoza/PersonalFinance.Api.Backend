@@ -293,6 +293,21 @@ public class MonthlyLedgerTests : LedgerTestBase
         Assert.True(conceptLine.IsOverBudget);
     }
 
+    [Fact]
+    public async Task El_limite_mensual_habitual_se_usa_si_no_hay_un_presupuesto_especifico()
+    {
+        var (_, concept) = SeedConcept("Vida personal", "Compras personales", ConceptKind.Expense);
+        concept.Nature = ConceptNature.Variable;
+        concept.DefaultMonthlyBudget = 175m;
+        await Db.SaveChangesAsync();
+
+        var summary = await Summary(2030, 9);
+        var conceptLine = summary.ExpenseGroups.SelectMany(group => group.Concepts).Single();
+
+        Assert.Equal(175m, conceptLine.BudgetLimit);
+        Assert.False(conceptLine.IsOverBudget);
+    }
+
     // ----------------------------------------------------------------------
     // Cierre y reapertura
     // ----------------------------------------------------------------------

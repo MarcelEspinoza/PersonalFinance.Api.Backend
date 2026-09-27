@@ -938,6 +938,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<decimal?>("DefaultMonthlyBudget")
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<Guid>("GroupId")
                         .HasColumnType("char(36)");
 

@@ -80,6 +80,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
                         Name = conceptTemplate.Name,
                         Kind = groupTemplate.Kind,
                         Nature = conceptTemplate.Nature,
+                        DefaultMonthlyBudget = conceptTemplate.DefaultMonthlyBudget,
                         SortOrder = conceptTemplate.SortOrder
                     };
 

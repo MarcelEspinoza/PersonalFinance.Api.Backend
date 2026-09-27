@@ -39,10 +39,22 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Where(e => e.UserId == userId && e.PeriodId == period.Id)
                 .ToListAsync(ct);
 
-            var budgets = await _db.MonthlyBudgets
+            var budgets = await _db.Concepts
+                .AsNoTracking()
+                .Where(concept =>
+                    concept.UserId == userId &&
+                    concept.IsActive &&
+                    concept.DefaultMonthlyBudget != null)
+                .ToDictionaryAsync(
+                    concept => concept.Id,
+                    concept => concept.DefaultMonthlyBudget!.Value,
+                    ct);
+            var monthlyBudgets = await _db.MonthlyBudgets
                 .AsNoTracking()
                 .Where(b => b.UserId == userId && b.Year == period.Year && b.Month == period.Month)
-                .ToDictionaryAsync(b => b.ConceptId, b => b.LimitAmount, ct);
+                .ToListAsync(ct);
+            foreach (var budget in monthlyBudgets)
+                budgets[budget.ConceptId] = budget.LimitAmount;
 
             return MonthlySummaryBuilder.Build(period, chart, entries, budgets);
         }

@@ -28,13 +28,11 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// Balance = Income - Expense.
         /// </summary>
         public decimal Balance { get; set; }
-        public decimal ClosingBalance { get; set; }
 
         /// <summary>
         /// Indicates whether this projection corresponds to the current month.
         /// </summary>
         public bool IsCurrent { get; set; }
-        public bool IsEstimate { get; set; }
         public string ProjectionSource { get; set; } = string.Empty;
         public decimal PendingIncome { get; set; }
         public decimal PendingExpense { get; set; }

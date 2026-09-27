@@ -21,6 +21,12 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// <summary>Fixed: importe estable mes a mes. Variable: sujeto a presupuesto.</summary>
         public ConceptNature Nature { get; set; } = ConceptNature.Fixed;
 
+        /// <summary>
+        /// Límite mensual habitual para un gasto variable. Los presupuestos de
+        /// un mes concreto pueden sobrescribirlo.
+        /// </summary>
+        public decimal? DefaultMonthlyBudget { get; set; }
+
         public int SortOrder { get; set; }
 
         public bool IsActive { get; set; } = true;

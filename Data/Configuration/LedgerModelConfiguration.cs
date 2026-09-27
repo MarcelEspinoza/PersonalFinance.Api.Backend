@@ -56,6 +56,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.ToTable("Concepts");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Name).IsRequired().HasMaxLength(120);
+                e.Property(x => x.DefaultMonthlyBudget).HasColumnType(Money);
 
                 e.HasOne(x => x.Group)
                     .WithMany(g => g.Concepts)
