@@ -42,7 +42,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Gas", ConceptNature.Fixed, 40),
                 new("Internet y telefonía", ConceptNature.Fixed, 50),
                 new("Seguridad del hogar", ConceptNature.Fixed, 60),
-                new("Seguro del hogar", ConceptNature.Fixed, 70),
                 new("Mantenimiento y suministros del hogar", ConceptNature.Variable, 80)
             }),
 
@@ -55,8 +54,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             new("Salud y cuidado personal", ConceptKind.Expense, 30, new List<ConceptTemplate>
             {
                 new("Seguro médico", ConceptNature.Fixed, 10),
-                new("Farmacia y salud", ConceptNature.Variable, 20),
-                new("Cuidado personal", ConceptNature.Variable, 30)
+                new("Seguro dental", ConceptNature.Fixed, 20),
+                new("Farmacia y salud", ConceptNature.Variable, 30),
+                new("Cuidado personal", ConceptNature.Variable, 40)
             }),
 
             new("Transporte y viajes", ConceptKind.Expense, 40, new List<ConceptTemplate>

@@ -80,7 +80,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("COMERCIALIZADORA", "Electricidad", "Conjunta", 80),
                 new("ASISTENCIA SANITARIA", "Seguro médico", "Conjunta", 80),
                 new("ASSISTENCIA SANITARIA", "Seguro médico", "Conjunta", 80),
-                new("CAJA DE SEGUROS REUNIDOS", "Seguro del hogar", "Conjunta", 80),
+                new("CAJA DE SEGUROS REUNIDOS", "Seguro dental", "Conjunta", 80),
                 new("FREENOW", "Transporte diario", null, 80),
                 new("TRAINLINE", "Viajes y alojamiento", null, 80),
                 new("NETFLIX", "Netflix", null, 80),
