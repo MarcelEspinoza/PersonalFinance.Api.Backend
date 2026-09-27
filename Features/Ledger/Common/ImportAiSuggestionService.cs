@@ -49,7 +49,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 return result;
             }
 
-            var model = _configuration["Anthropic:Model"] ?? "claude-3-5-haiku-20241022";
+            var model = _configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
             var prompt = $$"""
                 Clasifica cada descripción bancaria en uno de los conceptos permitidos.
                 Devuelve exclusivamente JSON válido, sin markdown, con esta forma:

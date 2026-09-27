@@ -38,6 +38,23 @@ namespace PersonalFinance.Api.Services
                 .ToListAsync(cancellationToken);
         }
 
+        public async Task<IEnumerable<IncomeDto>> GetByMonthAsync(
+            Guid userId,
+            int year,
+            int month,
+            CancellationToken cancellationToken = default)
+        {
+            var start = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var end = start.AddMonths(1);
+
+            return await _context.Incomes
+                .AsNoTracking()
+                .Where(i => i.UserId == userId && i.Date >= start && i.Date < end)
+                .OrderByDescending(i => i.Date)
+                .ProjectTo<IncomeDto>(_mapper.ConfigurationProvider)
+                .ToListAsync(cancellationToken);
+        }
+
         public async Task<IncomeDto?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default)
         {
             return await _context.Incomes

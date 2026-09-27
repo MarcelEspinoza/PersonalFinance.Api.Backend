@@ -57,7 +57,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     Array.Empty<string>());
             }
 
-            var model = _configuration["Anthropic:Model"] ?? "claude-3-5-haiku-20241022";
+            var model = _configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
             var system = $$"""
                 Eres el asistente de revisión de un importador bancario personal.
                 El usuario te habla en español sobre los movimientos de su extracto.

@@ -49,7 +49,7 @@ namespace PersonalFinance.Api.Features.Chat
                 .ToListAsync(ct);
 
             var snapshot = await BuildSnapshotAsync(userId, ct);
-            var model = _configuration["Anthropic:Model"] ?? "claude-3-5-haiku-20241022";
+            var model = _configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
 
             var system = $$"""
                 Eres el asistente financiero personal dentro de la app. El usuario te habla

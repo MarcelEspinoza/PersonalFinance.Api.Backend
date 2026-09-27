@@ -6,6 +6,7 @@ namespace PersonalFinance.Api.Services.Contracts
     public interface IExpenseService
     {
         Task<IEnumerable<ExpenseDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default);
+        Task<IEnumerable<ExpenseDto>> GetByMonthAsync(Guid userId, int year, int month, CancellationToken cancellationToken = default);
         Task<ExpenseDto?> GetByIdAsync(int id, Guid userId, CancellationToken cancellationToken = default);
         Task<Expense> CreateAsync(Guid userId, CreateExpenseDto dto, CancellationToken cancellationToken = default);
         Task<bool> UpdateAsync(int id, Guid userId, UpdateExpenseDto dto, CancellationToken cancellationToken = default);

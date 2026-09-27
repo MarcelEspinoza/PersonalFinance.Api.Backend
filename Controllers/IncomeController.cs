@@ -41,12 +41,26 @@
         // GET: api/income
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAll(CancellationToken cancellationToken = default)
+        public async Task<IActionResult> GetAll(
+            [FromQuery] int? year,
+            [FromQuery] int? month,
+            CancellationToken cancellationToken = default)
         {
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            var incomes = await _incomeService.GetAllAsync(userId.Value, cancellationToken);
+            if (year.HasValue != month.HasValue)
+                return BadRequest(new { error = "Year and month must be provided together." });
+
+            if (month is < 1 or > 12)
+                return BadRequest(new { error = "Month must be between 1 and 12." });
+
+            if (year is < 1 or > 9998)
+                return BadRequest(new { error = "Year is outside the supported range." });
+
+            var incomes = year.HasValue
+                ? await _incomeService.GetByMonthAsync(userId.Value, year.Value, month!.Value, cancellationToken)
+                : await _incomeService.GetAllAsync(userId.Value, cancellationToken);
             return Ok(incomes); // 👈 devuelve el DTO completo
         }
 
