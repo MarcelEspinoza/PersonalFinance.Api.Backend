@@ -149,14 +149,7 @@ namespace PersonalFinance.Api.Services
         public async Task<ImportResult> ImportTemplateAsync(IFormFile file, Guid userId)
         {
             var result = new ImportResult();
-
-            using var stream = new MemoryStream();
-            await file.CopyToAsync(stream);
-            stream.Position = 0;
-
-            using var workbook = new XLWorkbook(stream);
-            var ws = workbook.Worksheet("Template");
-            var rows = ws.RangeUsed()?.RowsUsed().Skip(1) ?? Enumerable.Empty<IXLRangeRow>();
+            var rows = await ReadRowsAsync(file);
 
             var validTypes = new[] { "Fixed", "Variable", "Temporary" };
             var validMovements = new[] { "Income", "Expense" };
@@ -186,17 +179,17 @@ namespace PersonalFinance.Api.Services
             {
                 try
                 {
-                    var description = CleanString(row.Cell(1).GetString());
-                    var amountStr = row.Cell(2).GetString();
-                    var categoryName = CleanString(row.Cell(4).GetString());
-                    var notes = CleanString(row.Cell(5).GetString());
-                    var type = CleanString(row.Cell(6).GetString());
-                    var movementType = CleanString(row.Cell(7).GetString());
-                    var bankOriginName = CleanString(row.Cell(8).GetString());
-                    var isTransferStr = CleanString(row.Cell(9).GetString());
-                    var bankDestinationName = CleanString(row.Cell(10).GetString());
-                    var transferReference = CleanString(row.Cell(11).GetString());
-                    var loanName = CleanString(row.Cell(12).GetString());
+                    var description = CleanString(row.Description);
+                    var amountStr = row.Amount;
+                    var categoryName = CleanString(row.Category);
+                    var notes = CleanString(row.Notes);
+                    var type = CleanString(row.Type);
+                    var movementType = CleanString(row.MovementType);
+                    var bankOriginName = CleanString(row.BankOrigin);
+                    var isTransferStr = CleanString(row.IsTransfer);
+                    var bankDestinationName = CleanString(row.BankDestination);
+                    var transferReference = CleanString(row.TransferReference);
+                    var loanName = CleanString(row.Loan);
 
                     var isTransfer = false;
                     if (!string.IsNullOrEmpty(isTransferStr))
@@ -210,45 +203,7 @@ namespace PersonalFinance.Api.Services
 
                     amount = Math.Abs(amount);
 
-                    // ✅ Bloque robusto para parsear fechas (soporta formato europeo dd/MM/yyyy)
-                    DateTime dateLocal = DateTime.MinValue;
-                    bool dateOk = false;
-
-                    try
-                    {
-                        if (row.Cell(3).DataType == XLDataType.DateTime)
-                        {
-                            // Excel guarda la fecha correctamente como número serial
-                            dateLocal = row.Cell(3).GetDateTime().Date;
-                            dateOk = true;
-                        }
-                        else
-                        {
-                            var dateStr = row.Cell(3).GetString().Trim();
-                            string[] dateFormats = { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy" };
-
-                            dateOk = DateTime.TryParseExact(
-                                dateStr,
-                                dateFormats,
-                                CultureInfo.InvariantCulture,
-                                DateTimeStyles.None,
-                                out var parsedDate
-                            );
-
-                            if (!dateOk)
-                            {
-                                // Último intento con cultura española
-                                dateOk = DateTime.TryParse(dateStr, new CultureInfo("es-ES"), DateTimeStyles.None, out parsedDate);
-                            }
-
-                            if (dateOk)
-                                dateLocal = parsedDate.Date;
-                        }
-                    }
-                    catch
-                    {
-                        errors.Add("Invalid date format");
-                    }
+                    var dateOk = TryParseDate(row.Date, out var dateLocal);
 
                     // ✅ Validaciones básicas
                     if (string.IsNullOrWhiteSpace(description)) errors.Add("Empty description");
@@ -378,6 +333,100 @@ namespace PersonalFinance.Api.Services
 
             await _context.SaveChangesAsync();
             return result;
+        }
+
+        private static async Task<IReadOnlyList<TemplateImportRow>> ReadRowsAsync(IFormFile file)
+        {
+            var extension = Path.GetExtension(file.FileName);
+
+            if (extension.Equals(".csv", StringComparison.OrdinalIgnoreCase))
+            {
+                using var reader = new StreamReader(
+                    file.OpenReadStream(),
+                    Encoding.UTF8,
+                    detectEncodingFromByteOrderMarks: true);
+                return TemplateCsvParser.Parse(reader);
+            }
+
+            if (!extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Formato no admitido. Usa .xlsx o .csv.");
+
+            using var stream = new MemoryStream();
+            await file.CopyToAsync(stream);
+            stream.Position = 0;
+
+            try
+            {
+                using var workbook = new XLWorkbook(stream);
+                var worksheet = workbook.Worksheets
+                    .FirstOrDefault(sheet =>
+                        sheet.Name.Equals("Template", StringComparison.OrdinalIgnoreCase) ||
+                        sheet.Name.Equals("Plantilla", StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidDataException(
+                        "El Excel debe contener una hoja llamada Template o Plantilla.");
+
+                var rows = worksheet.RangeUsed()?.RowsUsed().Skip(1)
+                    ?? Enumerable.Empty<IXLRangeRow>();
+
+                return rows.Select(row => new TemplateImportRow(
+                    row.RowNumber(),
+                    row.Cell(1).GetString(),
+                    row.Cell(2).GetString(),
+                    row.Cell(3).DataType == XLDataType.DateTime
+                        ? row.Cell(3).GetDateTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                        : row.Cell(3).GetString(),
+                    row.Cell(4).GetString(),
+                    row.Cell(5).GetString(),
+                    row.Cell(6).GetString(),
+                    row.Cell(7).GetString(),
+                    row.Cell(8).GetString(),
+                    row.Cell(9).GetString(),
+                    row.Cell(10).GetString(),
+                    row.Cell(11).GetString(),
+                    row.Cell(12).GetString())).ToList();
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidDataException(
+                    "No se ha podido leer el Excel. Comprueba que sea un archivo .xlsx válido.",
+                    exception);
+            }
+        }
+
+        private static bool TryParseDate(string value, out DateTime date)
+        {
+            string[] formats =
+            {
+                "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy"
+            };
+
+            if (DateTime.TryParseExact(
+                value.Trim(),
+                formats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed))
+            {
+                date = parsed.Date;
+                return true;
+            }
+
+            if (DateTime.TryParse(
+                value.Trim(),
+                new CultureInfo("es-ES"),
+                DateTimeStyles.None,
+                out parsed))
+            {
+                date = parsed.Date;
+                return true;
+            }
+
+            date = DateTime.MinValue;
+            return false;
         }
 
 

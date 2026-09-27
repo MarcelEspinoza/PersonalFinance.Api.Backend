@@ -30,8 +30,19 @@ namespace PersonalFinance.Api.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest("Archivo no válido");
 
-            var result = await _excelService.ImportTemplateAsync(file, userId);
-            return Ok(result);
+            var extension = Path.GetExtension(file.FileName);
+            if (!new[] { ".xlsx", ".csv" }.Contains(extension, StringComparer.OrdinalIgnoreCase))
+                return BadRequest("Formato no admitido. Usa .xlsx o .csv.");
+
+            try
+            {
+                var result = await _excelService.ImportTemplateAsync(file, userId);
+                return Ok(result);
+            }
+            catch (InvalidDataException exception)
+            {
+                return BadRequest(new { message = exception.Message });
+            }
         }
     }
 }
