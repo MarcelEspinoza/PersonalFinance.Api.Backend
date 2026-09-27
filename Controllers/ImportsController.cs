@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Extensions;
+using PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Domain.Ledger.Entities;
@@ -22,17 +24,20 @@ namespace PersonalFinance.Api.Controllers
         private readonly IImportAiSuggestionService _aiSuggestions;
         private readonly IImportChatService _chat;
         private readonly IImportBatchApplicationService _application;
+        private readonly IMediator _mediator;
 
         public ImportsController(
             IAppDbContext db,
             IImportAiSuggestionService aiSuggestions,
             IImportChatService chat,
-            IImportBatchApplicationService application)
+            IImportBatchApplicationService application,
+            IMediator mediator)
         {
             _db = db;
             _aiSuggestions = aiSuggestions;
             _chat = chat;
             _application = application;
+            _mediator = mediator;
         }
 
         [HttpGet("{batchId:guid}")]
@@ -221,6 +226,9 @@ namespace PersonalFinance.Api.Controllers
             if (batch.AccountId is null)
                 return BadRequest("El lote no tiene una cuenta asociada.");
 
+            await _mediator.Send(new SeedChartOfAccountsCommand(userId.Value), ct);
+            await SeedMappingsAsync(userId.Value, ct);
+
             var mappings = await _db.ConceptMappings
                 .AsNoTracking()
                 .Include(mapping => mapping.Concept)
@@ -234,6 +242,10 @@ namespace PersonalFinance.Api.Controllers
                     concept.Name,
                     concept.Kind.ToString()))
                 .ToListAsync(ct);
+            var conceptIds = concepts.ToDictionary(
+                concept => concept.Name,
+                concept => concept.Id,
+                StringComparer.OrdinalIgnoreCase);
 
             var pendingRows = batch.Rows
                 .Where(row =>
@@ -257,6 +269,7 @@ namespace PersonalFinance.Api.Controllers
 
             var mapped = 0;
             var suggested = 0;
+            var fallback = 0;
             foreach (var row in pendingRows)
             {
                 var mapping = FindMapping(
@@ -278,12 +291,32 @@ namespace PersonalFinance.Api.Controllers
                     row.SuggestionSource = "ai";
                     row.SuggestionConfidence = suggestion.Confidence;
                     suggested++;
+                    continue;
+                }
+
+                var fallbackConceptId = ImportFallbackClassifier.FindConceptId(
+                    row.NormalizedDescription ?? string.Empty,
+                    row.Amount,
+                    conceptIds);
+                if (fallbackConceptId is not null)
+                {
+                    row.SuggestedConceptId = fallbackConceptId;
+                    row.SuggestionSource = "regla general";
+                    row.SuggestionConfidence = 0.5m;
+                    fallback++;
                 }
             }
 
             await _db.SaveChangesAsync(ct);
             var remaining = pendingRows.Count(row => row.SuggestedConceptId is null);
-            return Ok(new { mapped, suggested, remaining });
+            return Ok(new
+            {
+                mapped,
+                suggested,
+                fallback,
+                remaining,
+                aiWarning = _aiSuggestions.FailureReason
+            });
         }
 
         [HttpPost("{batchId:guid}/chat")]
@@ -372,14 +405,22 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
 
+            var result = await SeedMappingsAsync(userId.Value, ct);
+            return Ok(new { created = result.Created, updated = result.Updated });
+        }
+
+        private async Task<(int Created, int Updated)> SeedMappingsAsync(
+            Guid userId,
+            CancellationToken ct)
+        {
             var accounts = await _db.Accounts
-                .Where(a => a.UserId == userId.Value && a.IsActive)
+                .Where(a => a.UserId == userId && a.IsActive)
                 .ToDictionaryAsync(a => a.Name, StringComparer.OrdinalIgnoreCase, ct);
             var concepts = await _db.Concepts
-                .Where(c => c.UserId == userId.Value)
+                .Where(c => c.UserId == userId)
                 .ToDictionaryAsync(c => c.Name, StringComparer.OrdinalIgnoreCase, ct);
             var existing = await _db.ConceptMappings
-                .Where(m => m.UserId == userId.Value)
+                .Where(m => m.UserId == userId)
                 .ToListAsync(ct);
 
             var created = 0;
@@ -416,7 +457,7 @@ namespace PersonalFinance.Api.Controllers
 
                 var mapping = new ConceptMapping
                 {
-                    UserId = userId.Value,
+                    UserId = userId,
                     AccountId = accountId,
                     Pattern = template.Pattern,
                     ConceptId = concept.Id,
@@ -428,7 +469,7 @@ namespace PersonalFinance.Api.Controllers
             }
 
             await _db.SaveChangesAsync(ct);
-            return Ok(new { created, updated });
+            return (created, updated);
         }
 
         [HttpPost]
@@ -447,6 +488,9 @@ namespace PersonalFinance.Api.Controllers
                     a => a.Id == accountId && a.UserId == userId.Value && a.IsActive, ct);
             if (account is null) return BadRequest("La cuenta no existe o no está activa.");
 
+            await _mediator.Send(new SeedChartOfAccountsCommand(userId.Value), ct);
+            await SeedMappingsAsync(userId.Value, ct);
+
             using var stream = file.OpenReadStream();
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var parsed = RevolutCsvParser.Parse(reader);
@@ -463,6 +507,10 @@ namespace PersonalFinance.Api.Controllers
                 .Where(c => c.UserId == userId.Value && c.IsActive)
                 .Select(c => new ImportAiCandidate(c.Id, c.Name, c.Kind.ToString()))
                 .ToListAsync(ct);
+            var conceptIds = concepts.ToDictionary(
+                concept => concept.Name,
+                concept => concept.Id,
+                StringComparer.OrdinalIgnoreCase);
             var unmappedDescriptions = parsed.Movements
                 .Select(m => new
                 {
@@ -514,6 +562,12 @@ namespace PersonalFinance.Api.Controllers
 
                 var mapping = FindMapping(mappings, account.Id, classified.NormalizedDescription);
                 aiSuggestions.TryGetValue(classified.NormalizedDescription, out var aiSuggestion);
+                var fallbackConceptId = mapping is null && aiSuggestion is null
+                    ? ImportFallbackClassifier.FindConceptId(
+                        classified.NormalizedDescription,
+                        movement.Amount,
+                        conceptIds)
+                    : null;
                 batch.Rows.Add(new ImportRow
                 {
                     UserId = userId.Value,
@@ -527,9 +581,17 @@ namespace PersonalFinance.Api.Controllers
                     NormalizedDescription = classified.NormalizedDescription,
                     Fingerprint = fingerprint,
                     Status = ImportRowStatus.Pending,
-                    SuggestedConceptId = mapping?.ConceptId ?? aiSuggestion?.ConceptId,
-                    SuggestionSource = mapping is not null ? "mapping" : aiSuggestion is not null ? "ai" : null,
-                    SuggestionConfidence = mapping is not null ? 1m : aiSuggestion?.Confidence
+                    SuggestedConceptId = mapping?.ConceptId ?? aiSuggestion?.ConceptId ?? fallbackConceptId,
+                    SuggestionSource = mapping is not null
+                        ? "mapping"
+                        : aiSuggestion is not null
+                            ? "ai"
+                            : fallbackConceptId is not null
+                                ? "regla general"
+                                : null,
+                    SuggestionConfidence = mapping is not null
+                        ? 1m
+                        : aiSuggestion?.Confidence ?? (fallbackConceptId is not null ? 0.5m : null)
                 });
             }
 

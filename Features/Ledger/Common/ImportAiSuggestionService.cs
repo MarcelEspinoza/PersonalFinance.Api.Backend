@@ -10,6 +10,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
     public interface IImportAiSuggestionService
     {
+        string? FailureReason { get; }
+
         Task<IReadOnlyDictionary<string, ImportAiSuggestion>> SuggestAsync(
             IReadOnlyList<string> descriptions,
             IReadOnlyList<ImportAiCandidate> concepts,
@@ -21,6 +23,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         private readonly HttpClient _http;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ImportAiSuggestionService> _logger;
+        public string? FailureReason { get; private set; }
 
         public ImportAiSuggestionService(
             HttpClient http,
@@ -37,6 +40,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IReadOnlyList<ImportAiCandidate> concepts,
             CancellationToken ct)
         {
+            FailureReason = null;
             var result = new Dictionary<string, ImportAiSuggestion>(StringComparer.OrdinalIgnoreCase);
             if (descriptions.Count == 0 || concepts.Count == 0) return result;
 
@@ -45,6 +49,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
+                FailureReason = "Falta configurar ANTHROPIC_API_KEY en el servidor.";
                 _logger.LogWarning("Anthropic no está configurado; las filas sin mapping quedan para revisión manual.");
                 return result;
             }
@@ -102,6 +107,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
+                FailureReason = $"Anthropic devolvió HTTP {(int)response.StatusCode}.";
                 _logger.LogWarning(
                     "Anthropic devolvió HTTP {StatusCode} al clasificar un bloque de {Count} descripciones.",
                     (int)response.StatusCode,
@@ -113,7 +119,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (!document.RootElement.TryGetProperty("content", out var content) ||
                 content.GetArrayLength() == 0 ||
                 !content[0].TryGetProperty("text", out var text))
+            {
+                FailureReason = "Anthropic respondió sin contenido clasificable.";
                 return;
+            }
 
             var json = text.GetString()?.Trim() ?? string.Empty;
             if (json.StartsWith("```", StringComparison.Ordinal))
@@ -125,7 +134,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             try
             {
-                foreach (var item in JsonSerializer.Deserialize<List<AiResponseItem>>(json) ?? new())
+                foreach (var item in JsonSerializer.Deserialize<List<AiResponseItem>>(
+                             json,
+                             new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new())
                 {
                     if (item.ConceptId == Guid.Empty ||
                         string.IsNullOrWhiteSpace(item.Description) ||
@@ -139,6 +150,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             }
             catch (JsonException ex)
             {
+                FailureReason = "Anthropic devolvió una respuesta con formato no válido.";
                 _logger.LogWarning(ex, "La respuesta de Anthropic no tenía el JSON esperado.");
             }
         }

@@ -15,6 +15,8 @@ namespace PersonalFinance.Api.Tests;
 /// <summary>Cero sugerencias de IA: el test cubre sólo mapping/manual, sin depender de Anthropic.</summary>
 public sealed class NullAiSuggestionService : IImportAiSuggestionService
 {
+    public string? FailureReason => "IA desactivada en pruebas.";
+
     public Task<IReadOnlyDictionary<string, ImportAiSuggestion>> SuggestAsync(
         IReadOnlyList<string> descriptions, IReadOnlyList<ImportAiCandidate> concepts, CancellationToken ct) =>
         Task.FromResult<IReadOnlyDictionary<string, ImportAiSuggestion>>(
@@ -52,7 +54,8 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             Db,
             new NullAiSuggestionService(),
             new NullChatService(),
-            application);
+            application,
+            Mediator);
 
         var httpContext = new DefaultHttpContext
         {
@@ -208,5 +211,56 @@ public sealed class ImportReconciliationTests : LedgerTestBase
 
         Assert.Equal(28.78m, saldoPersonal);
         Assert.Equal(14.26m, saldoConjunta);
+    }
+
+    [Fact]
+    public async Task Sin_IA_ni_mappings_clasifica_todas_las_filas_con_reglas_generales()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        var file = BuildCsv(
+            "Transferencia;Actual;01/01/2026 09:00;01/01/2026 09:00;Transferencia de una persona;100.00;0.00;EUR;COMPLETADO;100.00",
+            "Transferencia;Actual;02/01/2026 09:00;02/01/2026 09:00;Bizum payment to: una persona;-20.00;0.00;EUR;COMPLETADO;80.00",
+            "Reintegro;Actual;03/01/2026 09:00;03/01/2026 09:00;Retirada de efectivo en cajero;-30.00;0.00;EUR;COMPLETADO;50.00",
+            "Pago con tarjeta;Actual;04/01/2026 09:00;04/01/2026 09:00;Comercio desconocido;-5.00;0.00;EUR;COMPLETADO;45.00");
+
+        var createResult = await CreateController(UserId).Create(accountId, file, CancellationToken.None);
+        var batch = Assert.IsType<OkObjectResult>(createResult.Result).Value as ImportBatchDto;
+        Assert.NotNull(batch);
+
+        var rows = await Db.ImportRows
+            .AsNoTracking()
+            .Include(row => row.SuggestedConcept)
+            .OrderBy(row => row.RowNumber)
+            .ToListAsync();
+
+        Assert.All(rows, row => Assert.NotNull(row.SuggestedConceptId));
+        Assert.All(rows, row => Assert.Contains(row.SuggestionSource, new[] { "mapping", "regla general" }));
+        Assert.Equal(
+            new[]
+            {
+                "Ingresos adicionales",
+                "Transferencias y Bizum enviados",
+                "Retiradas de efectivo",
+                "Compras personales"
+            },
+            rows.Select(row => row.SuggestedConcept!.Name));
+
+        var pendingRows = await Db.ImportRows.ToListAsync();
+        foreach (var row in pendingRows)
+        {
+            row.SuggestedConceptId = null;
+            row.SuggestionSource = null;
+            row.SuggestionConfidence = null;
+        }
+        await Db.SaveChangesAsync();
+
+        var suggestResult = await CreateController(UserId).SuggestPending(
+            batch!.Id,
+            CancellationToken.None);
+        Assert.IsType<OkObjectResult>(suggestResult.Result);
+        Assert.All(
+            await Db.ImportRows.AsNoTracking().ToListAsync(),
+            row => Assert.NotNull(row.SuggestedConceptId));
     }
 }

@@ -70,7 +70,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Ropa y calzado", ConceptNature.Variable, 20),
                 new("Ocio y entretenimiento", ConceptNature.Variable, 30),
                 new("Regalos y celebraciones", ConceptNature.Variable, 40),
-                new("Formación", ConceptNature.Variable, 50)
+                new("Formación", ConceptNature.Variable, 50),
+                new("Mascotas", ConceptNature.Variable, 60),
+                new("Belleza y peluquería", ConceptNature.Variable, 70)
             }),
 
             new("Suscripciones y servicios digitales", ConceptKind.Expense, 60, new List<ConceptTemplate>
@@ -88,7 +90,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Pasanaco", ConceptNature.Fixed, 30),
                 new("Comisiones bancarias", ConceptNature.Variable, 40),
                 new("Impuestos y tasas", ConceptNature.Variable, 50),
-                new("Otros seguros", ConceptNature.Fixed, 60)
+                new("Otros seguros", ConceptNature.Fixed, 60),
+                new("Transferencias y Bizum enviados", ConceptNature.Variable, 70),
+                new("Retiradas de efectivo", ConceptNature.Variable, 80),
+                new("Servicios legales y gestión de deudas", ConceptNature.Variable, 90)
             }),
 
             new("Ahorro e inversión", ConceptKind.Expense, 80, new List<ConceptTemplate>
