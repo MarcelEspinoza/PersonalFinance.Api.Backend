@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Features.Chat
 {
@@ -23,13 +24,20 @@ namespace PersonalFinance.Api.Features.Chat
         private readonly HttpClient _http;
         private readonly IConfiguration _configuration;
         private readonly AppDbContext _db;
+        private readonly IDashboardService _dashboard;
         private readonly ILogger<GlobalChatService> _logger;
 
-        public GlobalChatService(HttpClient http, IConfiguration configuration, AppDbContext db, ILogger<GlobalChatService> logger)
+        public GlobalChatService(
+            HttpClient http,
+            IConfiguration configuration,
+            AppDbContext db,
+            IDashboardService dashboard,
+            ILogger<GlobalChatService> logger)
         {
             _http = http;
             _configuration = configuration;
             _db = db;
+            _dashboard = dashboard;
             _logger = logger;
         }
 
@@ -72,6 +80,11 @@ namespace PersonalFinance.Api.Features.Chat
 
                 Si el resumen no contiene el detalle exacto que te piden, dilo con honestidad
                 en vez de inventar cifras.
+
+                "currentMonthOutlook" es la previsión del mes calculada por la app: para cada
+                cuenta trae la cronología de cobros y pagos pendientes con el saldo tras cada
+                uno ("balanceAfter"). Úsala para explicar si le faltará dinero, en qué fecha y
+                qué pagos o cobros conviene mover. No recalcules esas cifras.
 
                 Puedes preparar estas acciones, pero nunca ejecutarlas directamente:
                 - create_expense / create_income: amount, description, date, categoryId, expenseType.
@@ -306,9 +319,13 @@ namespace PersonalFinance.Api.Features.Chat
             })
                 .ToList();
 
+            var projection = await _dashboard.GetFutureProjectionAsync(null, null, ct);
+            var monthOutlook = MonthAdvisorService.BuildMonthContext(projection.Outlook);
+
             return new
             {
                 today = now.ToString("yyyy-MM-dd"),
+                currentMonthOutlook = monthOutlook,
                 monthlyBreakdown,
                 budgets = budgetsSummary,
                 commitments,

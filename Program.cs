@@ -168,6 +168,8 @@ builder.Services.AddScoped<PersonalFinance.Api.Features.Ledger.Common.IImportBat
     PersonalFinance.Api.Features.Ledger.Common.ImportBatchApplicationService>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IGlobalChatService,
     PersonalFinance.Api.Features.Chat.GlobalChatService>();
+builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IMonthAdvisorService,
+    PersonalFinance.Api.Features.Chat.MonthAdvisorService>();
 
 builder.Services.AddAuthorization(options =>
 {
