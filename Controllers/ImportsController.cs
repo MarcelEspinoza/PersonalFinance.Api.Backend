@@ -396,7 +396,12 @@ namespace PersonalFinance.Api.Controllers
             if (!result.Success)
                 return BadRequest(new { message = result.Error, unassignedRows = result.UnassignedRows });
 
-            return Ok(new { applied = result.Applied, batchId = result.BatchId });
+            return Ok(new
+            {
+                applied = result.Applied,
+                matchedForecasts = result.MatchedForecasts,
+                batchId = result.BatchId
+            });
         }
 
         [HttpPost("mappings/seed")]
@@ -539,6 +544,7 @@ namespace PersonalFinance.Api.Controllers
                 .Select(entry => entry.Fingerprint!)
                 .ToListAsync(ct);
             var fingerprints = existingFingerprints.ToHashSet(StringComparer.Ordinal);
+            var movementOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
 
             var batch = new ImportBatch
             {
@@ -560,8 +566,15 @@ namespace PersonalFinance.Api.Controllers
                     continue;
                 }
 
-                var fingerprint = CreateFingerprint(account.Id, movement);
-                if (!fingerprints.Add(fingerprint))
+                var normalizedDescription = RevolutMovementClassifier.Normalize(movement.Description);
+                var movementIdentity = CreateMovementIdentity(account.Id, movement, normalizedDescription);
+                movementOccurrences.TryGetValue(movementIdentity, out var occurrence);
+                occurrence++;
+                movementOccurrences[movementIdentity] = occurrence;
+
+                var fingerprint = CreateFingerprint(movementIdentity, occurrence);
+                var legacyFingerprint = CreateLegacyFingerprint(account.Id, movement);
+                if (fingerprints.Contains(legacyFingerprint) || !fingerprints.Add(fingerprint))
                 {
                     duplicateRows++;
                     continue;
@@ -661,13 +674,22 @@ namespace PersonalFinance.Api.Controllers
             SuggestionSource = row.SuggestionSource
         };
 
-        /// <summary>
-        /// Incluye el número de línea del extracto: dos movimientos distintos
-        /// pueden compartir fecha, importe y descripción normalizada (por
-        /// ejemplo, dos cajeros del mismo importe el mismo minuto), y sin el
-        /// número de fila la huella los trataría como el mismo duplicado.
-        /// </summary>
-        private static string CreateFingerprint(Guid accountId, RevolutMovement movement)
+        private static string CreateMovementIdentity(
+            Guid accountId,
+            RevolutMovement movement,
+            string normalizedDescription)
+        {
+            return string.Join(
+                "|",
+                accountId.ToString("N"),
+                movement.StartedAt.ToString("O", CultureInfo.InvariantCulture),
+                movement.Amount.ToString(CultureInfo.InvariantCulture),
+                movement.Fee.ToString(CultureInfo.InvariantCulture),
+                movement.Currency.Trim().ToUpperInvariant(),
+                normalizedDescription);
+        }
+
+        private static string CreateLegacyFingerprint(Guid accountId, RevolutMovement movement)
         {
             var raw = string.Join(
                 "|",
@@ -676,6 +698,12 @@ namespace PersonalFinance.Api.Controllers
                 movement.Amount.ToString(CultureInfo.InvariantCulture),
                 RevolutMovementClassifier.Normalize(movement.Description),
                 movement.RowNumber.ToString(CultureInfo.InvariantCulture));
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        }
+
+        private static string CreateFingerprint(string movementIdentity, int occurrence)
+        {
+            var raw = $"{movementIdentity}|{occurrence.ToString(CultureInfo.InvariantCulture)}";
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
         }
     }

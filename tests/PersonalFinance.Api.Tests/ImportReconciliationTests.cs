@@ -215,6 +215,105 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Importa_nomina_con_importe_real_y_la_empareja_con_prevision_de_octubre()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(18.42m, new DateOnly(2026, 10, 1), "Revolut");
+        await SeedMappingForAllAsync(accountId, new[] { ("NOMINA", "Nómina") });
+        var salary = await Db.Concepts.SingleAsync(concept => concept.UserId == UserId && concept.Name == "Nómina");
+        Db.RecurringRules.Add(new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = salary.Id,
+            AccountId = accountId,
+            Direction = EntryDirection.In,
+            Frequency = RecurrenceFrequency.Monthly,
+            DayOfMonth = 1,
+            ForecastAmount = 2360m,
+            StartDate = new DateOnly(2026, 10, 1),
+            IsActive = true
+        });
+        await Db.SaveChangesAsync();
+
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv("Transferencia;Actual;29/09/2026 09:00;29/09/2026 09:00;NOMINA;2361.52;0.00;EUR;COMPLETADO;2379.94"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+
+        var result = await CreateController(UserId).Apply(batch.Id, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(result.Result);
+
+        var salaryEntry = await Db.LedgerEntries.SingleAsync(entry =>
+            entry.UserId == UserId &&
+            entry.ConceptId == salary.Id &&
+            entry.AccountId == accountId);
+        var account = await Db.Accounts.SingleAsync(item => item.Id == accountId);
+        var row = await Db.ImportRows.SingleAsync(item => item.BatchId == batch.Id);
+
+        Assert.Equal(new DateOnly(2026, 10, 1), salaryEntry.DueDate);
+        Assert.Equal(new DateOnly(2026, 9, 29), salaryEntry.ValueDate);
+        Assert.Equal(EntryStatus.Paid, salaryEntry.Status);
+        Assert.Equal(2360m, salaryEntry.ForecastAmount);
+        Assert.Equal(2361.52m, salaryEntry.ActualAmount);
+        Assert.Equal(row.Id, salaryEntry.ImportRowId);
+        Assert.Equal(salaryEntry.Id, row.LedgerEntryId);
+        Assert.Equal(2379.94m, account.OpeningBalance);
+        Assert.False(await Db.MonthlyPeriods.AnyAsync(period =>
+            period.UserId == UserId && period.Year == 2026 && period.Month == 9));
+    }
+
+    [Fact]
+    public async Task No_aplica_si_una_fila_coincide_con_varias_previsiones_cercanas()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(18.42m, new DateOnly(2026, 10, 1), "Revolut");
+        await SeedMappingForAllAsync(accountId, new[] { ("NOMINA", "Nómina") });
+        var salary = await Db.Concepts.SingleAsync(concept => concept.UserId == UserId && concept.Name == "Nómina");
+        Db.RecurringRules.AddRange(
+            new RecurringRule
+            {
+                UserId = UserId,
+                ConceptId = salary.Id,
+                AccountId = accountId,
+                Direction = EntryDirection.In,
+                Frequency = RecurrenceFrequency.Monthly,
+                DayOfMonth = 1,
+                ForecastAmount = 2360m,
+                StartDate = new DateOnly(2026, 10, 1),
+                IsActive = true
+            },
+            new RecurringRule
+            {
+                UserId = UserId,
+                ConceptId = salary.Id,
+                AccountId = accountId,
+                Direction = EntryDirection.In,
+                Frequency = RecurrenceFrequency.Monthly,
+                DayOfMonth = 3,
+                ForecastAmount = 2360m,
+                StartDate = new DateOnly(2026, 10, 1),
+                IsActive = true
+            });
+        await Db.SaveChangesAsync();
+
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv("Transferencia;Actual;29/09/2026 09:00;29/09/2026 09:00;NOMINA;2361.52;0.00;EUR;COMPLETADO;2379.94"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+
+        var result = await CreateController(UserId).Apply(batch.Id, CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Contains("varias previsiones", conflict.Value!.ToString());
+        Assert.Empty(await Db.LedgerEntries.Where(entry => entry.UserId == UserId).ToListAsync());
+        Assert.Empty(await Db.MonthlyPeriods.Where(period => period.UserId == UserId).ToListAsync());
+    }
+
+    [Fact]
     public async Task Rebasar_una_cuenta_conserva_el_historico_pero_no_lo_suma_al_nuevo_saldo()
     {
         var accountId = await SeedAccountAsync(18.42m, new DateOnly(2026, 10, 1), "Revolut");
@@ -298,6 +397,40 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             BuildCsv(row),
             CancellationToken.None);
         Assert.IsType<ConflictObjectResult>(afterApply.Result);
+    }
+
+    [Fact]
+    public async Task Reconoce_el_mismo_movimiento_al_reexportar_un_rango_distinto()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        await SeedMappingForAllAsync(accountId, new[]
+        {
+            ("PAGO GENERICO", "Nómina"),
+            ("MERCADONA", "Supermercado y alimentación del hogar")
+        });
+        const string target =
+            "Pago con tarjeta;Actual;05/01/2026 14:22;05/01/2026 14:22;MERCADONA;-50.00;0.00;EUR;COMPLETADO;-50.00";
+
+        var firstBatch = Assert.IsType<OkObjectResult>(
+            (await CreateController(UserId).Create(
+                accountId,
+                BuildCsv(
+                    "Transferencia;Actual;04/01/2026 09:00;04/01/2026 09:00;PAGO GENERICO;100.00;0.00;EUR;COMPLETADO;100.00",
+                    target),
+                CancellationToken.None)).Result).Value as ImportBatchDto;
+        Assert.NotNull(firstBatch);
+        Assert.Equal(2, firstBatch!.AcceptedRows);
+        await CreateController(UserId).Apply(firstBatch.Id, CancellationToken.None);
+
+        var reexportResult = await CreateController(UserId).Create(
+            accountId,
+            BuildCsv(target),
+            CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(reexportResult.Result);
+        Assert.Equal(2, await Db.LedgerEntries.CountAsync(entry =>
+            entry.UserId == UserId && entry.AccountId == accountId));
     }
 
     [Fact]
