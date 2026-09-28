@@ -551,7 +551,6 @@ namespace PersonalFinance.Api.Controllers
                     on row.BatchId equals importBatch.Id
                 where row.UserId == userId.Value &&
                       row.Status == ImportRowStatus.Accepted &&
-                      row.LedgerEntryId != null &&
                       importBatch.AccountId == account.Id &&
                       importBatch.Source == ImportSource.RevolutCsv
                 select new

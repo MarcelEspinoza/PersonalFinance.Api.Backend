@@ -483,6 +483,8 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             "3");
         importedTarget.Fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(oldFingerprintInput))).ToLowerInvariant();
+        savedTargetRow.LedgerEntryId = null;
+        importedTarget.ImportRowId = null;
         await Db.SaveChangesAsync();
 
         var reexportResult = await CreateController(UserId).Create(
