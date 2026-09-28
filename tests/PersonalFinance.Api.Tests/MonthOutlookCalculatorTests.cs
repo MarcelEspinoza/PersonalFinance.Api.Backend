@@ -107,6 +107,92 @@ public sealed class MonthOutlookCalculatorTests
     }
 
     [Fact]
+    public void Reserva_asignada_a_cuenta_reduce_el_saldo_y_no_duplica_el_dinero_libre()
+    {
+        _groceries.AccountId = _personal.Id;
+        var spent = Entry(_groceries, _personal, EntryDirection.Out, EntryStatus.Paid, 0m, new DateOnly(2026, 10, 3));
+        spent.ActualAmount = 120m;
+        spent.ValueDate = new DateOnly(2026, 10, 3);
+
+        var outlook = Build(new DateOnly(2026, 10, 5), entries: new[] { spent });
+        var personal = outlook.Accounts.Single(account => account.AccountId == _personal.Id);
+
+        Assert.Equal(180m, personal.PendingExpense);
+        Assert.Equal(18.42m - 120m - 180m, personal.ProjectedEndBalance);
+        Assert.Equal(180m, outlook.VariableExpenseReserve);
+        Assert.Equal(0m, outlook.Unassigned.VariableExpenseReserve);
+        Assert.Equal(personal.ProjectedEndBalance + 14.26m, outlook.FreeMoney);
+        Assert.True(Assert.Single(outlook.PendingItems).IsVariableReserve);
+        Assert.Equal(0m, outlook.Deviations.Single(item => item.ConceptId == _groceries.Id).Pending);
+    }
+
+    [Fact]
+    public void Reserva_de_mes_anterior_se_arrastra_al_mes_seleccionado()
+    {
+        _groceries.AccountId = _personal.Id;
+
+        var outlook = Build(
+            new DateOnly(2026, 10, 5),
+            year: 2026,
+            month: 11);
+        var personal = outlook.Accounts.Single(account => account.AccountId == _personal.Id);
+
+        Assert.Equal(18.42m - 300m, personal.BaseBalance);
+        Assert.Equal(300m, personal.PendingExpense);
+        Assert.Equal(18.42m - 600m, personal.ProjectedEndBalance);
+        Assert.Equal(300m, outlook.VariableExpenseReserve);
+        Assert.Single(outlook.PendingItems);
+    }
+
+    [Fact]
+    public void Puede_excluir_la_reserva_variable_de_la_prevision()
+    {
+        _groceries.AccountId = _personal.Id;
+
+        var outlook = Build(
+            new DateOnly(2026, 10, 5),
+            includeVariableReserve: false);
+
+        Assert.Equal(18.42m, outlook.Accounts.Single(account => account.AccountId == _personal.Id).ProjectedEndBalance);
+        Assert.Equal(0m, outlook.VariableExpenseReserve);
+        Assert.Empty(outlook.PendingItems);
+    }
+
+    [Fact]
+    public void Usa_el_presupuesto_de_cada_mes_para_el_arrastre()
+    {
+        _groceries.AccountId = _personal.Id;
+        var budgets = new[]
+        {
+            new MonthlyBudget { ConceptId = _groceries.Id, Year = 2026, Month = 10, LimitAmount = 500m },
+            new MonthlyBudget { ConceptId = _groceries.Id, Year = 2026, Month = 11, LimitAmount = 700m }
+        };
+
+        var outlook = Build(
+            new DateOnly(2026, 10, 5),
+            year: 2026,
+            month: 11,
+            budgets: budgets);
+        var personal = outlook.Accounts.Single(account => account.AccountId == _personal.Id);
+
+        Assert.Equal(18.42m - 500m, personal.BaseBalance);
+        Assert.Equal(700m, personal.PendingExpense);
+        Assert.Equal(700m, outlook.VariableExpenseReserve);
+    }
+
+    [Fact]
+    public void Mes_pasado_no_genera_reservas_variables()
+    {
+        _groceries.AccountId = _personal.Id;
+
+        var outlook = Build(new DateOnly(2026, 12, 15));
+
+        Assert.True(outlook.IsPast);
+        Assert.Equal(0m, outlook.VariableExpenseReserve);
+        Assert.Empty(outlook.PendingItems);
+    }
+
+    [Fact]
     public void Detecta_si_el_saldo_guardado_en_el_cuadre_coincide()
     {
         var outlook = Build(
@@ -134,20 +220,25 @@ public sealed class MonthOutlookCalculatorTests
         DateOnly today,
         IEnumerable<RecurringRule>? rules = null,
         IEnumerable<LedgerEntry>? entries = null,
-        IReadOnlyDictionary<Guid, decimal>? reconciled = null)
+        IReadOnlyDictionary<Guid, decimal>? reconciled = null,
+        int year = 2026,
+        int month = 10,
+        bool includeVariableReserve = true,
+        IEnumerable<MonthlyBudget>? budgets = null)
     {
         var entryList = (entries ?? Array.Empty<LedgerEntry>()).ToList();
         return MonthOutlookCalculator.Build(new MonthOutlookInput(
-            2026,
-            10,
+            year,
+            month,
             today,
             new[] { _personal, _joint },
             entryList.Where(entry => entry.Status == EntryStatus.Paid).ToList(),
             entryList,
             (rules ?? Array.Empty<RecurringRule>()).ToList(),
             new[] { _salary, _rent, _groceries },
-            Array.Empty<MonthlyBudget>(),
-            reconciled ?? new Dictionary<Guid, decimal>()));
+            (budgets ?? Array.Empty<MonthlyBudget>()).ToList(),
+            reconciled ?? new Dictionary<Guid, decimal>()),
+            includeVariableReserve);
     }
 
     private static RecurringRule Rule(Concept concept, Account account, EntryDirection direction, decimal amount, int day) => new()

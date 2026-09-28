@@ -7,6 +7,7 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<DashboardProjectionResult> GetFutureProjectionAsync(
             int? year = null,
             int? month = null,
-            CancellationToken ct = default);
+            CancellationToken ct = default,
+            bool includeVariableReserve = true);
     }
 }

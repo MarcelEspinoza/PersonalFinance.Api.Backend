@@ -63,6 +63,11 @@ namespace PersonalFinance.Api.Data.Configuration
                     .HasForeignKey(x => x.GroupId)
                     .OnDelete(DeleteBehavior.Restrict);
 
+                e.HasOne<Account>()
+                    .WithMany()
+                    .HasForeignKey(x => x.AccountId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
                 e.HasIndex(x => new { x.UserId, x.GroupId, x.Name }).IsUnique();
                 e.HasIndex(x => x.UserId);
             });

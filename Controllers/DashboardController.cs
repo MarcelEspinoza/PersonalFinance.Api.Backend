@@ -31,9 +31,11 @@ public class DashboardController : ControllerBase
     public async Task<IActionResult> GetProjection(
         [FromQuery] int? year,
         [FromQuery] int? month,
+        [FromQuery] bool? includeVariableReserve,
         CancellationToken ct)
     {
-        return Ok(await _dashboardService.GetFutureProjectionAsync(year, month, ct));
+        return Ok(await _dashboardService.GetFutureProjectionAsync(
+            year, month, ct, includeVariableReserve ?? true));
     }
 
 }

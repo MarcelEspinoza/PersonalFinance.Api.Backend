@@ -18,6 +18,8 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public ConceptKind Kind { get; set; }
 
+        public Guid? AccountId { get; set; }
+
         /// <summary>Fixed: importe estable mes a mes. Variable: sujeto a presupuesto.</summary>
         public ConceptNature Nature { get; set; } = ConceptNature.Fixed;
 

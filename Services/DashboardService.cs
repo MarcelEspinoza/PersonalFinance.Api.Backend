@@ -49,7 +49,8 @@ namespace PersonalFinance.Api.Services
         public async Task<DashboardProjectionResult> GetFutureProjectionAsync(
             int? requestedYear = null,
             int? requestedMonth = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool includeVariableReserve = true)
         {
             var userId = CurrentUserId();
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -93,12 +94,13 @@ namespace PersonalFinance.Api.Services
                 .AsNoTracking()
                 .Where(concept => concept.UserId == userId && concept.IsActive)
                 .ToListAsync(ct);
+            var budgetStartMonth = calendarMonth < currentMonth ? calendarMonth : currentMonth;
             var monthlyBudgets = await _db.MonthlyBudgets
                 .AsNoTracking()
                 .Where(budget =>
                     budget.UserId == userId &&
-                    (budget.Year > currentMonth.Year ||
-                     (budget.Year == currentMonth.Year && budget.Month >= currentMonth.Month)) &&
+                    (budget.Year > budgetStartMonth.Year ||
+                     (budget.Year == budgetStartMonth.Year && budget.Month >= budgetStartMonth.Month)) &&
                     (budget.Year < lastProjectedMonth.Year ||
                      (budget.Year == lastProjectedMonth.Year && budget.Month <= lastProjectedMonth.Month)))
                 .ToListAsync(ct);
@@ -294,10 +296,6 @@ namespace PersonalFinance.Api.Services
                 .ToDictionary(
                     group => group.Key,
                     group => group.OrderByDescending(item => item.CreatedAt).First().ClosingBalance);
-            var anchorBudgets = monthlyBudgets
-                .Where(budget => budget.Year == currentMonth.Year && budget.Month == currentMonth.Month)
-                .ToList();
-
             var outlook = MonthOutlookCalculator.Build(new MonthOutlookInput(
                 currentMonth.Year,
                 currentMonth.Month,
@@ -307,8 +305,8 @@ namespace PersonalFinance.Api.Services
                 ledgerEntries.Where(entry => entry.DueDate <= anchorEnd).ToList(),
                 recurringRules,
                 concepts,
-                anchorBudgets,
-                reconciledBalances));
+                monthlyBudgets,
+                reconciledBalances), includeVariableReserve);
 
             var period = await _db.MonthlyPeriods
                 .AsNoTracking()

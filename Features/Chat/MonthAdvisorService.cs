@@ -239,7 +239,7 @@ namespace PersonalFinance.Api.Features.Chat
                 }),
                 uncoveredShortfall = outlook.UncoveredShortfall,
                 freeMoneyAtMonthEnd = outlook.FreeMoney,
-                variableExpenseReserve = outlook.Unassigned.VariableExpenseReserve,
+                variableExpenseReserve = outlook.VariableExpenseReserve,
                 overdue = outlook.OverdueItems.Select(item => new
                 {
                     date = item.DueDate.ToString("yyyy-MM-dd"),

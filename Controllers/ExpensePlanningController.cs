@@ -85,7 +85,9 @@ namespace PersonalFinance.Api.Controllers
                             MonthlyAmount = rule?.ForecastAmount,
                             MonthlyBudget = concept.DefaultMonthlyBudget,
                             DayOfMonth = rule?.DayOfMonth,
-                            AccountId = rule?.AccountId
+                            AccountId = concept.Nature == ConceptNature.Variable
+                                ? concept.AccountId
+                                : rule?.AccountId
                         };
                     }).ToList()
                 }).Where(group => group.Items.Count > 0).ToList(),
@@ -259,6 +261,7 @@ namespace PersonalFinance.Api.Controllers
                     return BadRequest("Selecciona la cuenta del movimiento fijo.");
 
                 concept.DefaultMonthlyBudget = null;
+                concept.AccountId = null;
                 var rule = rules.FirstOrDefault() ?? new RecurringRule
                 {
                     UserId = userId.Value,
@@ -318,6 +321,7 @@ namespace PersonalFinance.Api.Controllers
                     return BadRequest("El límite mensual no puede ser negativo.");
 
                 concept.DefaultMonthlyBudget = dto.MonthlyBudget;
+                concept.AccountId = dto.AccountId;
                 var ruleIds = rules.Select(rule => rule.Id).ToHashSet();
                 foreach (var rule in rules) rule.IsActive = false;
 

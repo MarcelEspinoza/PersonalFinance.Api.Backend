@@ -938,6 +938,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<Guid?>("AccountId")
+                        .HasColumnType("char(36)");
+
                     b.Property<decimal?>("DefaultMonthlyBudget")
                         .HasColumnType("decimal(18,2)");
 
@@ -967,6 +970,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("GroupId");
+
+                    b.HasIndex("AccountId");
 
                     b.HasIndex("UserId");
 
@@ -1856,6 +1861,11 @@ namespace PersonalFinance.Api.Migrations
 
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.Concept", b =>
                 {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("PersonalFinance.Domain.Ledger.Entities.ConceptGroup", "Group")
                         .WithMany("Concepts")
                         .HasForeignKey("GroupId")

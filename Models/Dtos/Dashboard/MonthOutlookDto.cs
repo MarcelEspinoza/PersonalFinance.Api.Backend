@@ -30,6 +30,9 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// <summary>Lo que quedará libre tras cubrir todo lo pendiente y las reservas variables.</summary>
         public decimal FreeMoney { get; set; }
 
+        /// <summary>Reserva variable total, incluida la asignada a cuentas.</summary>
+        public decimal VariableExpenseReserve { get; set; }
+
         public List<ConceptDeviationDto> Deviations { get; set; } = new();
     }
 
@@ -83,6 +86,7 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         public decimal Amount { get; set; }
         public bool IsOverdue { get; set; }
         public bool IsTransfer { get; set; }
+        public bool IsVariableReserve { get; set; }
     }
 
     public class TransferSuggestionDto

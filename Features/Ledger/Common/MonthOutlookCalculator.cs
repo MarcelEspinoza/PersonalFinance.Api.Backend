@@ -36,12 +36,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             EntryDirection Direction,
             decimal Amount,
             bool IsTransfer,
-            bool FromRule = false)
+            bool FromRule = false,
+            bool IsVariableReserve = false)
         {
             public decimal Signed => Direction == EntryDirection.In ? Amount : -Amount;
         }
 
-        public static MonthOutlookDto Build(MonthOutlookInput input)
+        public static MonthOutlookDto Build(MonthOutlookInput input, bool includeVariableReserve = true)
         {
             var monthStart = new DateOnly(input.Year, input.Month, 1);
             var monthEnd = monthStart.AddMonths(1).AddDays(-1);
@@ -66,6 +67,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         : isPast ? Max(monthStart, unassignedFloor) : unassignedFloor;
                     return item.DueDate >= floor;
                 })
+                .OrderBy(item => item.DueDate)
+                .ThenBy(item => item.Direction == EntryDirection.In ? 0 : 1)
+                .ToList();
+
+            var variableReserves = isPast || !includeVariableReserve
+                ? new List<(PendingItem Item, decimal Amount)>()
+                : CollectVariableReserveItems(input, windowStart, monthEnd, pending);
+            pending.AddRange(variableReserves.Select(reserve => reserve.Item));
+            var selectedMonthReserve = variableReserves
+                .Where(reserve => reserve.Item.DueDate >= monthStart && reserve.Item.DueDate <= monthEnd)
+                .Sum(reserve => reserve.Amount);
+            pending = pending
                 .OrderBy(item => item.DueDate)
                 .ThenBy(item => item.Direction == EntryDirection.In ? 0 : 1)
                 .ToList();
@@ -146,8 +159,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (!isPast)
             {
                 var (expenseReserve, incomeExpected) = VariableRemainders(input, monthStart, monthEnd, pending);
-                outlook.Unassigned.VariableExpenseReserve = expenseReserve;
+                outlook.Unassigned.VariableExpenseReserve = includeVariableReserve ? expenseReserve : 0m;
                 outlook.Unassigned.VariableIncomeExpected = incomeExpected;
+                outlook.VariableExpenseReserve = selectedMonthReserve
+                    + outlook.Unassigned.VariableExpenseReserve;
             }
 
             outlook.PendingItems = monthItems.Select(item => ToDto(item, accountById, input.Today)).ToList();
@@ -168,6 +183,76 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             outlook.Deviations = BuildDeviations(input, conceptById, monthStart, monthEnd, monthItems);
 
             return outlook;
+        }
+
+        private static List<(PendingItem Item, decimal Amount)> CollectVariableReserveItems(
+            MonthOutlookInput input,
+            DateOnly windowStart,
+            DateOnly monthEnd,
+            IReadOnlyList<PendingItem> pending)
+        {
+            var reserves = new List<(PendingItem Item, decimal Amount)>();
+            var calendarStart = new DateOnly(input.Today.Year, input.Today.Month, 1);
+            var start = Max(windowStart, calendarStart);
+
+            for (var cursor = start; cursor <= monthEnd; cursor = cursor.AddMonths(1))
+            {
+                var monthStart = new DateOnly(cursor.Year, cursor.Month, 1);
+                var currentMonthEnd = monthStart.AddMonths(1).AddDays(-1);
+                var dueDate = monthStart == calendarStart ? input.Today : monthStart;
+
+                foreach (var concept in input.Concepts.Where(concept =>
+                             concept.Kind == ConceptKind.Expense &&
+                             concept.Nature == ConceptNature.Variable &&
+                             concept.AccountId.HasValue))
+                {
+                    var limit = input.Budgets.FirstOrDefault(budget =>
+                            budget.ConceptId == concept.Id &&
+                            budget.Year == monthStart.Year &&
+                            budget.Month == monthStart.Month)?.LimitAmount
+                        ?? concept.DefaultMonthlyBudget
+                        ?? 0m;
+                    if (limit <= 0m) continue;
+
+                    var used = input.Entries
+                        .Where(entry =>
+                            entry.ConceptId == concept.Id &&
+                            entry.Status == EntryStatus.Paid &&
+                            !entry.IsTransfer &&
+                            entry.DueDate >= monthStart &&
+                            entry.DueDate <= currentMonthEnd)
+                        .Sum(entry => entry.EffectiveAmount)
+                        + pending
+                            .Where(item =>
+                                item.ConceptId == concept.Id &&
+                                !item.IsTransfer &&
+                                !item.IsVariableReserve &&
+                                item.DueDate >= monthStart &&
+                                item.DueDate <= currentMonthEnd)
+                            .Sum(item => item.Amount);
+                    var remainder = Math.Max(0m, limit - used);
+                    if (remainder <= 0m) continue;
+
+                    var accountId = concept.AccountId!.Value;
+                    var account = input.Accounts.FirstOrDefault(item => item.Id == accountId);
+                    if (account is null) continue;
+                    var accountDueDate = Max(dueDate, account.OpeningDate);
+                    if (accountDueDate > currentMonthEnd) continue;
+
+                    reserves.Add((new PendingItem(
+                        accountDueDate,
+                        $"Reserva estimada: {concept.Name}",
+                        concept.Id,
+                        concept.Name,
+                        accountId,
+                        EntryDirection.Out,
+                        remainder,
+                        false,
+                        IsVariableReserve: true), remainder));
+                }
+            }
+
+            return reserves;
         }
 
         private static List<PendingItem> CollectPendingItems(
@@ -240,7 +325,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             decimal expenseReserve = 0m;
             decimal incomeExpected = 0m;
 
-            foreach (var concept in input.Concepts.Where(concept => concept.Nature == ConceptNature.Variable))
+            foreach (var concept in input.Concepts.Where(concept =>
+                         concept.Nature == ConceptNature.Variable &&
+                         (concept.Kind == ConceptKind.Income || concept.AccountId is null)))
             {
                 var limit = input.Budgets.FirstOrDefault(budget =>
                         budget.ConceptId == concept.Id &&
@@ -335,7 +422,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var entries = monthEntries.Where(entry => entry.ConceptId == concept.Id).ToList();
                 var actual = entries.Where(entry => entry.Status == EntryStatus.Paid).Sum(entry => entry.EffectiveAmount);
                 var pending = monthItems
-                    .Where(item => item.ConceptId == concept.Id && !item.IsTransfer)
+                    .Where(item => item.ConceptId == concept.Id && !item.IsTransfer && !item.IsVariableReserve)
                     .Sum(item => item.Amount);
 
                 decimal planned;
@@ -390,7 +477,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Direction = item.Direction,
             Amount = item.Amount,
             IsOverdue = item.DueDate < today,
-            IsTransfer = item.IsTransfer
+            IsTransfer = item.IsTransfer,
+            IsVariableReserve = item.IsVariableReserve
         };
 
         private static string ConceptName(IReadOnlyDictionary<Guid, Concept> conceptById, Guid conceptId) =>
