@@ -1,4 +1,7 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -422,13 +425,78 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         Assert.NotNull(firstBatch);
         Assert.Equal(2, firstBatch!.AcceptedRows);
         await CreateController(UserId).Apply(firstBatch.Id, CancellationToken.None);
+        Assert.Equal(2, await Db.ImportRows.CountAsync(row =>
+            row.BatchId == firstBatch.Id &&
+            row.Status == ImportRowStatus.Accepted &&
+            row.LedgerEntryId != null));
+        var savedTargetRow = await Db.ImportRows.SingleAsync(row =>
+            row.BatchId == firstBatch.Id && row.RawDescription == "MERCADONA");
+        var parsedTarget = RevolutCsvParser.Parse(new StringReader(string.Join("\n", Header, target)))
+            .Movements.Single();
+        var savedMovementKey = string.Join(
+            "|",
+            savedTargetRow.ValueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            savedTargetRow.Amount.ToString("G29", CultureInfo.InvariantCulture),
+            savedTargetRow.Fee.ToString("G29", CultureInfo.InvariantCulture),
+            savedTargetRow.Currency?.Trim().ToUpperInvariant(),
+            savedTargetRow.NormalizedDescription);
+        var parsedMovementKey = string.Join(
+            "|",
+            DateOnly.FromDateTime(parsedTarget.StartedAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            parsedTarget.Amount.ToString("G29", CultureInfo.InvariantCulture),
+            parsedTarget.Fee.ToString("G29", CultureInfo.InvariantCulture),
+            parsedTarget.Currency.Trim().ToUpperInvariant(),
+            RevolutMovementClassifier.Normalize(parsedTarget.Description));
+        Assert.Equal(savedMovementKey, parsedMovementKey);
+        var importedRowCount = await (
+            from row in Db.ImportRows
+            join batch in Db.ImportBatches on row.BatchId equals batch.Id
+            where row.UserId == UserId &&
+                  row.Status == ImportRowStatus.Accepted &&
+                  row.LedgerEntryId != null &&
+                  batch.AccountId == accountId &&
+                  batch.Source == ImportSource.RevolutCsv
+            select row.Id)
+            .CountAsync();
+        Assert.Equal(2, importedRowCount);
+        var importedRows = await Db.ImportRows
+            .Where(row => row.BatchId == firstBatch.Id)
+            .ToListAsync();
+        Assert.Equal(1, importedRows.Count(row => string.Join(
+            "|",
+            row.ValueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            row.Amount.ToString("G29", CultureInfo.InvariantCulture),
+            row.Fee.ToString("G29", CultureInfo.InvariantCulture),
+            row.Currency?.Trim().ToUpperInvariant(),
+            row.NormalizedDescription) == parsedMovementKey));
+
+        var importedTarget = await Db.LedgerEntries.SingleAsync(entry =>
+            entry.UserId == UserId &&
+            entry.AccountId == accountId &&
+            entry.Description == "MERCADONA");
+        var oldFingerprintInput = string.Join(
+            "|",
+            accountId.ToString("N"),
+            new DateTime(2026, 1, 5, 14, 22, 0).ToString("O", CultureInfo.InvariantCulture),
+            parsedTarget.Amount.ToString(CultureInfo.InvariantCulture),
+            RevolutMovementClassifier.Normalize("MERCADONA"),
+            "3");
+        importedTarget.Fingerprint = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(oldFingerprintInput))).ToLowerInvariant();
+        await Db.SaveChangesAsync();
 
         var reexportResult = await CreateController(UserId).Create(
             accountId,
-            BuildCsv(target),
+            BuildCsv(
+                "Transferencia;Actual;04/01/2026 09:00;04/01/2026 09:00;PAGO GENERICO;100.00;0.00;EUR;COMPLETADO;100.00",
+                target,
+                target),
             CancellationToken.None);
 
-        Assert.IsType<ConflictObjectResult>(reexportResult.Result);
+        var reexport = Assert.IsType<OkObjectResult>(reexportResult.Result).Value as ImportBatchDto;
+        Assert.NotNull(reexport);
+        Assert.Equal(1, reexport!.AcceptedRows);
+        Assert.Equal(2, reexport.DuplicateRows);
         Assert.Equal(2, await Db.LedgerEntries.CountAsync(entry =>
             entry.UserId == UserId && entry.AccountId == accountId));
     }

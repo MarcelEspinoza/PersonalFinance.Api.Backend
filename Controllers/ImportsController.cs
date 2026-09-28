@@ -545,6 +545,34 @@ namespace PersonalFinance.Api.Controllers
                 .ToListAsync(ct);
             var fingerprints = existingFingerprints.ToHashSet(StringComparer.Ordinal);
             var movementOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+            var existingImportedRows = await (
+                from row in _db.ImportRows.AsNoTracking()
+                join importBatch in _db.ImportBatches.AsNoTracking()
+                    on row.BatchId equals importBatch.Id
+                where row.UserId == userId.Value &&
+                      row.Status == ImportRowStatus.Accepted &&
+                      row.LedgerEntryId != null &&
+                      importBatch.AccountId == account.Id &&
+                      importBatch.Source == ImportSource.RevolutCsv
+                select new
+                {
+                    row.ValueDate,
+                    row.Amount,
+                    row.Fee,
+                    row.Currency,
+                    row.NormalizedDescription,
+                    row.RawDescription
+                })
+                .ToListAsync(ct);
+            var existingMovementCounts = existingImportedRows
+                .GroupBy(row => CreateMovementKey(
+                    row.ValueDate,
+                    row.Amount,
+                    row.Fee,
+                    row.Currency,
+                    row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription)))
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var movementImportOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
 
             var batch = new ImportBatch
             {
@@ -574,7 +602,22 @@ namespace PersonalFinance.Api.Controllers
 
                 var fingerprint = CreateFingerprint(movementIdentity, occurrence);
                 var legacyFingerprint = CreateLegacyFingerprint(account.Id, movement);
-                if (fingerprints.Contains(legacyFingerprint) || !fingerprints.Add(fingerprint))
+                var movementKey = CreateMovementKey(
+                    DateOnly.FromDateTime(movement.StartedAt),
+                    movement.Amount,
+                    movement.Fee,
+                    movement.Currency,
+                    normalizedDescription);
+                movementImportOccurrences.TryGetValue(movementKey, out var importedOccurrence);
+                importedOccurrence++;
+                movementImportOccurrences[movementKey] = importedOccurrence;
+
+                var wasImportedWithPreviousFingerprint =
+                    existingMovementCounts.TryGetValue(movementKey, out var importedCount) &&
+                    importedOccurrence <= importedCount;
+                if (fingerprints.Contains(legacyFingerprint) ||
+                    wasImportedWithPreviousFingerprint ||
+                    !fingerprints.Add(fingerprint))
                 {
                     duplicateRows++;
                     continue;
@@ -699,6 +742,22 @@ namespace PersonalFinance.Api.Controllers
                 RevolutMovementClassifier.Normalize(movement.Description),
                 movement.RowNumber.ToString(CultureInfo.InvariantCulture));
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        }
+
+        private static string CreateMovementKey(
+            DateOnly valueDate,
+            decimal amount,
+            decimal fee,
+            string? currency,
+            string normalizedDescription)
+        {
+            return string.Join(
+                "|",
+                valueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                amount.ToString("G29", CultureInfo.InvariantCulture),
+                fee.ToString("G29", CultureInfo.InvariantCulture),
+                currency?.Trim().ToUpperInvariant() ?? string.Empty,
+                normalizedDescription);
         }
 
         private static string CreateFingerprint(string movementIdentity, int occurrence)
