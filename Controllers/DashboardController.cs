@@ -15,18 +15,12 @@ public class DashboardController : ControllerBase
 
     [HttpGet("projection")]
     [Authorize]
-    public async Task<IActionResult> GetProjection(CancellationToken ct)
+    public async Task<IActionResult> GetProjection(
+        [FromQuery] int? year,
+        [FromQuery] int? month,
+        CancellationToken ct)
     {
-        var (monthlyData, summary, alerts, accounts) =
-            await _dashboardService.GetFutureProjectionAsync(ct);
-
-        return Ok(new
-        {
-            monthlyData,
-            summary,
-            alerts,
-            accounts
-        });
+        return Ok(await _dashboardService.GetFutureProjectionAsync(year, month, ct));
     }
 
 }

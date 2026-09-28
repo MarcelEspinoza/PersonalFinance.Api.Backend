@@ -46,12 +46,10 @@ namespace PersonalFinance.Api.Services
             return userId;
         }
 
-        public async Task<(
-            List<MonthlyProjectionDto> monthlyData,
-            SummaryDto summary,
-            DashboardAlertsDto alerts,
-            List<DashboardAccountBalanceDto> accounts
-        )> GetFutureProjectionAsync(CancellationToken ct = default)
+        public async Task<DashboardProjectionResult> GetFutureProjectionAsync(
+            int? requestedYear = null,
+            int? requestedMonth = null,
+            CancellationToken ct = default)
         {
             var userId = CurrentUserId();
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -67,17 +65,28 @@ namespace PersonalFinance.Api.Services
                     accounts.Max(account => account.OpeningDate).Year,
                     accounts.Max(account => account.OpeningDate).Month,
                     1);
-            var currentMonth = latestOpeningMonth > calendarMonth ? latestOpeningMonth : calendarMonth;
+            var defaultMonth = latestOpeningMonth > calendarMonth ? latestOpeningMonth : calendarMonth;
+            var currentMonth = requestedYear is >= 2000 and <= 2100 && requestedMonth is >= 1 and <= 12
+                ? new DateOnly(requestedYear.Value, requestedMonth.Value, 1)
+                : defaultMonth;
+            var minMonth = accounts.Count == 0
+                ? defaultMonth
+                : new DateOnly(
+                    accounts.Min(account => account.OpeningDate).Year,
+                    accounts.Min(account => account.OpeningDate).Month,
+                    1);
+            var anchorEnd = currentMonth.AddMonths(1).AddDays(-1);
             var lastProjectedMonth = currentMonth.AddMonths(6);
             var lastDay = new DateOnly(
                 lastProjectedMonth.Year,
                 lastProjectedMonth.Month,
                 DateTime.DaysInMonth(lastProjectedMonth.Year, lastProjectedMonth.Month));
+            var firstLoadedDay = calendarMonth < currentMonth ? calendarMonth : currentMonth;
             var ledgerEntries = await _db.LedgerEntries
                 .AsNoTracking()
                 .Where(entry =>
                     entry.UserId == userId &&
-                    entry.DueDate >= currentMonth &&
+                    entry.DueDate >= firstLoadedDay &&
                     entry.DueDate <= lastDay)
                 .ToListAsync(ct);
             var concepts = await _db.Concepts
@@ -118,8 +127,9 @@ namespace PersonalFinance.Api.Services
             }).ToList();
             var currentBalance = accountBalances.Sum(account => account.Balance);
             var previousMonthEnd = currentMonth.AddDays(-1);
-            var monthOpeningBalance = accounts.Sum(account =>
-                AccountBalanceCalculator.ComputeBalance(account, paidEntries, previousMonthEnd));
+            var monthOpeningBalance = accounts.Sum(account => account.OpeningDate > previousMonthEnd
+                ? account.OpeningBalance
+                : AccountBalanceCalculator.ComputeBalance(account, paidEntries, previousMonthEnd));
 
             var conceptById = concepts.ToDictionary(concept => concept.Id);
             var variableExpenseConcepts = concepts
@@ -260,18 +270,73 @@ namespace PersonalFinance.Api.Services
 
             alerts.HasCriticalAlerts = alerts.Items.Any(a => a.Type != "Info");
 
+            // El resumen describe el mismo mes que el resto del Dashboard, no el del calendario.
+            var anchorTotals = DashboardLedgerCalculator
+                .BreakdownForMonth(ledgerEntries, currentMonth.Year, currentMonth.Month);
             var summary = new SummaryDto
             {
                 CurrentBalance = currentBalance,
                 MonthOpeningBalance = monthOpeningBalance,
-                CurrentMonthIncome = DashboardLedgerCalculator
-                    .BreakdownForMonth(ledgerEntries, today.Year, today.Month).ActualIncome,
-                CurrentMonthExpense = DashboardLedgerCalculator
-                    .BreakdownForMonth(ledgerEntries, today.Year, today.Month).ActualExpense
+                CurrentMonthIncome = anchorTotals.ActualIncome,
+                CurrentMonthExpense = anchorTotals.ActualExpense
             };
             summary.CurrentMonthResult = summary.CurrentMonthIncome - summary.CurrentMonthExpense;
 
-            return (projections, summary, alerts, accountBalances);
+            var reconciliations = await _db.Reconciliations
+                .AsNoTracking()
+                .Where(item =>
+                    item.UserId == userId &&
+                    item.Year == currentMonth.Year &&
+                    item.Month == currentMonth.Month)
+                .ToListAsync(ct);
+            var reconciledBalances = reconciliations
+                .GroupBy(item => item.BankId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderByDescending(item => item.CreatedAt).First().ClosingBalance);
+            var anchorBudgets = monthlyBudgets
+                .Where(budget => budget.Year == currentMonth.Year && budget.Month == currentMonth.Month)
+                .ToList();
+
+            var outlook = MonthOutlookCalculator.Build(new MonthOutlookInput(
+                currentMonth.Year,
+                currentMonth.Month,
+                today,
+                accounts,
+                paidEntries,
+                ledgerEntries.Where(entry => entry.DueDate <= anchorEnd).ToList(),
+                recurringRules,
+                concepts,
+                anchorBudgets,
+                reconciledBalances));
+
+            var period = await _db.MonthlyPeriods
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item =>
+                    item.UserId == userId &&
+                    item.Year == currentMonth.Year &&
+                    item.Month == currentMonth.Month, ct);
+
+            return new DashboardProjectionResult
+            {
+                MonthlyData = projections,
+                Summary = summary,
+                Alerts = alerts,
+                Accounts = accountBalances,
+                Outlook = outlook,
+                Period = new PeriodStateDto
+                {
+                    Status = period is null
+                        ? "notOpened"
+                        : period.Status == PeriodStatus.Closed ? "closed" : "open",
+                    ClosedAt = period?.ClosedAt,
+                    ClosingBalance = period?.ClosingBalance
+                },
+                DefaultYear = defaultMonth.Year,
+                DefaultMonth = defaultMonth.Month,
+                MinYear = minMonth.Year,
+                MinMonth = minMonth.Month
+            };
         }
     }
 }
