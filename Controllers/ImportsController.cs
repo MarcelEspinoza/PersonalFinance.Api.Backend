@@ -50,6 +50,7 @@ namespace PersonalFinance.Api.Controllers
             var batch = await _db.ImportBatches
                 .AsNoTracking()
                 .Include(b => b.Rows)
+                    .ThenInclude(row => row.Allocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
 
@@ -107,6 +108,7 @@ namespace PersonalFinance.Api.Controllers
 
             var row = await _db.ImportRows
                 .Include(r => r.Batch)
+                .Include(r => r.Allocations)
                 .FirstOrDefaultAsync(
                     r => r.Id == rowId && r.BatchId == batchId && r.UserId == userId.Value, ct);
             if (row is null) return NotFound();
@@ -123,6 +125,8 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = dto.ConceptId;
             row.SuggestionSource = dto.ConceptId is null ? null : "manual";
             row.SuggestionConfidence = dto.ConceptId is null ? null : 1m;
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
             if (dto.SaveForFuture && dto.ConceptId is Guid conceptId && row.Batch?.AccountId is Guid accountId)
             {
                 var pattern = row.NormalizedDescription?.Trim();
@@ -158,6 +162,76 @@ namespace PersonalFinance.Api.Controllers
             return Ok(MapRow(row));
         }
 
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/split")]
+        public async Task<ActionResult<ImportRowDto>> SplitRow(
+            Guid batchId,
+            Guid rowId,
+            [FromBody] SplitImportRowDto dto,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var row = await _db.ImportRows
+                .Include(item => item.Batch)
+                .Include(item => item.Allocations)
+                .FirstOrDefaultAsync(
+                    item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
+                    ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+                return Conflict("Solo se pueden dividir filas pendientes de un lote sin aplicar.");
+            if (row.Amount == 0m)
+                return BadRequest("No se puede dividir un movimiento de importe cero.");
+            if (dto.Allocations is null || dto.Allocations.Count is < 2 or > 3)
+                return BadRequest("Divide el movimiento en 2 o 3 partes.");
+            if (dto.Allocations.Any(item => item.Amount <= 0m || decimal.Round(item.Amount, 2) != item.Amount))
+                return BadRequest("Cada parte debe tener un importe mayor que cero.");
+            if (dto.Allocations.Select(item => item.ConceptId).Distinct().Count() != dto.Allocations.Count)
+                return BadRequest("Selecciona un concepto distinto para cada parte.");
+            if (dto.Allocations.Sum(item => item.Amount) != Math.Abs(row.Amount))
+                return BadRequest("La suma de las partes debe coincidir exactamente con el importe del movimiento.");
+
+            var conceptIds = dto.Allocations.Select(item => item.ConceptId).ToHashSet();
+            var expectedKind = row.Amount > 0m ? ConceptKind.Income : ConceptKind.Expense;
+            var concepts = await _db.Concepts
+                .Where(item => item.UserId == userId.Value && item.IsActive && conceptIds.Contains(item.Id))
+                .ToListAsync(ct);
+            if (concepts.Count != conceptIds.Count || concepts.Any(item => item.Kind != expectedKind))
+                return BadRequest("Cada parte debe usar un concepto activo del mismo tipo que el movimiento.");
+
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
+            for (var index = 0; index < dto.Allocations.Count; index++)
+            {
+                var allocation = dto.Allocations[index];
+                _db.ImportRowAllocations.Add(new ImportRowAllocation
+                {
+                    UserId = userId.Value,
+                    ImportRowId = row.Id,
+                    ConceptId = allocation.ConceptId,
+                    Amount = allocation.Amount,
+                    SortOrder = index
+                });
+            }
+            row.ConfirmedConceptId = null;
+            row.SuggestionSource = "split";
+            row.SuggestionConfidence = 1m;
+
+            await _db.SaveChangesAsync(ct);
+            var response = MapRow(row);
+            response.Allocations = await _db.ImportRowAllocations
+                .AsNoTracking()
+                .Where(item => item.ImportRowId == row.Id)
+                .Select(item => new ImportRowAllocationDto
+                {
+                    ConceptId = item.ConceptId,
+                    Amount = item.Amount
+                })
+                .ToListAsync(ct);
+            return Ok(response);
+        }
+
         [HttpPost("{batchId:guid}/rows/{rowId:guid}/concept")]
         public async Task<ActionResult<ImportRowDto>> CreateConceptForRow(
             Guid batchId,
@@ -170,6 +244,7 @@ namespace PersonalFinance.Api.Controllers
 
             var row = await _db.ImportRows
                 .Include(item => item.Batch)
+                .Include(item => item.Allocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
                     ct);
@@ -218,6 +293,8 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = concept.Id;
             row.SuggestionSource = "manual";
             row.SuggestionConfidence = 1m;
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
 
             if (dto.SaveForFuture && row.Batch?.AccountId is Guid accountId)
             {
@@ -290,7 +367,8 @@ namespace PersonalFinance.Api.Controllers
                     row.BatchId == batchId &&
                     row.UserId == userId.Value &&
                     row.Status == ImportRowStatus.Pending &&
-                    row.NormalizedDescription == normalizedDescription)
+                    row.NormalizedDescription == normalizedDescription &&
+                    !row.Allocations.Any())
                 .ToListAsync(ct);
 
             foreach (var row in rows)
@@ -496,6 +574,10 @@ namespace PersonalFinance.Api.Controllers
                 row.ConfirmedConceptId = change.ConceptId;
                 row.SuggestionSource = "chat";
                 row.SuggestionConfidence = change.ConceptId is null ? null : 1m;
+                var allocations = await _db.ImportRowAllocations
+                    .Where(item => item.ImportRowId == row.Id)
+                    .ToListAsync(ct);
+                _db.ImportRowAllocations.RemoveRange(allocations);
                 applied++;
             }
 
@@ -838,7 +920,15 @@ namespace PersonalFinance.Api.Controllers
             Status = row.Status.ToString(),
             SuggestedConceptId = row.SuggestedConceptId,
             ConfirmedConceptId = row.ConfirmedConceptId,
-            SuggestionSource = row.SuggestionSource
+            SuggestionSource = row.SuggestionSource,
+            Allocations = row.Allocations
+                .OrderBy(item => item.SortOrder)
+                .Select(item => new ImportRowAllocationDto
+                {
+                    ConceptId = item.ConceptId,
+                    Amount = item.Amount
+                })
+                .ToList()
         };
 
         private static string CreateMovementIdentity(

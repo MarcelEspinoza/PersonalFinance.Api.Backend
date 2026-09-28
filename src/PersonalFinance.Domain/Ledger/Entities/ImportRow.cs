@@ -54,5 +54,7 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         /// <summary>Asiento creado al aplicar el lote.</summary>
         public Guid? LedgerEntryId { get; set; }
+
+        public ICollection<ImportRowAllocation> Allocations { get; set; } = new List<ImportRowAllocation>();
     }
 }

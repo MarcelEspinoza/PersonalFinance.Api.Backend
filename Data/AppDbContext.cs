@@ -45,6 +45,7 @@ namespace PersonalFinance.Api.Data
         public DbSet<SavingsGoal> SavingsGoals => Set<SavingsGoal>();
         public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
         public DbSet<ImportRow> ImportRows => Set<ImportRow>();
+        public DbSet<ImportRowAllocation> ImportRowAllocations => Set<ImportRowAllocation>();
         public DbSet<ConceptMapping> ConceptMappings => Set<ConceptMapping>();
 
 

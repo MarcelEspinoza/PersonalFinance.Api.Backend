@@ -58,6 +58,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         {
             var batch = await _db.ImportBatches
                 .Include(item => item.Rows)
+                    .ThenInclude(row => row.Allocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == batchId && item.UserId == userId,
                     ct);
@@ -70,6 +71,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             var unassigned = batch.Rows.Count(row =>
                 row.Status == ImportRowStatus.Pending &&
+                row.Allocations.Count == 0 &&
                 row.ConfirmedConceptId is null &&
                 row.SuggestedConceptId is null);
             if (unassigned > 0)
@@ -98,6 +100,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 batch.Rows.Where(row =>
                     row.Status == ImportRowStatus.Pending &&
                     row.ClassifiedStatus == EntryStatus.Paid &&
+                    row.Allocations.Count == 0 &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 ct);
             if (matchResult.AmbiguousRowNumber is int ambiguousRowNumber)
@@ -166,8 +169,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var applied = 0;
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
-                var conceptId = row.ConfirmedConceptId ?? row.SuggestedConceptId;
-                if (conceptId is null || !concepts.TryGetValue(conceptId.Value, out var concept))
+                var isSplit = row.Allocations.Count > 0;
+                var conceptId = isSplit ? null : row.ConfirmedConceptId ?? row.SuggestedConceptId;
+                if (!isSplit && (conceptId is null || !concepts.TryGetValue(conceptId.Value, out _)))
                     continue;
                 if (!existingFingerprints.Add(row.Fingerprint))
                 {
@@ -183,6 +187,82 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 var isPaid = row.ClassifiedStatus == EntryStatus.Paid;
                 var amount = Math.Abs(row.Amount);
+                if (isSplit)
+                {
+                    if (row.Allocations.Count is < 2 or > 3 ||
+                        row.Allocations.Select(allocation => allocation.ConceptId).Distinct().Count() != row.Allocations.Count ||
+                        row.Allocations.Sum(allocation => allocation.Amount) != amount ||
+                        row.Allocations.Any(allocation =>
+                            allocation.Amount <= 0m ||
+                            decimal.Round(allocation.Amount, 2) != allocation.Amount ||
+                            !concepts.TryGetValue(allocation.ConceptId, out var allocationConcept) ||
+                            !allocationConcept.IsActive ||
+                            allocationConcept.Kind != (row.Amount > 0m ? ConceptKind.Income : ConceptKind.Expense)))
+                    {
+                        return new(
+                            false,
+                            0,
+                            batchId,
+                            $"La división de la fila {row.RowNumber} ya no es válida. Vuelve a revisarla.",
+                            Conflict: true);
+                    }
+
+                    var period = periods[(row.ValueDate.Year, row.ValueDate.Month)];
+                    var direction = row.Amount > 0m ? EntryDirection.In : EntryDirection.Out;
+                    var firstEntry = true;
+                    foreach (var allocation in row.Allocations.OrderBy(item => item.SortOrder))
+                    {
+                        var allocationEntry = new LedgerEntry
+                        {
+                            UserId = userId,
+                            PeriodId = period.Id,
+                            ConceptId = allocation.ConceptId,
+                            AccountId = accountId,
+                            Direction = direction,
+                            Status = row.ClassifiedStatus,
+                            DueDate = row.ValueDate,
+                            ValueDate = isPaid ? row.ValueDate : null,
+                            ForecastAmount = allocation.Amount,
+                            ActualAmount = isPaid ? allocation.Amount : null,
+                            Description = row.RawDescription,
+                            ImportRowId = row.Id,
+                            Fingerprint = firstEntry ? row.Fingerprint : null
+                        };
+                        _db.LedgerEntries.Add(allocationEntry);
+                        if (firstEntry) row.LedgerEntryId = allocationEntry.Id;
+                        firstEntry = false;
+                    }
+
+                    if (row.Fee != 0m && feeConcept is not null)
+                    {
+                        var feeFingerprint = CreateFeeFingerprint(row.Fingerprint);
+                        if (existingFingerprints.Add(feeFingerprint))
+                        {
+                            _db.LedgerEntries.Add(new LedgerEntry
+                            {
+                                UserId = userId,
+                                PeriodId = period.Id,
+                                ConceptId = feeConcept.Id,
+                                AccountId = accountId,
+                                Direction = EntryDirection.Out,
+                                Status = row.ClassifiedStatus,
+                                DueDate = row.ValueDate,
+                                ValueDate = isPaid ? row.ValueDate : null,
+                                ForecastAmount = row.Fee,
+                                ActualAmount = isPaid ? row.Fee : null,
+                                Description = $"Comisión: {row.RawDescription}",
+                                ImportRowId = row.Id,
+                                Fingerprint = feeFingerprint
+                            });
+                        }
+                    }
+
+                    row.Status = ImportRowStatus.Accepted;
+                    applied++;
+                    continue;
+                }
+
+                var concept = concepts[conceptId!.Value];
                 if (isPaid && matchByRowId.TryGetValue(row.Id, out var match))
                 {
                     var forecastEntry = match.Entry ?? await _db.LedgerEntries

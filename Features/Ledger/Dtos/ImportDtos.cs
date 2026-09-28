@@ -20,6 +20,18 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? SuggestedConceptId { get; set; }
         public Guid? ConfirmedConceptId { get; set; }
         public string? SuggestionSource { get; set; }
+        public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
+    }
+
+    public sealed class ImportRowAllocationDto
+    {
+        public Guid ConceptId { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+    public sealed class SplitImportRowDto
+    {
+        public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
     }
 
     public sealed class ImportReviewDto

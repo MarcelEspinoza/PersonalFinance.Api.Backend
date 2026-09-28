@@ -26,6 +26,7 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<SavingsGoal> SavingsGoals { get; }
         DbSet<ImportBatch> ImportBatches { get; }
         DbSet<ImportRow> ImportRows { get; }
+        DbSet<ImportRowAllocation> ImportRowAllocations { get; }
         DbSet<ConceptMapping> ConceptMappings { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

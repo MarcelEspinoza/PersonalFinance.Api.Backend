@@ -561,6 +561,91 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Dividir_una_fila_crea_varios_asientos_cuyo_total_y_huella_conservan_el_movimiento()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        var createResult = await CreateController(UserId).Create(
+            accountId,
+            BuildCsv("Pago con tarjeta;Actual;05/01/2026 14:22;05/01/2026 14:22;COMPRA COMPARTIDA;-12.50;0.00;EUR;COMPLETADO;100.00"),
+            CancellationToken.None);
+        var batch = Assert.IsType<ImportBatchDto>(Assert.IsType<OkObjectResult>(createResult.Result).Value);
+        var row = await Db.ImportRows.SingleAsync(item => item.BatchId == batch.Id);
+        var concepts = await Db.Concepts
+            .Where(item => item.UserId == UserId && item.IsActive && item.Kind == ConceptKind.Expense)
+            .OrderBy(item => item.Name)
+            .Take(2)
+            .ToListAsync();
+        Assert.Equal(2, concepts.Count);
+
+        var controller = CreateController(UserId);
+        var splitResult = await controller.SplitRow(
+            batch.Id,
+            row.Id,
+            new SplitImportRowDto
+            {
+                Allocations =
+                [
+                    new ImportRowAllocationDto { ConceptId = concepts[0].Id, Amount = 7.25m },
+                    new ImportRowAllocationDto { ConceptId = concepts[1].Id, Amount = 5.25m }
+                ]
+            },
+            CancellationToken.None);
+
+        var splitRow = Assert.IsType<ImportRowDto>(Assert.IsType<OkObjectResult>(splitResult.Result).Value);
+        Assert.Equal(2, splitRow.Allocations.Count);
+        Assert.Equal(12.50m, splitRow.Allocations.Sum(item => item.Amount));
+
+        var applyResult = await controller.Apply(batch.Id, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(applyResult.Result);
+
+        var entries = await Db.LedgerEntries
+            .AsNoTracking()
+            .Where(item => item.ImportRowId == row.Id)
+            .ToListAsync();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(12.50m, entries.Sum(item => item.ActualAmount ?? 0m));
+        Assert.Equal(concepts.Select(item => item.Id).OrderBy(item => item),
+            entries.Select(item => item.ConceptId).OrderBy(item => item));
+        Assert.Single(entries, item => item.Fingerprint == row.Fingerprint);
+        Assert.All(entries, item => Assert.Equal(EntryDirection.Out, item.Direction));
+        Assert.Equal(ImportRowStatus.Accepted, (await Db.ImportRows.SingleAsync(item => item.Id == row.Id)).Status);
+    }
+
+    [Fact]
+    public async Task No_permite_dividir_si_las_partes_no_suman_el_total_bancario()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        var createResult = await CreateController(UserId).Create(
+            accountId,
+            BuildCsv("Pago con tarjeta;Actual;05/01/2026 14:22;05/01/2026 14:22;COMPRA COMPARTIDA;-12.50;0.00;EUR;COMPLETADO;100.00"),
+            CancellationToken.None);
+        var batch = Assert.IsType<ImportBatchDto>(Assert.IsType<OkObjectResult>(createResult.Result).Value);
+        var row = await Db.ImportRows.SingleAsync(item => item.BatchId == batch.Id);
+        var concepts = await Db.Concepts
+            .Where(item => item.UserId == UserId && item.IsActive && item.Kind == ConceptKind.Expense)
+            .Take(2)
+            .ToListAsync();
+
+        var result = await CreateController(UserId).SplitRow(
+            batch.Id,
+            row.Id,
+            new SplitImportRowDto
+            {
+                Allocations =
+                [
+                    new ImportRowAllocationDto { ConceptId = concepts[0].Id, Amount = 7m },
+                    new ImportRowAllocationDto { ConceptId = concepts[1].Id, Amount = 5m }
+                ]
+            },
+            CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Empty(await Db.ImportRowAllocations.ToListAsync());
+    }
+
+    [Fact]
     public async Task Sin_IA_ni_mappings_clasifica_todas_las_filas_con_reglas_generales()
     {
         await SeedChartOfAccountsAsync();

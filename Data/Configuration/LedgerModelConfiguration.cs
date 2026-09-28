@@ -318,6 +318,23 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.HasIndex(x => new { x.BatchId, x.RowNumber }).IsUnique();
             });
 
+            b.Entity<ImportRowAllocation>(e =>
+            {
+                e.ToTable("ImportRowAllocations");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Amount).HasColumnType(Money);
+
+                e.HasOne(x => x.ImportRow)
+                    .WithMany(row => row.Allocations)
+                    .HasForeignKey(x => x.ImportRowId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                e.HasOne(x => x.Concept)
+                    .WithMany()
+                    .HasForeignKey(x => x.ConceptId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
             b.Entity<ConceptMapping>(e =>
             {
                 e.ToTable("ConceptMappings");
