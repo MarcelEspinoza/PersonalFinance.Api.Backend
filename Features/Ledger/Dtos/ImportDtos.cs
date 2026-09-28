@@ -35,6 +35,15 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     public sealed class SelectImportConceptDto
     {
         public Guid? ConceptId { get; set; }
+        public bool SaveForFuture { get; set; }
+    }
+
+    public sealed class CreateImportConceptDto
+    {
+        public Guid GroupId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public PersonalFinance.Domain.Ledger.Enums.ConceptNature Nature { get; set; }
+        public bool SaveForFuture { get; set; }
     }
 
     public sealed class SelectImportGroupConceptDto

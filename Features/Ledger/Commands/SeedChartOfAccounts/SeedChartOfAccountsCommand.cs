@@ -4,6 +4,7 @@ using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Domain.Ledger.Entities;
+using PersonalFinance.Domain.Ledger.Enums;
 
 namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
 {
@@ -95,6 +96,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
 
             await _db.SaveChangesAsync(ct);
             await MigrateLegacyConceptDataAsync(request.UserId, ct);
+            await MigrateMerchantConceptsAsync(request.UserId, ct);
 
             if (request.BudgetYear.HasValue && request.BudgetMonth.HasValue && budgetTargets.Count > 0)
             {
@@ -243,6 +245,61 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts
                         }
                     }
                 }
+            }
+
+            await _db.SaveChangesAsync(ct);
+        }
+
+        private async Task MigrateMerchantConceptsAsync(Guid userId, CancellationToken ct)
+        {
+            var group = await _db.ConceptGroups.FirstOrDefaultAsync(
+                item => item.UserId == userId &&
+                        item.Name == "Suscripciones y servicios digitales" &&
+                        item.IsActive,
+                ct);
+            if (group is null) return;
+
+            var targets = await _db.Concepts
+                .Where(item => item.UserId == userId && item.GroupId == group.Id && item.IsActive)
+                .ToDictionaryAsync(item => item.Name, StringComparer.OrdinalIgnoreCase, ct);
+            var merchantTargets = new[]
+            {
+                ("CRUNCHYROLL", "Crunchyroll"),
+                ("RAILWAY", "Railway"),
+                ("ANTHROPIC", "Anthropic")
+            };
+            if (merchantTargets.Any(item => !targets.ContainsKey(item.Item2))) return;
+
+            var entries = await _db.LedgerEntries
+                .Where(item => item.UserId == userId && item.Description != null)
+                .ToListAsync(ct);
+            foreach (var entry in entries)
+            {
+                var normalized = RevolutMovementClassifier.Normalize(entry.Description);
+                var target = merchantTargets.FirstOrDefault(item => normalized.Contains(
+                    item.Item1,
+                    StringComparison.OrdinalIgnoreCase));
+                if (target != default)
+                    entry.ConceptId = targets[target.Item2].Id;
+            }
+
+            var pendingRows = await _db.ImportRows
+                .Where(item => item.UserId == userId &&
+                               item.Status == ImportRowStatus.Pending &&
+                               item.ConfirmedConceptId == null)
+                .ToListAsync(ct);
+            foreach (var row in pendingRows)
+            {
+                var normalized = row.NormalizedDescription ??
+                                RevolutMovementClassifier.Normalize(row.RawDescription);
+                var target = merchantTargets.FirstOrDefault(item => normalized.Contains(
+                    item.Item1,
+                    StringComparison.OrdinalIgnoreCase));
+                if (target == default) continue;
+
+                row.SuggestedConceptId = targets[target.Item2].Id;
+                row.SuggestionSource = "mapping";
+                row.SuggestionConfidence = 1m;
             }
 
             await _db.SaveChangesAsync(ct);

@@ -123,8 +123,133 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = dto.ConceptId;
             row.SuggestionSource = dto.ConceptId is null ? null : "manual";
             row.SuggestionConfidence = dto.ConceptId is null ? null : 1m;
+            if (dto.SaveForFuture && dto.ConceptId is Guid conceptId && row.Batch?.AccountId is Guid accountId)
+            {
+                var pattern = row.NormalizedDescription?.Trim();
+                if (!string.IsNullOrWhiteSpace(pattern))
+                {
+                    var mapping = await _db.ConceptMappings.FirstOrDefaultAsync(
+                        item => item.UserId == userId.Value &&
+                                item.AccountId == accountId &&
+                                item.Pattern == pattern,
+                        ct);
+                    if (mapping is null)
+                    {
+                        mapping = new ConceptMapping
+                        {
+                            UserId = userId.Value,
+                            AccountId = accountId,
+                            Pattern = pattern,
+                            ConceptId = conceptId,
+                            Priority = 100
+                        };
+                        _db.ConceptMappings.Add(mapping);
+                    }
+                    else
+                    {
+                        mapping.ConceptId = conceptId;
+                        mapping.Priority = 100;
+                        mapping.IsActive = true;
+                    }
+                }
+            }
             await _db.SaveChangesAsync(ct);
 
+            return Ok(MapRow(row));
+        }
+
+        [HttpPost("{batchId:guid}/rows/{rowId:guid}/concept")]
+        public async Task<ActionResult<ImportRowDto>> CreateConceptForRow(
+            Guid batchId,
+            Guid rowId,
+            [FromBody] CreateImportConceptDto dto,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var row = await _db.ImportRows
+                .Include(item => item.Batch)
+                .FirstOrDefaultAsync(
+                    item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
+                    ct);
+            if (row is null) return NotFound();
+            if (row.Batch?.Status == ImportBatchStatus.Applied)
+                return Conflict("El lote ya se ha aplicado.");
+
+            var name = dto.Name.Trim();
+            if (name.Length is 0 or > 120)
+                return BadRequest("El nombre debe tener entre 1 y 120 caracteres.");
+
+            var group = await _db.ConceptGroups.FirstOrDefaultAsync(
+                item => item.Id == dto.GroupId && item.UserId == userId.Value && item.IsActive,
+                ct);
+            if (group is null) return BadRequest("El grupo no existe o no está activo.");
+
+            var concept = await _db.Concepts.FirstOrDefaultAsync(
+                item => item.UserId == userId.Value &&
+                        item.GroupId == group.Id &&
+                        item.Name == name &&
+                        item.IsActive,
+                ct);
+            if (concept is null)
+            {
+                var duplicate = await _db.Concepts.AnyAsync(
+                    item => item.UserId == userId.Value && item.GroupId == group.Id && item.Name == name,
+                    ct);
+                if (duplicate) return Conflict("Ya existe una categoría inactiva con ese nombre en el grupo.");
+
+                var sortOrder = (await _db.Concepts
+                    .Where(item => item.UserId == userId.Value && item.GroupId == group.Id)
+                    .Select(item => (int?)item.SortOrder)
+                    .MaxAsync(ct) ?? 0) + 10;
+                concept = new Concept
+                {
+                    UserId = userId.Value,
+                    GroupId = group.Id,
+                    Name = name,
+                    Kind = group.Kind,
+                    Nature = dto.Nature,
+                    SortOrder = sortOrder
+                };
+                _db.Concepts.Add(concept);
+            }
+
+            row.ConfirmedConceptId = concept.Id;
+            row.SuggestionSource = "manual";
+            row.SuggestionConfidence = 1m;
+
+            if (dto.SaveForFuture && row.Batch?.AccountId is Guid accountId)
+            {
+                var pattern = row.NormalizedDescription?.Trim();
+                if (!string.IsNullOrWhiteSpace(pattern))
+                {
+                    var mapping = await _db.ConceptMappings.FirstOrDefaultAsync(
+                        item => item.UserId == userId.Value &&
+                                item.AccountId == accountId &&
+                                item.Pattern == pattern,
+                        ct);
+                    if (mapping is null)
+                    {
+                        _db.ConceptMappings.Add(new ConceptMapping
+                        {
+                            UserId = userId.Value,
+                            AccountId = accountId,
+                            Pattern = pattern,
+                            ConceptId = concept.Id,
+                            Priority = 100
+                        });
+                    }
+                    else
+                    {
+                        mapping.ConceptId = concept.Id;
+                        mapping.Priority = 100;
+                        mapping.IsActive = true;
+                    }
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
             return Ok(MapRow(row));
         }
 

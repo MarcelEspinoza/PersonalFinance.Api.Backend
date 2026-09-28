@@ -504,6 +504,63 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Crear_categoria_desde_una_fila_guarda_regla_opcional_para_futuras_importaciones()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 1, 1), "Revolut");
+        const string movement =
+            "Pago con tarjeta;Actual;05/01/2026 14:22;05/01/2026 14:22;NUEVO COMERCIO;-12.50;0.00;EUR;COMPLETADO;100.00";
+        const string sameMerchantDifferentExpense =
+            "Pago con tarjeta;Actual;05/01/2026 15:30;05/01/2026 15:30;NUEVO COMERCIO;-9.99;0.00;EUR;COMPLETADO;90.01";
+
+        var firstBatch = Assert.IsType<OkObjectResult>(
+            (await CreateController(UserId).Create(
+                accountId,
+                BuildCsv(movement, sameMerchantDifferentExpense),
+                CancellationToken.None)).Result).Value as ImportBatchDto;
+        Assert.NotNull(firstBatch);
+        var row = await Db.ImportRows.SingleAsync(item =>
+            item.BatchId == firstBatch!.Id && item.Amount == -12.50m);
+        var group = await Db.ConceptGroups.SingleAsync(item =>
+            item.UserId == UserId && item.Name == "Suscripciones y servicios digitales");
+
+        var result = await CreateController(UserId).CreateConceptForRow(
+            firstBatch.Id,
+            row.Id,
+            new CreateImportConceptDto
+            {
+                GroupId = group.Id,
+                Name = "Nuevo servicio",
+                Nature = ConceptNature.Variable,
+                SaveForFuture = true
+            },
+            CancellationToken.None);
+
+        var assignedRow = Assert.IsType<OkObjectResult>(result.Result).Value as ImportRowDto;
+        Assert.NotNull(assignedRow);
+        var createdConcept = await Db.Concepts.SingleAsync(item =>
+            item.UserId == UserId && item.GroupId == group.Id && item.Name == "Nuevo servicio");
+        Assert.Equal(createdConcept.Id, assignedRow!.ConfirmedConceptId);
+        var otherRow = await Db.ImportRows.SingleAsync(item =>
+            item.BatchId == firstBatch.Id && item.Amount == -9.99m);
+        Assert.Null(otherRow.ConfirmedConceptId);
+        Assert.Equal("NUEVO COMERCIO", (await Db.ConceptMappings.SingleAsync(mapping =>
+            mapping.UserId == UserId &&
+            mapping.AccountId == accountId &&
+            mapping.Pattern == "NUEVO COMERCIO")).Pattern);
+
+        var nextMovement = movement.Replace("05/01/2026", "05/02/2026");
+        var nextBatch = Assert.IsType<OkObjectResult>(
+            (await CreateController(UserId).Create(
+                accountId,
+                BuildCsv(nextMovement),
+                CancellationToken.None)).Result).Value as ImportBatchDto;
+        Assert.NotNull(nextBatch);
+        var nextRow = await Db.ImportRows.SingleAsync(item => item.BatchId == nextBatch!.Id);
+        Assert.Equal(createdConcept.Id, nextRow.SuggestedConceptId);
+    }
+
+    [Fact]
     public async Task Sin_IA_ni_mappings_clasifica_todas_las_filas_con_reglas_generales()
     {
         await SeedChartOfAccountsAsync();

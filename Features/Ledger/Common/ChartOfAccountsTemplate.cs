@@ -85,7 +85,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 new("Amazon Prime", ConceptNature.Fixed, 40),
                 new("Apple", ConceptNature.Fixed, 50),
                 new("Spliiit", ConceptNature.Variable, 60),
-                new("Software y servicios digitales", ConceptNature.Fixed, 70)
+                new("Software y servicios digitales", ConceptNature.Fixed, 70),
+                new("Crunchyroll", ConceptNature.Fixed, 80),
+                new("Railway", ConceptNature.Fixed, 90),
+                new("Anthropic", ConceptNature.Fixed, 100)
             }),
 
             new("Finanzas y compromisos", ConceptKind.Expense, 70, new List<ConceptTemplate>

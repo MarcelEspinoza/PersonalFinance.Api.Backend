@@ -135,6 +135,39 @@ public class ChartOfAccountsTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task La_siembra_mueve_los_comercios_digitales_a_sus_conceptos_propios()
+    {
+        await Mediator.Send(new SeedChartOfAccountsCommand(UserId));
+        var oldConcept = await Db.Concepts.SingleAsync(item =>
+            item.UserId == UserId && item.Name == "Ocio y entretenimiento");
+        var period = new MonthlyPeriod { UserId = UserId, Year = 2026, Month = 8 };
+        var crunchyroll = new LedgerEntry
+        {
+            UserId = UserId,
+            Period = period,
+            ConceptId = oldConcept.Id,
+            Direction = EntryDirection.Out,
+            Status = EntryStatus.Paid,
+            DueDate = new DateOnly(2026, 8, 27),
+            ValueDate = new DateOnly(2026, 8, 27),
+            ForecastAmount = 3.35m,
+            ActualAmount = 3.35m,
+            Description = "Crunchyroll"
+        };
+        Db.MonthlyPeriods.Add(period);
+        Db.LedgerEntries.Add(crunchyroll);
+        await Db.SaveChangesAsync();
+
+        await Mediator.Send(new SeedChartOfAccountsCommand(UserId));
+
+        var migrated = await Db.LedgerEntries
+            .AsNoTracking()
+            .Include(item => item.Concept)
+            .SingleAsync(item => item.Id == crunchyroll.Id);
+        Assert.Equal("Crunchyroll", migrated.Concept!.Name);
+    }
+
+    [Fact]
     public async Task Con_ano_y_mes_tambien_siembra_los_presupuestos_variables()
     {
         var result = await Mediator.Send(new SeedChartOfAccountsCommand(UserId, 2026, 2));

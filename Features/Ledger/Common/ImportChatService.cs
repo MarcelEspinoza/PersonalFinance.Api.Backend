@@ -63,6 +63,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 El usuario te habla en español sobre los movimientos de su extracto.
                 Puedes: explicar una fila, decir qué no reconoces, y proponer cambios
                 de concepto cuando el usuario te lo pida explícitamente.
+                Trata cada fila como un movimiento independiente: nunca agrupes,
+                combines ni sumes transacciones distintas para clasificarlas.
+                El importe positivo es un ingreso y el negativo un gasto; el concepto
+                elegido debe tener el mismo tipo (Income o Expense).
+                Lee todo el historial antes de responder. La aclaración más reciente
+                del usuario prevalece sobre una respuesta o cambio anterior del asistente.
+                Si el usuario señala o pregunta si una clasificación anterior era
+                incorrecta (por ejemplo, «¿no deberían ir por separado?»), trátalo
+                como una corrección cuando el contexto identifique inequívocamente
+                las filas y el significado de cada una. Corrige cada fila por separado.
+                Si sólo pregunta cómo se muestran los movimientos, explícalo sin
+                cambiarlos. Nunca presentes filas distintas como un único importe.
+                Si no puedes identificar con seguridad la fila o el concepto, pregunta
+                qué quiere hacer y no propongas cambios.
 
                 CONCEPTOS VÁLIDOS (usa sólo estos "id"):
                 {{JsonSerializer.Serialize(concepts)}}
@@ -75,6 +89,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 Si el usuario sólo pregunta (no pide cambios), deja "changes" vacío.
                 Nunca inventes un rowId o conceptId que no esté en las listas de arriba.
+                No afirmes que has cambiado filas salvo que las incluyas en "changes".
+                Conserva las diferencias de significado que haya explicado el usuario:
+                por ejemplo, un préstamo recibido y un reembolso para cubrir un gasto
+                son movimientos distintos, aunque procedan de la misma persona.
                 """;
 
             var messages = history
@@ -145,7 +163,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 _logger.LogWarning(ex, "La respuesta del chat de importación no tenía el JSON esperado.");
                 return new ImportChatResult(
-                    "He tenido un problema entendiendo mi propia respuesta; prueba a reformular.",
+                    json,
                     Array.Empty<ImportChatChange>(),
                     Array.Empty<string>());
             }

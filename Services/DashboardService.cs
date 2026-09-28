@@ -296,7 +296,7 @@ namespace PersonalFinance.Api.Services
                 .ToDictionary(
                     group => group.Key,
                     group => group.OrderByDescending(item => item.CreatedAt).First().ClosingBalance);
-            var outlook = MonthOutlookCalculator.Build(new MonthOutlookInput(
+            var outlookInput = new MonthOutlookInput(
                 currentMonth.Year,
                 currentMonth.Month,
                 today,
@@ -306,7 +306,22 @@ namespace PersonalFinance.Api.Services
                 recurringRules,
                 concepts,
                 monthlyBudgets,
-                reconciledBalances), includeVariableReserve);
+                reconciledBalances);
+            var outlookWithReserve = MonthOutlookCalculator.Build(outlookInput);
+            var withoutVariableReserve = MonthOutlookCalculator.Build(
+                outlookInput, includeVariableReserve: false);
+            outlookWithReserve.WithoutVariableReserve = new MonthOutlookBaselineDto
+            {
+                Accounts = withoutVariableReserve.Accounts,
+                Unassigned = withoutVariableReserve.Unassigned,
+                PendingItems = withoutVariableReserve.PendingItems,
+                OverdueItems = withoutVariableReserve.OverdueItems,
+                SuggestedTransfers = withoutVariableReserve.SuggestedTransfers,
+                UncoveredShortfall = withoutVariableReserve.UncoveredShortfall,
+                FreeMoney = withoutVariableReserve.FreeMoney,
+                VariableExpenseReserve = withoutVariableReserve.VariableExpenseReserve
+            };
+            var outlook = includeVariableReserve ? outlookWithReserve : withoutVariableReserve;
 
             var period = await _db.MonthlyPeriods
                 .AsNoTracking()

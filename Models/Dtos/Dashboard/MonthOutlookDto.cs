@@ -33,7 +33,22 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// <summary>Reserva variable total, incluida la asignada a cuentas.</summary>
         public decimal VariableExpenseReserve { get; set; }
 
+        /// <summary>La misma previsión sin descontar los presupuestos variables.</summary>
+        public MonthOutlookBaselineDto? WithoutVariableReserve { get; set; }
+
         public List<ConceptDeviationDto> Deviations { get; set; } = new();
+    }
+
+    public class MonthOutlookBaselineDto
+    {
+        public List<AccountOutlookDto> Accounts { get; set; } = new();
+        public UnassignedOutlookDto Unassigned { get; set; } = new();
+        public List<OutlookItemDto> PendingItems { get; set; } = new();
+        public List<OutlookItemDto> OverdueItems { get; set; } = new();
+        public List<TransferSuggestionDto> SuggestedTransfers { get; set; } = new();
+        public decimal UncoveredShortfall { get; set; }
+        public decimal FreeMoney { get; set; }
+        public decimal VariableExpenseReserve { get; set; }
     }
 
     public class AccountOutlookDto
