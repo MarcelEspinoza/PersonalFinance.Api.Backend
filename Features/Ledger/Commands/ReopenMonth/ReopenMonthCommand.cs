@@ -31,10 +31,10 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.ReopenMonth
                 ?? throw new NotFoundException($"El periodo {request.Year}-{request.Month:D2} no existe.");
 
             if (period.Status != PeriodStatus.Closed)
-                throw new BusinessRuleException("El periodo ya estÃ¡ abierto.");
+                throw new BusinessRuleException("El periodo ya está abierto.");
 
-            // Reabrir un mes invalida el arrastre del siguiente, asÃ­ que no se
-            // permite si ese mes posterior ya estÃ¡ cerrado: habrÃ­a que
+            // Reabrir un mes invalida el arrastre del siguiente, así que no se
+            // permite si ese mes posterior ya está cerrado: habría que
             // deshacer la cadena entera.
             var (nextYear, nextMonth) = PeriodProvisioner.NextMonth(request.Year, request.Month);
 
@@ -46,7 +46,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.ReopenMonth
 
             if (nextIsClosed)
                 throw new BusinessRuleException(
-                    $"No se puede reabrir: el periodo {nextYear}-{nextMonth:D2} ya estÃ¡ cerrado. ReÃ¡brelo primero.");
+                    $"No se puede reabrir: el periodo {nextYear}-{nextMonth:D2} ya está cerrado. Reábrelo primero.");
 
             period.Status = PeriodStatus.Open;
             period.ClosingBalance = null;

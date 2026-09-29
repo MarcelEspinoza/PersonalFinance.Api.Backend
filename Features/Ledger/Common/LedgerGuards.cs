@@ -14,7 +14,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     {
         /// <summary>
         /// Carga el asiento del usuario. Si no existe o es de otro, responde
-        /// lo mismo (no encontrado) para no revelar quÃ© identificadores existen.
+        /// lo mismo (no encontrado) para no revelar qué identificadores existen.
         /// </summary>
         public static async Task<LedgerEntry> LoadEditableEntryAsync(
             IAppDbContext db, Guid userId, Guid entryId, CancellationToken ct)
@@ -27,7 +27,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             if (entry.Period is not null && entry.Period.Status == PeriodStatus.Closed)
                 throw new BusinessRuleException(
-                    $"El periodo {entry.Period.Year}-{entry.Period.Month:D2} estÃ¡ cerrado. ReÃ¡brelo para modificarlo.");
+                    $"El periodo {entry.Period.Year}-{entry.Period.Month:D2} está cerrado. Reábrelo para modificarlo.");
 
             return entry;
         }

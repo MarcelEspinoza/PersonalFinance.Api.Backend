@@ -27,7 +27,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 throw new ArgumentOutOfRangeException(nameof(month), "El mes debe estar entre 1 y 12.");
 
             if (year is < 2000 or > 2100)
-                throw new ArgumentOutOfRangeException(nameof(year), "El aÃ±o estÃ¡ fuera del rango admitido.");
+                throw new ArgumentOutOfRangeException(nameof(year), "El año está fuera del rango admitido.");
         }
 
         public static (int Year, int Month) PreviousMonth(int year, int month) =>
@@ -37,7 +37,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             month == 12 ? (year + 1, 1) : (year, month + 1);
 
         /// <summary>
-        /// Devuelve el periodo, creÃ¡ndolo si no existÃ­a. Si estÃ¡ abierto,
+        /// Devuelve el periodo, creándolo si no existía. Si está abierto,
         /// materializa las recurrentes que falten y marca como pendientes las
         /// previsiones ya vencidas.
         /// </summary>
@@ -106,7 +106,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         }
 
         /// <summary>
-        /// Crea sÃ³lo los asientos recurrentes que aÃºn no existen en el mes, de
+        /// Crea sólo los asientos recurrentes que aún no existen en el mes, de
         /// forma que repetir la llamada no duplica nada.
         /// </summary>
         private async Task MaterializeRecurringRulesAsync(Guid userId, MonthlyPeriod period, CancellationToken ct)
@@ -157,8 +157,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         }
 
         /// <summary>
-        /// Una previsiÃ³n cuya fecha ya pasÃ³ y sigue sin confirmarse se
-        /// convierte en pendiente: es el "Pending" de la hoja de cÃ¡lculo.
+        /// Una previsión cuya fecha ya pasó y sigue sin confirmarse se
+        /// convierte en pendiente: es el "Pending" de la hoja de cálculo.
         /// </summary>
         private async Task RefreshOverdueStatusesAsync(Guid userId, MonthlyPeriod period, CancellationToken ct)
         {

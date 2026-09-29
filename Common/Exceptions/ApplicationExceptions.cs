@@ -2,7 +2,7 @@
 {
     /// <summary>
     /// Regla de negocio incumplida. La capa de API la traduce a 400 sin tener
-    /// que distinguir excepciones genÃ©ricas del framework.
+    /// que distinguir excepciones genéricas del framework.
     /// </summary>
     public class BusinessRuleException : Exception
     {

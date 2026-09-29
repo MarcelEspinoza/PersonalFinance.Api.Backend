@@ -4,7 +4,7 @@ using PersonalFinance.Domain.Ledger.Entities;
 namespace PersonalFinance.Api.Data.Configuration
 {
     /// <summary>
-    /// Mapeo del dominio contable. Vive aquÃ­, y no en las entidades, para que
+    /// Mapeo del dominio contable. Vive aquí, y no en las entidades, para que
     /// el dominio no sepa nada de bases de datos.
     /// </summary>
     public static class LedgerModelConfiguration
@@ -81,8 +81,8 @@ namespace PersonalFinance.Api.Data.Configuration
             e.Property(x => x.ClosingBalance).HasColumnType(Money);
             e.Ignore(x => x.FirstDay);
 
-            // Un usuario sÃ³lo puede tener un periodo por mes: es la garantÃ­a de
-            // que no se dupliquen cuadros mensuales por una llamada simultÃ¡nea.
+            // Un usuario sólo puede tener un periodo por mes: es la garantía de
+            // que no se dupliquen cuadros mensuales por una llamada simultánea.
             e.HasIndex(x => new { x.UserId, x.Year, x.Month }).IsUnique();
         });
 
@@ -135,8 +135,8 @@ namespace PersonalFinance.Api.Data.Configuration
                 .HasForeignKey(x => x.SavingsGoalId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            // Huella antiduplicados de la importaciÃ³n bancaria. MySQL admite
-            // varios NULL en un Ã­ndice Ãºnico, que es justo lo que hace falta:
+            // Huella antiduplicados de la importación bancaria. MySQL admite
+            // varios NULL en un índice único, que es justo lo que hace falta:
             // los asientos creados a mano no tienen huella y no deben chocar.
             e.HasIndex(x => new { x.UserId, x.Fingerprint }).IsUnique();
 

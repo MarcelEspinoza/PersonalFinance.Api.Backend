@@ -7,7 +7,7 @@ using PersonalFinance.Domain.Ledger.Enums;
 
 namespace PersonalFinance.Api.Features.Ledger.Commands.UnconfirmLedgerEntry
 {
-    /// <summary>Deshace una confirmaciÃ³n: el asiento vuelve a ser una previsiÃ³n.</summary>
+    /// <summary>Deshace una confirmación: el asiento vuelve a ser una previsión.</summary>
     public record UnconfirmLedgerEntryCommand(Guid UserId, Guid EntryId) : IRequest<MonthlyEntryDto>;
 
     public class UnconfirmLedgerEntryCommandHandler : IRequestHandler<UnconfirmLedgerEntryCommand, MonthlyEntryDto>
@@ -26,7 +26,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UnconfirmLedgerEntry
             var entry = await LedgerGuards.LoadEditableEntryAsync(_db, request.UserId, request.EntryId, ct);
 
             if (entry.Status != EntryStatus.Paid)
-                throw new BusinessRuleException("El asiento no estÃ¡ confirmado.");
+                throw new BusinessRuleException("El asiento no está confirmado.");
 
             entry.ActualAmount = null;
             entry.ValueDate = null;

@@ -4,8 +4,8 @@ using PersonalFinance.Domain.Ledger.Entities;
 namespace PersonalFinance.Api.Common.Interfaces
 {
     /// <summary>
-    /// Puerto de persistencia. La capa de aplicaciÃ³n depende de esta interfaz,
-    /// no del DbContext concreto, asÃ­ que los casos de uso se pueden probar
+    /// Puerto de persistencia. La capa de aplicación depende de esta interfaz,
+    /// no del DbContext concreto, así que los casos de uso se pueden probar
     /// contra cualquier proveedor.
     /// </summary>
     public interface IAppDbContext

@@ -7,8 +7,8 @@ using PersonalFinance.Domain.Ledger.Enums;
 namespace PersonalFinance.Api.Features.Ledger.Commands.SkipLedgerEntry
 {
     /// <summary>
-    /// Descarta un asiento sin borrarlo. Es lo que hay que usar con las lÃ­neas
-    /// que nacen de una regla recurrente: borrarlas sÃ³lo harÃ­a que el sistema
+    /// Descarta un asiento sin borrarlo. Es lo que hay que usar con las líneas
+    /// que nacen de una regla recurrente: borrarlas sólo haría que el sistema
     /// volviera a crearlas.
     /// </summary>
     public record SkipLedgerEntryCommand(Guid UserId, Guid EntryId, bool Skip) : IRequest<MonthlyEntryDto>;

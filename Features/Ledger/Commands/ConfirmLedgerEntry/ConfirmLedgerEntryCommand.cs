@@ -27,7 +27,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry
             var entry = await LedgerGuards.LoadEditableEntryAsync(_db, request.UserId, request.EntryId, ct);
 
             if (entry.Status == EntryStatus.Skipped)
-                throw new BusinessRuleException("El asiento estÃ¡ descartado. ReactÃ­valo antes de confirmarlo.");
+                throw new BusinessRuleException("El asiento está descartado. Reactívalo antes de confirmarlo.");
 
             await LedgerGuards.EnsureAccountBelongsToUserAsync(_db, request.UserId, request.Payload.AccountId, ct);
 

@@ -36,7 +36,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry
 
             if (period.Status == PeriodStatus.Closed)
                 throw new BusinessRuleException(
-                    $"El periodo {period.Year}-{period.Month:D2} estÃ¡ cerrado. ReÃ¡brelo para aÃ±adir asientos.");
+                    $"El periodo {period.Year}-{period.Month:D2} está cerrado. Reábrelo para añadir asientos.");
 
             var confirmed = dto.ActualAmount.HasValue;
 

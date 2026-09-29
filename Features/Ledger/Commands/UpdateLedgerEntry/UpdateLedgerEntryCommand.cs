@@ -59,7 +59,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
 
         /// <summary>
         /// Cambiar la fecha puede sacar el asiento de su mes: en ese caso hay
-        /// que reasignarlo al periodo que le toca, que ademÃ¡s debe estar abierto.
+        /// que reasignarlo al periodo que le toca, que además debe estar abierto.
         /// </summary>
         private async Task MoveToDueDateAsync(
             Guid userId, LedgerEntry entry, DateOnly newDueDate, CancellationToken ct)
@@ -73,7 +73,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
 
                 if (target.Status == PeriodStatus.Closed)
                     throw new BusinessRuleException(
-                        $"El periodo {target.Year}-{target.Month:D2} estÃ¡ cerrado: no se puede mover el asiento ahÃ­.");
+                        $"El periodo {target.Year}-{target.Month:D2} está cerrado: no se puede mover el asiento ahí.");
 
                 entry.PeriodId = target.Id;
                 entry.Period = target;
@@ -81,8 +81,8 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
 
             entry.DueDate = newDueDate;
 
-            // Una previsiÃ³n que se mueve al pasado pasa a estar vencida, y al
-            // revÃ©s. Lo ya confirmado no se toca.
+            // Una previsión que se mueve al pasado pasa a estar vencida, y al
+            // revés. Lo ya confirmado no se toca.
             if (entry.Status is EntryStatus.Planned or EntryStatus.Pending)
                 entry.Status = newDueDate < _clock.Today ? EntryStatus.Pending : EntryStatus.Planned;
         }

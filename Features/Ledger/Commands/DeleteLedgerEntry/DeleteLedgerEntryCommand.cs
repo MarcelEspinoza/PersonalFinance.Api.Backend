@@ -17,11 +17,11 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.DeleteLedgerEntry
         {
             var entry = await LedgerGuards.LoadEditableEntryAsync(_db, request.UserId, request.EntryId, ct);
 
-            // Borrar una lÃ­nea generada por una regla no sirve de nada: la
-            // siguiente consulta del mes la volverÃ­a a crear.
+            // Borrar una línea generada por una regla no sirve de nada: la
+            // siguiente consulta del mes la volvería a crear.
             if (entry.RecurringRuleId.HasValue)
                 throw new BusinessRuleException(
-                    "El asiento procede de una regla recurrente. DescÃ¡rtalo en lugar de borrarlo, " +
+                    "El asiento procede de una regla recurrente. Descártalo en lugar de borrarlo, " +
                     "o desactiva la regla si ya no aplica.");
 
             _db.LedgerEntries.Remove(entry);

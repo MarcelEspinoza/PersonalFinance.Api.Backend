@@ -6,7 +6,7 @@ using PersonalFinance.Domain.Ledger.Entities;
 namespace PersonalFinance.Api.Features.Ledger.Common
 {
     /// <summary>
-    /// Carga de un tirÃ³n todo lo que necesita el cuadro mensual, para que los
+    /// Carga de un tirón todo lo que necesita el cuadro mensual, para que los
     /// casos de uso no repitan la misma consulta.
     /// </summary>
     public class MonthlySummaryLoader

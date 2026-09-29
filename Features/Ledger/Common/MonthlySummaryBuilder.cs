@@ -7,7 +7,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 {
     /// <summary>
     /// Arma el cuadro mensual a partir de las entidades ya cargadas.
-    /// La aritmÃ©tica vive en el dominio; aquÃ­ sÃ³lo se agrupa y se proyecta.
+    /// La aritmética vive en el dominio; aquí sólo se agrupa y se proyecta.
     /// </summary>
     public static class MonthlySummaryBuilder
     {
