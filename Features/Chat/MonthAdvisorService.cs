@@ -153,7 +153,8 @@ namespace PersonalFinance.Api.Features.Chat
                 return result;
             }
 
-            var json = StripCodeFence(text.GetString() ?? string.Empty);
+            var raw = text.GetString() ?? string.Empty;
+            var json = ModelJson.Extract(raw);
             try
             {
                 var parsed = JsonSerializer.Deserialize<RawAdvice>(json,
@@ -174,7 +175,7 @@ namespace PersonalFinance.Api.Features.Chat
             {
                 _logger.LogWarning(ex, "La respuesta del asesor mensual no tenÃ­a el JSON esperado.");
                 result.Available = true;
-                result.Summary = json;
+                result.Summary = ModelJson.PlainText(raw);
             }
 
             return result;
@@ -251,15 +252,6 @@ namespace PersonalFinance.Api.Features.Chat
                     .Where(item => Math.Abs(item.Deviation) >= 1m && (item.Actual > 0m || item.Pending > 0m))
                     .Select(item => new { item.Name, item.Planned, item.Actual, item.Pending, item.Deviation })
             };
-        }
-
-        private static string StripCodeFence(string raw)
-        {
-            var json = raw.Trim();
-            if (!json.StartsWith("```", StringComparison.Ordinal)) return json;
-            var firstNewLine = json.IndexOf('\n');
-            json = firstNewLine >= 0 ? json[(firstNewLine + 1)..] : json;
-            return json.TrimEnd('`', '\r', '\n').Trim();
         }
 
         private static string NormalizeSeverity(string? severity) =>

@@ -132,19 +132,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 !content[0].TryGetProperty("text", out var text))
                 return new ImportChatResult("No he podido leer la respuesta del modelo.", Array.Empty<ImportChatChange>(), Array.Empty<string>());
 
-            var json = text.GetString()?.Trim() ?? string.Empty;
-            if (json.StartsWith("```", StringComparison.Ordinal))
-            {
-                var firstNewLine = json.IndexOf('\n');
-                json = firstNewLine >= 0 ? json[(firstNewLine + 1)..] : json;
-                json = json.TrimEnd('`', '\r', '\n').Trim();
-            }
+            var raw = text.GetString() ?? string.Empty;
+            var json = PersonalFinance.Api.Features.Chat.ModelJson.Extract(raw);
 
             try
             {
                 var parsed = JsonSerializer.Deserialize<ChatResponseBody>(json,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (parsed is null) return new ImportChatResult(json, Array.Empty<ImportChatChange>(), Array.Empty<string>());
+                if (parsed is null)
+                    return new ImportChatResult(
+                        PersonalFinance.Api.Features.Chat.ModelJson.PlainText(raw),
+                        Array.Empty<ImportChatChange>(),
+                        Array.Empty<string>());
 
                 var validRowIds = rows.Select(r => r.RowId).ToHashSet();
                 var validConceptIds = concepts.Select(c => c.Id).ToHashSet();
@@ -163,7 +162,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 _logger.LogWarning(ex, "La respuesta del chat de importación no tenía el JSON esperado.");
                 return new ImportChatResult(
-                    json,
+                    PersonalFinance.Api.Features.Chat.ModelJson.PlainText(raw),
                     Array.Empty<ImportChatChange>(),
                     Array.Empty<string>());
             }

@@ -86,6 +86,13 @@ namespace PersonalFinance.Api.Features.Chat
                 uno ("balanceAfter"). Úsala para explicar si le faltará dinero, en qué fecha y
                 qué pagos o cobros conviene mover. No recalcules esas cifras.
 
+                El "calendario" del usuario se compone de "recurringRules" (los cobros y pagos
+                que se repiten cada mes, con su día y su importe previsto), de
+                "recentLedgerEntries" (los movimientos ya anotados) y de "currentMonthOutlook".
+                Antes de decir que algo no está en el calendario, búscalo en las tres listas,
+                incluidas las reglas recurrentes: la nómina y los recibos fijos suelen vivir
+                ahí y no como movimientos sueltos.
+
                 Puedes preparar estas acciones, pero nunca ejecutarlas directamente:
                 - create_expense / create_income: amount, description, date, categoryId, expenseType.
                 - update_expense / update_income: targetId y sólo los campos que cambian.
@@ -101,10 +108,17 @@ namespace PersonalFinance.Api.Features.Chat
                 Si falta un dato imprescindible, pregúntalo. Usa exclusivamente IDs presentes
                 en los datos. Nunca propongas borrar datos ni aplicar un lote completo.
 
+                Lee TODO el historial de la conversación antes de responder. Si el usuario te
+                corrige o te aclara algo, su mensaje más reciente manda sobre lo que tú dijiste
+                antes: rectifica con los datos que ves, sin repetir el error ni disculparte una
+                y otra vez. Si no encuentras algo que el usuario da por hecho, di exactamente
+                dónde has mirado en vez de afirmar que no existe.
+
                 Responde EXCLUSIVAMENTE JSON válido, sin markdown, con esta forma exacta:
                 {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"normalizedDescription":null}]}
 
                 Deja "proposedActions" como lista vacía si no corresponde ninguna acción.
+                Mantén "reply" por debajo de 1200 caracteres para que la respuesta no se corte.
                 """;
 
             var messages = request.History
@@ -120,7 +134,7 @@ namespace PersonalFinance.Api.Features.Chat
                 JsonSerializer.Serialize(new
                 {
                     model,
-                    max_tokens = 2048,
+                    max_tokens = 4096,
                     temperature = 0,
                     system,
                     messages
@@ -141,19 +155,20 @@ namespace PersonalFinance.Api.Features.Chat
                 !content[0].TryGetProperty("text", out var text))
                 return new ChatResponseDto { Reply = "No he podido leer la respuesta del modelo." };
 
-            var json = text.GetString()?.Trim() ?? string.Empty;
-            if (json.StartsWith("```", StringComparison.Ordinal))
+            var raw = text.GetString() ?? string.Empty;
+            if (document.RootElement.TryGetProperty("stop_reason", out var stopReason) &&
+                stopReason.GetString() == "max_tokens")
             {
-                var firstNewLine = json.IndexOf('\n');
-                json = firstNewLine >= 0 ? json[(firstNewLine + 1)..] : json;
-                json = json.TrimEnd('`', '\r', '\n').Trim();
+                _logger.LogWarning("La respuesta del chat global llegó truncada por max_tokens.");
             }
+
+            var json = ModelJson.Extract(raw);
 
             try
             {
                 var parsed = JsonSerializer.Deserialize<RawChatResponse>(json,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (parsed is null) return new ChatResponseDto { Reply = json };
+                if (parsed is null) return new ChatResponseDto { Reply = ModelJson.PlainText(raw) };
 
                 var actions = (parsed.ProposedActions ?? new())
                     .Where(IsStructurallyValid)
@@ -178,12 +193,16 @@ namespace PersonalFinance.Api.Features.Chat
                     })
                     .ToList();
 
-                return new ChatResponseDto { Reply = parsed.Reply ?? string.Empty, ProposedActions = actions };
+                return new ChatResponseDto
+                {
+                    Reply = string.IsNullOrWhiteSpace(parsed.Reply) ? ModelJson.PlainText(raw) : parsed.Reply,
+                    ProposedActions = actions
+                };
             }
             catch (JsonException ex)
             {
                 _logger.LogWarning(ex, "La respuesta del chat global no tenía el JSON esperado.");
-                return new ChatResponseDto { Reply = "He tenido un problema entendiendo mi propia respuesta; prueba a reformular." };
+                return new ChatResponseDto { Reply = ModelJson.PlainText(raw) };
             }
         }
 
@@ -319,6 +338,27 @@ namespace PersonalFinance.Api.Features.Chat
             })
                 .ToList();
 
+            var recurringRules = await _db.RecurringRules
+                .AsNoTracking()
+                .Where(rule => rule.UserId == userId && rule.IsActive)
+                .OrderBy(rule => rule.DayOfMonth)
+                .Select(rule => new
+                {
+                    rule.Id,
+                    concept = rule.Concept != null ? rule.Concept.Name : null,
+                    rule.ConceptId,
+                    rule.Description,
+                    rule.Direction,
+                    rule.Frequency,
+                    rule.DayOfMonth,
+                    rule.ForecastAmount,
+                    rule.StartDate,
+                    rule.EndDate,
+                    account = rule.Account != null ? rule.Account.Name : null,
+                    rule.AccountId
+                })
+                .ToListAsync(ct);
+
             var projection = await _dashboard.GetFutureProjectionAsync(null, null, ct);
             var monthOutlook = MonthAdvisorService.BuildMonthContext(projection.Outlook);
 
@@ -334,6 +374,7 @@ namespace PersonalFinance.Api.Features.Chat
                 pasanacos,
                 accounts,
                 ledgerConcepts,
+                recurringRules,
                 recentLedgerEntries = ledgerEntries,
                 pendingImports
             };
