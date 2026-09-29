@@ -185,7 +185,7 @@ public sealed class ExpensePlanningTests : LedgerTestBase
             rule.AccountId == personalAccount.Id &&
             rule.Direction == EntryDirection.In &&
             rule.ForecastAmount == 2360m &&
-            rule.DayOfMonth == 29);
+            rule.DayOfMonth == 1);
         Assert.Contains(rules, rule =>
             rule.ConceptId == rent.Id &&
             rule.AccountId == jointAccount.Id &&

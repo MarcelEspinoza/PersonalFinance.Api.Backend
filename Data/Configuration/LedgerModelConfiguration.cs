@@ -353,6 +353,17 @@ namespace PersonalFinance.Api.Data.Configuration
 
                 e.HasIndex(x => new { x.UserId, x.AccountId, x.Pattern }).IsUnique();
             });
+
+            b.Entity<PersonalFinance.Domain.Advice.Entities.AdviceNote>(e =>
+            {
+                e.ToTable("AdviceNotes");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.InsightTitle).IsRequired().HasMaxLength(200);
+                e.Property(x => x.UserMessage).IsRequired();
+                e.Property(x => x.AssistantReply).IsRequired();
+
+                e.HasIndex(x => new { x.UserId, x.Year, x.Month });
+            });
         }
     }
 }

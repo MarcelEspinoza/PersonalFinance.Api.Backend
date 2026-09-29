@@ -876,6 +876,44 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Domain.Advice.Entities.AdviceNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("AssistantReply")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("InsightTitle")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<int>("Month")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("UserMessage")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Year", "Month");
+
+                    b.ToTable("AdviceNotes", (string)null);
+                });
+
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.Account", b =>
                 {
                     b.Property<Guid>("Id")

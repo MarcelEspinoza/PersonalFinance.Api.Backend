@@ -139,7 +139,7 @@ namespace PersonalFinance.Api.Controllers
 
             var defaults = new[]
             {
-                new PlanningDefault("Nómina", personalAccount, EntryDirection.In, 2360m, 29),
+                new PlanningDefault("Nómina", personalAccount, EntryDirection.In, 2360m, 1),
                 new PlanningDefault("Alquiler", jointAccount, EntryDirection.Out, 737.97m, 7),
                 new PlanningDefault("Agua", jointAccount, EntryDirection.Out, 74m, 7),
                 new PlanningDefault("Electricidad", jointAccount, EntryDirection.Out, 92m, 19),
