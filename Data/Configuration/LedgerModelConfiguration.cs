@@ -232,6 +232,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.ToTable("Counterparties");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Name).IsRequired().HasMaxLength(120);
+                e.Property(x => x.PhoneNumber).HasMaxLength(30);
                 e.Property(x => x.Notes).HasMaxLength(500);
 
                 e.HasIndex(x => new { x.UserId, x.Name }).IsUnique();
@@ -363,6 +364,48 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.Property(x => x.AssistantReply).IsRequired();
 
                 e.HasIndex(x => new { x.UserId, x.Year, x.Month });
+            });
+
+            ConfigureSettlements(b);
+        }
+
+        private static void ConfigureSettlements(ModelBuilder b)
+        {
+            b.Entity<PersonalFinance.Domain.Settlements.Entities.Settlement>(e =>
+            {
+                e.ToTable("Settlements");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Title).IsRequired().HasMaxLength(200);
+                e.Property(x => x.ClosingNote).HasMaxLength(500);
+                e.Property(x => x.CarriedOverAmount).HasColumnType(Money);
+                e.Property(x => x.Status).HasConversion<int>();
+
+                e.HasOne<Counterparty>()
+                    .WithMany()
+                    .HasForeignKey(x => x.CounterpartyId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                e.HasMany(x => x.Lines)
+                    .WithOne(x => x.Settlement!)
+                    .HasForeignKey(x => x.SettlementId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                e.HasIndex(x => new { x.UserId, x.CounterpartyId, x.Status });
+            });
+
+            b.Entity<PersonalFinance.Domain.Settlements.Entities.SettlementLine>(e =>
+            {
+                e.ToTable("SettlementLines");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Description).IsRequired().HasMaxLength(200);
+                e.Property(x => x.Amount).HasColumnType(Money);
+                e.Property(x => x.FullAmount).HasColumnType(Money);
+                e.Property(x => x.Kind).HasConversion<int>();
+                e.Ignore(x => x.SignedAmount);
+                e.Ignore(x => x.IsShared);
+
+                e.HasIndex(x => x.SettlementId);
+                e.HasIndex(x => x.LedgerEntryId);
             });
         }
     }

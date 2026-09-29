@@ -29,6 +29,8 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<ImportRowAllocation> ImportRowAllocations { get; }
         DbSet<ConceptMapping> ConceptMappings { get; }
         DbSet<PersonalFinance.Domain.Advice.Entities.AdviceNote> AdviceNotes { get; }
+        DbSet<PersonalFinance.Domain.Settlements.Entities.Settlement> Settlements { get; }
+        DbSet<PersonalFinance.Domain.Settlements.Entities.SettlementLine> SettlementLines { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

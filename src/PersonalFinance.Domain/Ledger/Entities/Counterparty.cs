@@ -13,6 +13,9 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public string Name { get; set; } = string.Empty;
 
+        /// <summary>Teléfono en formato internacional sin signos, para el enlace de WhatsApp.</summary>
+        public string? PhoneNumber { get; set; }
+
         public CounterpartyKind Kind { get; set; } = CounterpartyKind.Person;
 
         public string? Notes { get; set; }

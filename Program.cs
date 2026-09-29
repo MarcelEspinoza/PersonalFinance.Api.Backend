@@ -170,6 +170,8 @@ builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IGlobalChatServ
     PersonalFinance.Api.Features.Chat.GlobalChatService>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IMonthAdvisorService,
     PersonalFinance.Api.Features.Chat.MonthAdvisorService>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementService,
+    PersonalFinance.Api.Features.Settlements.SettlementService>();
 
 builder.Services.AddAuthorization(options =>
 {

@@ -1121,6 +1121,10 @@ namespace PersonalFinance.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)");
 
+                    b.Property<string>("PhoneNumber")
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)");
+
                     b.Property<Guid>("UserId")
                         .HasColumnType("char(36)");
 
@@ -1722,6 +1726,98 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("SavingsGoals", (string)null);
                 });
 
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.Settlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("CarriedOverAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ClosingNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<Guid>("CounterpartyId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateOnly>("PeriodEnd")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly>("PeriodStart")
+                        .HasColumnType("date");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CounterpartyId");
+
+                    b.HasIndex("UserId", "CounterpartyId", "Status");
+
+                    b.ToTable("Settlements", (string)null);
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.SettlementLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<decimal?>("FullAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("LedgerEntryId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid>("SettlementId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LedgerEntryId");
+
+                    b.HasIndex("SettlementId");
+
+                    b.ToTable("SettlementLines", (string)null);
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole<System.Guid>", null)
@@ -2145,6 +2241,31 @@ namespace PersonalFinance.Api.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Counterparty");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.Settlement", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.Counterparty", null)
+                        .WithMany()
+                        .HasForeignKey("CounterpartyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.SettlementLine", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Settlements.Entities.Settlement", "Settlement")
+                        .WithMany("Lines")
+                        .HasForeignKey("SettlementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Settlement");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.Settlement", b =>
+                {
+                    b.Navigation("Lines");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Category", b =>

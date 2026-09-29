@@ -49,6 +49,10 @@ namespace PersonalFinance.Api.Data
         public DbSet<ConceptMapping> ConceptMappings => Set<ConceptMapping>();
         public DbSet<PersonalFinance.Domain.Advice.Entities.AdviceNote> AdviceNotes =>
             Set<PersonalFinance.Domain.Advice.Entities.AdviceNote>();
+        public DbSet<PersonalFinance.Domain.Settlements.Entities.Settlement> Settlements =>
+            Set<PersonalFinance.Domain.Settlements.Entities.Settlement>();
+        public DbSet<PersonalFinance.Domain.Settlements.Entities.SettlementLine> SettlementLines =>
+            Set<PersonalFinance.Domain.Settlements.Entities.SettlementLine>();
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
