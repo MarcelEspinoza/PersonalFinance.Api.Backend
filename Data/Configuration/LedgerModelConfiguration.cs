@@ -378,6 +378,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.Property(x => x.Title).IsRequired().HasMaxLength(200);
                 e.Property(x => x.ClosingNote).HasMaxLength(500);
                 e.Property(x => x.CarriedOverAmount).HasColumnType(Money);
+                e.Property(x => x.LinkedLoanBalanceSnapshot).HasColumnType(Money);
                 e.Property(x => x.Status).HasConversion<int>();
 
                 e.HasOne<Counterparty>()
@@ -385,12 +386,18 @@ namespace PersonalFinance.Api.Data.Configuration
                     .HasForeignKey(x => x.CounterpartyId)
                     .OnDelete(DeleteBehavior.Cascade);
 
+                e.HasOne<PersonalFinance.Api.Models.Entities.Loan>()
+                    .WithMany()
+                    .HasForeignKey(x => x.LinkedLoanId)
+                    .OnDelete(DeleteBehavior.SetNull);
+
                 e.HasMany(x => x.Lines)
                     .WithOne(x => x.Settlement!)
                     .HasForeignKey(x => x.SettlementId)
                     .OnDelete(DeleteBehavior.Cascade);
 
                 e.HasIndex(x => new { x.UserId, x.CounterpartyId, x.Status });
+                e.HasIndex(x => x.LinkedLoanId);
             });
 
             b.Entity<PersonalFinance.Domain.Settlements.Entities.SettlementLine>(e =>

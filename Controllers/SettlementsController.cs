@@ -65,6 +65,15 @@ namespace PersonalFinance.Api.Controllers
             return Ok(await _service.GetAsync(userId.Value, id, ct));
         }
 
+        [HttpGet("loans")]
+        public async Task<ActionResult<IReadOnlyList<SettlementLoanOptionDto>>> LoanOptions(CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _service.GetLoanOptionsAsync(userId.Value, ct));
+        }
+
         [HttpPost]
         public async Task<ActionResult<SettlementDetailDto>> Create(
             [FromBody] CreateSettlementDto dto, CancellationToken ct)
@@ -83,6 +92,26 @@ namespace PersonalFinance.Api.Controllers
             if (userId is null) return Unauthorized();
 
             return Ok(await _service.UpdateAsync(userId.Value, id, dto, ct));
+        }
+
+        [HttpPut("{id:guid}/loan")]
+        public async Task<ActionResult<SettlementDetailDto>> LinkLoan(
+            Guid id, [FromBody] LinkSettlementLoanDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _service.LinkLoanAsync(userId.Value, id, dto.LoanId, ct));
+        }
+
+        [HttpPost("{id:guid}/loan/close")]
+        public async Task<ActionResult<SettlementDetailDto>> CloseLoan(
+            Guid id, [FromBody] CloseSettlementLoanDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _service.CloseLinkedLoanAsync(userId.Value, id, dto.Resolution, ct));
         }
 
         [HttpDelete("{id:guid}")]

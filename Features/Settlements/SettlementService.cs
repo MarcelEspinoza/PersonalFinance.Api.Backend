@@ -14,8 +14,11 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<SettlementPersonDto> SavePersonAsync(Guid userId, Guid? id, SavePersonDto dto, CancellationToken ct);
         Task<IReadOnlyList<SettlementSummaryDto>> ListAsync(Guid userId, CancellationToken ct);
         Task<SettlementDetailDto> GetAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<IReadOnlyList<SettlementLoanOptionDto>> GetLoanOptionsAsync(Guid userId, CancellationToken ct);
         Task<SettlementDetailDto> CreateAsync(Guid userId, CreateSettlementDto dto, CancellationToken ct);
         Task<SettlementDetailDto> UpdateAsync(Guid userId, Guid id, UpdateSettlementDto dto, CancellationToken ct);
+        Task<SettlementDetailDto> LinkLoanAsync(Guid userId, Guid id, Guid? loanId, CancellationToken ct);
+        Task<SettlementDetailDto> CloseLinkedLoanAsync(Guid userId, Guid id, string resolution, CancellationToken ct);
         Task DeleteAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> AddLineAsync(Guid userId, Guid id, SaveLineDto dto, CancellationToken ct);
         Task<SettlementDetailDto> UpdateLineAsync(Guid userId, Guid id, Guid lineId, SaveLineDto dto, CancellationToken ct);
@@ -112,6 +115,10 @@ namespace PersonalFinance.Api.Features.Settlements
                 .ToListAsync(ct);
 
             var names = await PersonNamesAsync(userId, ct);
+            var loansById = await LoadLinkedLoansAsync(
+                userId,
+                settlements.Where(s => s.LinkedLoanId.HasValue).Select(s => s.LinkedLoanId!.Value),
+                ct);
 
             return settlements
                 .Select(s => new SettlementSummaryDto(
@@ -122,14 +129,32 @@ namespace PersonalFinance.Api.Features.Settlements
                     s.PeriodStart,
                     s.PeriodEnd,
                     s.Status.ToString(),
-                    SettlementMessageBuilder.Totals(s).Pending,
-                    s.Lines.Count,
+                    SettlementMessageBuilder.Totals(s, EffectiveLoanBalance(s, loansById)).Pending,
+                    s.Lines.Count + (EffectiveLoanBalance(s, loansById) > 0m ? 1 : 0),
                     s.SentAt))
                 .ToList();
         }
 
         public async Task<SettlementDetailDto> GetAsync(Guid userId, Guid id, CancellationToken ct) =>
             await ToDetailAsync(userId, await LoadAsync(userId, id, ct), ct);
+
+        public async Task<IReadOnlyList<SettlementLoanOptionDto>> GetLoanOptionsAsync(
+            Guid userId, CancellationToken ct)
+        {
+            var loans = await _db.Loans
+                .Where(loan => loan.UserId == userId
+                    && loan.Type == PersonalFinance.Api.Models.Enums.LoanType.Received)
+                .OrderBy(loan => loan.Name)
+                .ToListAsync(ct);
+
+            return loans
+                .Select(loan => new SettlementLoanOptionDto(
+                    loan.Id,
+                    loan.Name,
+                    GetActiveLoanBalance(loan),
+                    loan.Status))
+                .ToList();
+        }
 
         public async Task<SettlementDetailDto> CreateAsync(
             Guid userId, CreateSettlementDto dto, CancellationToken ct)
@@ -151,6 +176,7 @@ namespace PersonalFinance.Api.Features.Settlements
                 PeriodStart = dto.PeriodStart,
                 PeriodEnd = dto.PeriodEnd,
                 CarriedOverAmount = dto.CarriedOverAmount ?? 0m,
+                LinkedLoanId = await FindPreviousLinkedLoanIdAsync(userId, person.Id, ct),
                 ClosingNote = string.IsNullOrWhiteSpace(dto.ClosingNote)
                     ? "Si hay algo que no se entienda o hay dudas, me avisas."
                     : dto.ClosingNote.Trim(),
@@ -182,6 +208,66 @@ namespace PersonalFinance.Api.Features.Settlements
             settlement.UpdatedAt = _clock.UtcNow;
             await _db.SaveChangesAsync(ct);
 
+            return await ToDetailAsync(userId, settlement, ct);
+        }
+
+        public async Task<SettlementDetailDto> LinkLoanAsync(
+            Guid userId, Guid id, Guid? loanId, CancellationToken ct)
+        {
+            var settlement = await LoadEditableAsync(userId, id, ct);
+            if (loanId.HasValue)
+            {
+                var loan = await _db.Loans.FirstOrDefaultAsync(
+                    candidate => candidate.Id == loanId.Value
+                        && candidate.UserId == userId
+                        && candidate.Type == PersonalFinance.Api.Models.Enums.LoanType.Received,
+                    ct);
+                if (loan is null)
+                    throw new NotFoundException("No encuentro ese préstamo recibido.");
+
+                settlement.LinkedLoanId = loan.Id;
+                settlement.LinkedLoanBalanceSnapshot = null;
+            }
+            else
+            {
+                settlement.LinkedLoanId = null;
+                settlement.LinkedLoanBalanceSnapshot = null;
+            }
+
+            settlement.UpdatedAt = _clock.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return await ToDetailAsync(userId, settlement, ct);
+        }
+
+        public async Task<SettlementDetailDto> CloseLinkedLoanAsync(
+            Guid userId, Guid id, string resolution, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            if (!settlement.LinkedLoanId.HasValue)
+                throw new BusinessRuleException("Esta liquidación no tiene un préstamo asociado.");
+
+            var loan = await _db.Loans.FirstOrDefaultAsync(
+                candidate => candidate.Id == settlement.LinkedLoanId.Value && candidate.UserId == userId,
+                ct);
+            if (loan is null)
+                throw new NotFoundException("No encuentro el préstamo asociado.");
+
+            switch ((resolution ?? string.Empty).Trim().ToLowerInvariant())
+            {
+                case "settled":
+                    loan.OutstandingAmount = 0m;
+                    loan.Status = "paid";
+                    break;
+                case "cancelled":
+                    loan.OutstandingAmount = 0m;
+                    loan.Status = "cancelled";
+                    break;
+                default:
+                    throw new BusinessRuleException("Indica si la deuda se saldó o se canceló.");
+            }
+
+            settlement.UpdatedAt = _clock.UtcNow;
+            await _db.SaveChangesAsync(ct);
             return await ToDetailAsync(userId, settlement, ct);
         }
 
@@ -277,6 +363,7 @@ namespace PersonalFinance.Api.Features.Settlements
                     Title = DefaultTitle(start, end),
                     PeriodStart = start,
                     PeriodEnd = end,
+                    LinkedLoanId = await FindPreviousLinkedLoanIdAsync(userId, person.Id, ct),
                     ClosingNote = "Si hay algo que no se entienda o hay dudas, me avisas.",
                     CreatedAt = _clock.UtcNow
                 };
@@ -325,6 +412,16 @@ namespace PersonalFinance.Api.Features.Settlements
         public async Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct)
         {
             var settlement = await LoadAsync(userId, id, ct);
+            if (settlement.LinkedLoanId.HasValue)
+            {
+                var loan = await _db.Loans.FirstOrDefaultAsync(
+                    candidate => candidate.Id == settlement.LinkedLoanId.Value
+                        && candidate.UserId == userId,
+                    ct);
+                settlement.LinkedLoanBalanceSnapshot = loan is null
+                    ? 0m
+                    : GetActiveLoanBalance(loan);
+            }
             settlement.Status = SettlementStatus.Sent;
             settlement.SentAt = _clock.UtcNow;
             settlement.UpdatedAt = _clock.UtcNow;
@@ -462,14 +559,70 @@ namespace PersonalFinance.Api.Features.Settlements
                 .Where(c => c.UserId == userId)
                 .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
 
+        private async Task<Guid?> FindPreviousLinkedLoanIdAsync(
+            Guid userId, Guid counterpartyId, CancellationToken ct) =>
+            await _db.Settlements
+                .Where(s => s.UserId == userId
+                    && s.CounterpartyId == counterpartyId
+                    && s.LinkedLoanId.HasValue)
+                .OrderByDescending(s => s.PeriodEnd)
+                .ThenByDescending(s => s.CreatedAt)
+                .Select(s => s.LinkedLoanId)
+                .FirstOrDefaultAsync(ct);
+
+        private async Task<Dictionary<Guid, PersonalFinance.Api.Models.Entities.Loan>> LoadLinkedLoansAsync(
+            Guid userId, IEnumerable<Guid> loanIds, CancellationToken ct)
+        {
+            var ids = loanIds.Distinct().ToList();
+            if (ids.Count == 0)
+                return new Dictionary<Guid, PersonalFinance.Api.Models.Entities.Loan>();
+
+            return await _db.Loans
+                .Where(loan => loan.UserId == userId && ids.Contains(loan.Id))
+                .ToDictionaryAsync(loan => loan.Id, ct);
+        }
+
+        private static decimal GetActiveLoanBalance(
+            Guid? loanId,
+            IReadOnlyDictionary<Guid, PersonalFinance.Api.Models.Entities.Loan> loansById) =>
+            loanId.HasValue && loansById.TryGetValue(loanId.Value, out var loan)
+                ? GetActiveLoanBalance(loan)
+                : 0m;
+
+        private static decimal EffectiveLoanBalance(
+            Settlement settlement,
+            IReadOnlyDictionary<Guid, PersonalFinance.Api.Models.Entities.Loan> loansById) =>
+            settlement.Status != SettlementStatus.Draft
+                && settlement.LinkedLoanBalanceSnapshot.HasValue
+                    ? settlement.LinkedLoanBalanceSnapshot.Value
+                    : GetActiveLoanBalance(settlement.LinkedLoanId, loansById);
+
+        private static decimal GetActiveLoanBalance(PersonalFinance.Api.Models.Entities.Loan loan) =>
+            loan.Status.Equals("paid", StringComparison.OrdinalIgnoreCase)
+                || loan.Status.Equals("cancelled", StringComparison.OrdinalIgnoreCase)
+                ? 0m
+                : Math.Max(0m, loan.OutstandingAmount);
+
         private async Task<SettlementDetailDto> ToDetailAsync(
             Guid userId, Settlement settlement, CancellationToken ct)
         {
             var person = await _db.Counterparties
                 .FirstOrDefaultAsync(c => c.Id == settlement.CounterpartyId && c.UserId == userId, ct);
 
-            var totals = SettlementMessageBuilder.Totals(settlement);
-            var message = SettlementMessageBuilder.Build(settlement, person?.Name);
+            PersonalFinance.Api.Models.Entities.Loan? linkedLoan = null;
+            if (settlement.LinkedLoanId.HasValue)
+            {
+                linkedLoan = await _db.Loans.FirstOrDefaultAsync(
+                    loan => loan.Id == settlement.LinkedLoanId.Value && loan.UserId == userId,
+                    ct);
+            }
+
+            var loanBalance = settlement.Status != SettlementStatus.Draft
+                && settlement.LinkedLoanBalanceSnapshot.HasValue
+                    ? settlement.LinkedLoanBalanceSnapshot.Value
+                    : linkedLoan is null ? 0m : GetActiveLoanBalance(linkedLoan);
+            var totals = SettlementMessageBuilder.Totals(settlement, loanBalance);
+            var message = SettlementMessageBuilder.Build(settlement, person?.Name, loanBalance);
 
             return new SettlementDetailDto(
                 settlement.Id,
@@ -483,6 +636,15 @@ namespace PersonalFinance.Api.Features.Settlements
                 settlement.ClosingNote,
                 settlement.CarriedOverAmount,
                 settlement.SentAt,
+                settlement.LinkedLoanId,
+                linkedLoan is null
+                    ? null
+                    : new SettlementLoanDto(
+                        linkedLoan.Id,
+                        linkedLoan.Name,
+                        GetActiveLoanBalance(linkedLoan),
+                        linkedLoan.Status,
+                        loanBalance),
                 new SettlementTotalsDto(
                     totals.Charges, totals.Deductions, totals.Payments, totals.CarriedOver, totals.Pending),
                 settlement.Lines

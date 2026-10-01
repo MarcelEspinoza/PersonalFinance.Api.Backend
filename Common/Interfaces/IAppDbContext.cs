@@ -23,6 +23,7 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<DebtScheduleItem> DebtScheduleItems { get; }
         DbSet<Counterparty> Counterparties { get; }
         DbSet<PersonalLoan> PersonalLoans { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.Loan> Loans { get; }
         DbSet<SavingsGoal> SavingsGoals { get; }
         DbSet<ImportBatch> ImportBatches { get; }
         DbSet<ImportRow> ImportRows { get; }

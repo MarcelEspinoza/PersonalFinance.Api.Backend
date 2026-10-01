@@ -25,6 +25,19 @@ namespace PersonalFinance.Api.Features.Settlements
         decimal CarriedOver,
         decimal Pending);
 
+    public sealed record SettlementLoanDto(
+        Guid Id,
+        string Name,
+        decimal OutstandingAmount,
+        string Status,
+        decimal AmountInSettlement);
+
+    public sealed record SettlementLoanOptionDto(
+        Guid Id,
+        string Name,
+        decimal OutstandingAmount,
+        string Status);
+
     public sealed record SettlementSummaryDto(
         Guid Id,
         Guid CounterpartyId,
@@ -49,6 +62,8 @@ namespace PersonalFinance.Api.Features.Settlements
         string? ClosingNote,
         decimal CarriedOverAmount,
         DateTime? SentAt,
+        Guid? LinkedLoanId,
+        SettlementLoanDto? LinkedLoan,
         SettlementTotalsDto Totals,
         IReadOnlyList<SettlementLineDto> Lines,
         string Message,
@@ -68,6 +83,9 @@ namespace PersonalFinance.Api.Features.Settlements
         DateOnly? PeriodEnd,
         decimal? CarriedOverAmount,
         string? ClosingNote);
+
+    public sealed record CloseSettlementLoanDto(string Resolution);
+    public sealed record LinkSettlementLoanDto(Guid? LoanId);
 
     public sealed record SaveLineDto(
         string Kind,

@@ -15,6 +15,15 @@ namespace PersonalFinance.Domain.Settlements.Entities
         /// <summary>Persona con la que se liquida.</summary>
         public Guid CounterpartyId { get; set; }
 
+        /// <summary>
+        /// Préstamo recibido asociado a esta liquidación. Su saldo vivo se
+        /// consulta desde la tabla de préstamos legada, sin duplicar pagos.
+        /// </summary>
+        public Guid? LinkedLoanId { get; set; }
+
+        /// <summary>Saldo del préstamo al enviar, para conservar el histórico.</summary>
+        public decimal? LinkedLoanBalanceSnapshot { get; set; }
+
         /// <summary>Encabezado del mensaje: "CUENTAS AGOSTO/SEPTIEMBRE 2026".</summary>
         public string Title { get; set; } = string.Empty;
 

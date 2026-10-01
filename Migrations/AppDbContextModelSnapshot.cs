@@ -1745,6 +1745,12 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<decimal?>("LinkedLoanBalanceSnapshot")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid?>("LinkedLoanId")
+                        .HasColumnType("char(36)");
+
                     b.Property<DateOnly>("PeriodEnd")
                         .HasColumnType("date");
 
@@ -1771,6 +1777,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CounterpartyId");
+
+                    b.HasIndex("LinkedLoanId");
 
                     b.HasIndex("UserId", "CounterpartyId", "Status");
 
@@ -2250,6 +2258,11 @@ namespace PersonalFinance.Api.Migrations
                         .HasForeignKey("CounterpartyId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("PersonalFinance.Api.Models.Entities.Loan", null)
+                        .WithMany()
+                        .HasForeignKey("LinkedLoanId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.SettlementLine", b =>

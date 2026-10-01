@@ -70,7 +70,7 @@ public class SettlementTests : LedgerTestBase
             new UpdateSettlementDto(null, null, null, 434m, null), CancellationToken.None);
 
         Assert.Equal(634m, result.Totals.Pending);
-        Assert.Contains("Pendiente anterior: 434,00 €", result.Message);
+        Assert.Contains("*PENDIENTE ANTERIOR: 434,00 €*", result.Message);
     }
 
     [Fact]
@@ -231,6 +231,66 @@ public class SettlementTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task El_saldo_vivo_del_prestamo_se_resta_y_se_actualiza_automaticamente()
+    {
+        var service = CreateService();
+        var person = SeedPerson("Mamá");
+        var loan = SeedReceivedLoan("Préstamo de mamá", 170m);
+        var firstSettlement = await SeedSettlementAsync(person);
+
+        var linked = await service.LinkLoanAsync(
+            UserId, firstSettlement.Id, loan.Id, CancellationToken.None);
+
+        Assert.Equal(170m, linked.Totals.Deductions);
+        Assert.Contains("Préstamo recibido de Mamá (pendiente): 170,00 €", linked.Message);
+        await service.MarkSentAsync(UserId, firstSettlement.Id, CancellationToken.None);
+
+        loan.OutstandingAmount = 90m;
+        await Db.SaveChangesAsync();
+
+        var refreshed = await service.GetAsync(UserId, firstSettlement.Id, CancellationToken.None);
+        Assert.Equal(90m, refreshed.LinkedLoan!.OutstandingAmount);
+        Assert.Equal(170m, refreshed.LinkedLoan.AmountInSettlement);
+        Assert.Equal(170m, refreshed.Totals.Deductions);
+
+        var nextSettlement = await service.CreateAsync(
+            UserId,
+            new CreateSettlementDto(
+                person.Id,
+                "CUENTAS OCTUBRE 2026",
+                new DateOnly(2026, 10, 1),
+                new DateOnly(2026, 10, 31),
+                null,
+                null),
+            CancellationToken.None);
+
+        Assert.Equal(loan.Id, nextSettlement.LinkedLoanId);
+        Assert.Equal(90m, nextSettlement.Totals.Deductions);
+        Assert.Contains("90,00 €", nextSettlement.Message);
+    }
+
+    [Theory]
+    [InlineData("settled", "paid")]
+    [InlineData("cancelled", "cancelled")]
+    public async Task Se_puede_saldar_o_cancelar_el_prestamo_asociado(
+        string resolution,
+        string expectedStatus)
+    {
+        var service = CreateService();
+        var person = SeedPerson("Mamá");
+        var loan = SeedReceivedLoan("Préstamo de mamá", 90m);
+        var settlement = await SeedSettlementAsync(person);
+        await service.LinkLoanAsync(UserId, settlement.Id, loan.Id, CancellationToken.None);
+
+        var result = await service.CloseLinkedLoanAsync(
+            UserId, settlement.Id, resolution, CancellationToken.None);
+
+        Assert.Equal(expectedStatus, loan.Status);
+        Assert.Equal(0m, loan.OutstandingAmount);
+        Assert.Equal(0m, result.Totals.Deductions);
+    }
+
+    [Fact]
     public void El_mensaje_reproduce_el_formato_de_siempre()
     {
         var settlement = new Settlement
@@ -247,12 +307,12 @@ public class SettlementTests : LedgerTestBase
 
         var message = SettlementMessageBuilder.Build(settlement);
 
-        Assert.Contains("CUENTAS AGOSTO/SEPTIEMBRE 2026", message);
-        Assert.Contains("GASTOS", message);
+        Assert.Contains("*CUENTAS AGOSTO/SEPTIEMBRE 2026*", message);
+        Assert.Contains("*GASTOS*", message);
         Assert.Contains("• Casa agosto: 350,00 €", message);
-        Assert.Contains("TOTAL GASTOS: 800,00 €", message);
-        Assert.Contains("TOTAL PAGADO: 766,00 €", message);
-        Assert.Contains("TOTAL PENDIENTE ➡️ 34,00 €", message);
+        Assert.Contains("*TOTAL GASTOS: 800,00 €*", message);
+        Assert.Contains("*TOTAL PAGADO: 766,00 €*", message);
+        Assert.Contains("*TOTAL PENDIENTE ➡️ 34,00 €*", message);
         Assert.EndsWith("Si hay algo que no se entienda o hay dudas, me avisas.", message);
     }
 
@@ -312,5 +372,27 @@ public class SettlementTests : LedgerTestBase
         Db.SaveChanges();
 
         return entry;
+    }
+
+    private PersonalFinance.Api.Models.Entities.Loan SeedReceivedLoan(
+        string name,
+        decimal outstandingAmount)
+    {
+        var loan = new PersonalFinance.Api.Models.Entities.Loan
+        {
+            Id = Guid.NewGuid(),
+            UserId = UserId,
+            Type = PersonalFinance.Api.Models.Enums.LoanType.Received,
+            Name = name,
+            PrincipalAmount = 170m,
+            OutstandingAmount = outstandingAmount,
+            StartDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            Status = "active",
+            CategoryId = 100
+        };
+
+        Db.Loans.Add(loan);
+        Db.SaveChanges();
+        return loan;
     }
 }
