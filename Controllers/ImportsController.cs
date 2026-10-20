@@ -599,7 +599,7 @@ namespace PersonalFinance.Api.Controllers
             if (userId is null) return Unauthorized();
             var result = await _application.ApplyAsync(userId.Value, batchId, ct);
             if (result.NotFound) return NotFound();
-            if (!result.Success && result.Conflict) return Conflict(result.Error);
+            if (!result.Success && result.Conflict) return Conflict(new { message = result.Error });
             if (!result.Success)
                 return BadRequest(new { message = result.Error, unassignedRows = result.UnassignedRows });
 
@@ -762,23 +762,43 @@ namespace PersonalFinance.Api.Controllers
                       importBatch.Source == ImportSource.RevolutCsv
                 select new
                 {
+                    row.Id,
                     row.ValueDate,
                     row.Amount,
                     row.Fee,
                     row.Currency,
                     row.NormalizedDescription,
-                    row.RawDescription
+                    row.RawDescription,
+                    row.ClassifiedStatus
                 })
                 .ToListAsync(ct);
-            var existingMovementCounts = existingImportedRows
-                .GroupBy(row => CreateMovementKey(
-                    row.ValueDate,
-                    row.Amount,
-                    row.Fee,
-                    row.Currency,
-                    row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription)))
+            var existingMovements = existingImportedRows
+                .Select(row => new
+                {
+                    row.Id,
+                    row.ClassifiedStatus,
+                    Key = CreateMovementKey(
+                        row.ValueDate,
+                        row.Amount,
+                        row.Fee,
+                        row.Currency,
+                        row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription))
+                })
+                .ToList();
+            var existingMovementCounts = existingMovements
+                .GroupBy(row => row.Key, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var existingSettledCounts = existingMovements
+                .Where(row => row.ClassifiedStatus != EntryStatus.Pending)
+                .GroupBy(row => row.Key, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var existingPendingRowIds = existingMovements
+                .Where(row => row.ClassifiedStatus == EntryStatus.Pending)
+                .GroupBy(row => row.Key, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Select(row => row.Id).ToList(), StringComparer.Ordinal);
             var movementImportOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+            var completedDuplicateOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+            var completedPendingRows = new List<(Guid RowId, DateOnly ValueDate)>();
 
             var batch = new ImportBatch
             {
@@ -826,6 +846,23 @@ namespace PersonalFinance.Api.Controllers
                     !fingerprints.Add(fingerprint))
                 {
                     duplicateRows++;
+                    // Un movimiento que se importó PENDIENTE y ahora llega COMPLETADO: los primeros
+                    // completados cubren los que ya estaban pagados; los siguientes, los pendientes.
+                    if (classified.Status == EntryStatus.Paid &&
+                        existingPendingRowIds.TryGetValue(movementKey, out var pendingRowIds))
+                    {
+                        completedDuplicateOccurrences.TryGetValue(movementKey, out var completed);
+                        completed++;
+                        completedDuplicateOccurrences[movementKey] = completed;
+                        existingSettledCounts.TryGetValue(movementKey, out var settled);
+                        var pendingIndex = completed - settled - 1;
+                        if (pendingIndex >= 0 && pendingIndex < pendingRowIds.Count)
+                        {
+                            completedPendingRows.Add((
+                                pendingRowIds[pendingIndex],
+                                DateOnly.FromDateTime(movement.StartedAt)));
+                        }
+                    }
                     continue;
                 }
 
@@ -864,17 +901,27 @@ namespace PersonalFinance.Api.Controllers
                 });
             }
 
+            var confirmedPendingRows = await ConfirmCompletedPendingEntriesAsync(
+                userId.Value,
+                completedPendingRows,
+                ct);
+
             batch.AcceptedRows = batch.Rows.Count;
             batch.DuplicateRows = duplicateRows;
             if (batch.AcceptedRows == 0)
             {
+                if (confirmedPendingRows > 0)
+                    await _db.SaveChangesAsync(ct);
+
                 return Conflict(new
                 {
                     message = duplicateRows > 0
-                        ? "Todos los movimientos del archivo ya están aplicados al libro contable."
+                        ? "Todos los movimientos del archivo ya están aplicados al libro contable." +
+                          DescribeConfirmedPendingRows(confirmedPendingRows)
                         : "El archivo no contiene movimientos importables.",
                     duplicateRows,
-                    excludedRows
+                    excludedRows,
+                    confirmedPendingRows
                 });
             }
 
@@ -890,9 +937,55 @@ namespace PersonalFinance.Api.Controllers
                 AcceptedRows = batch.AcceptedRows,
                 DuplicateRows = batch.DuplicateRows,
                 ExcludedRows = excludedRows,
+                ConfirmedPendingRows = confirmedPendingRows,
                 Problems = parsed.Problems
             });
         }
+
+        /// <summary>
+        /// Marca como pagados los asientos que se importaron PENDIENTES y que el banco ya
+        /// muestra COMPLETADOS. Devuelve cuántos movimientos del banco se han confirmado.
+        /// </summary>
+        private async Task<int> ConfirmCompletedPendingEntriesAsync(
+            Guid userId,
+            IReadOnlyCollection<(Guid RowId, DateOnly ValueDate)> completedRows,
+            CancellationToken ct)
+        {
+            if (completedRows.Count == 0) return 0;
+
+            var rowIds = completedRows.Select(item => (Guid?)item.RowId).ToList();
+            var pendingEntries = await _db.LedgerEntries
+                .Where(entry =>
+                    entry.UserId == userId &&
+                    entry.Status == EntryStatus.Pending &&
+                    rowIds.Contains(entry.ImportRowId))
+                .ToListAsync(ct);
+
+            var confirmed = 0;
+            foreach (var (rowId, valueDate) in completedRows)
+            {
+                var rowEntries = pendingEntries.Where(entry => entry.ImportRowId == rowId).ToList();
+                if (rowEntries.Count == 0) continue;
+
+                foreach (var entry in rowEntries)
+                {
+                    entry.Status = EntryStatus.Paid;
+                    entry.ValueDate = valueDate;
+                    entry.ActualAmount = entry.ForecastAmount;
+                    entry.UpdatedAt = DateTime.UtcNow;
+                }
+                confirmed++;
+            }
+
+            return confirmed;
+        }
+
+        private static string DescribeConfirmedPendingRows(int confirmed) => confirmed switch
+        {
+            0 => string.Empty,
+            1 => " Se ha marcado como pagado 1 movimiento que seguía pendiente.",
+            _ => $" Se han marcado como pagados {confirmed} movimientos que seguían pendientes."
+        };
 
         private static ConceptMapping? FindMapping(
             IReadOnlyCollection<ConceptMapping> mappings,

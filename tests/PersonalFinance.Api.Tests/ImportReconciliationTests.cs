@@ -262,43 +262,44 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         Assert.Equal(2361.52m, salaryEntry.ActualAmount);
         Assert.Equal(row.Id, salaryEntry.ImportRowId);
         Assert.Equal(salaryEntry.Id, row.LedgerEntryId);
-        Assert.Equal(2379.94m, account.OpeningBalance);
+        // El cobro del 29/09 ya está dentro del saldo real del 01/10: emparejarlo no lo suma otra vez.
+        Assert.Equal(18.42m, account.OpeningBalance);
         Assert.False(await Db.MonthlyPeriods.AnyAsync(period =>
             period.UserId == UserId && period.Year == 2026 && period.Month == 9));
     }
 
     [Fact]
-    public async Task No_aplica_si_una_fila_coincide_con_varias_previsiones_cercanas()
+    public async Task Con_varias_previsiones_cercanas_empareja_la_mas_proxima_y_aplica_el_lote()
     {
         await SeedChartOfAccountsAsync();
         var accountId = await SeedAccountAsync(18.42m, new DateOnly(2026, 10, 1), "Revolut");
         await SeedMappingForAllAsync(accountId, new[] { ("NOMINA", "Nómina") });
         var salary = await Db.Concepts.SingleAsync(concept => concept.UserId == UserId && concept.Name == "Nómina");
-        Db.RecurringRules.AddRange(
-            new RecurringRule
-            {
-                UserId = UserId,
-                ConceptId = salary.Id,
-                AccountId = accountId,
-                Direction = EntryDirection.In,
-                Frequency = RecurrenceFrequency.Monthly,
-                DayOfMonth = 1,
-                ForecastAmount = 2360m,
-                StartDate = new DateOnly(2026, 10, 1),
-                IsActive = true
-            },
-            new RecurringRule
-            {
-                UserId = UserId,
-                ConceptId = salary.Id,
-                AccountId = accountId,
-                Direction = EntryDirection.In,
-                Frequency = RecurrenceFrequency.Monthly,
-                DayOfMonth = 3,
-                ForecastAmount = 2360m,
-                StartDate = new DateOnly(2026, 10, 1),
-                IsActive = true
-            });
+        var dayOneRule = new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = salary.Id,
+            AccountId = accountId,
+            Direction = EntryDirection.In,
+            Frequency = RecurrenceFrequency.Monthly,
+            DayOfMonth = 1,
+            ForecastAmount = 2360m,
+            StartDate = new DateOnly(2026, 10, 1),
+            IsActive = true
+        };
+        var dayThreeRule = new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = salary.Id,
+            AccountId = accountId,
+            Direction = EntryDirection.In,
+            Frequency = RecurrenceFrequency.Monthly,
+            DayOfMonth = 3,
+            ForecastAmount = 2360m,
+            StartDate = new DateOnly(2026, 10, 1),
+            IsActive = true
+        };
+        Db.RecurringRules.AddRange(dayOneRule, dayThreeRule);
         await Db.SaveChangesAsync();
 
         var batch = (Assert.IsType<OkObjectResult>(
@@ -310,10 +311,130 @@ public sealed class ImportReconciliationTests : LedgerTestBase
 
         var result = await CreateController(UserId).Apply(batch.Id, CancellationToken.None);
 
-        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
-        Assert.Contains("varias previsiones", conflict.Value!.ToString());
-        Assert.Empty(await Db.LedgerEntries.Where(entry => entry.UserId == UserId).ToListAsync());
-        Assert.Empty(await Db.MonthlyPeriods.Where(period => period.UserId == UserId).ToListAsync());
+        Assert.IsType<OkObjectResult>(result.Result);
+        var paid = await Db.LedgerEntries.SingleAsync(entry =>
+            entry.UserId == UserId && entry.ConceptId == salary.Id && entry.Status == EntryStatus.Paid);
+        Assert.Equal(dayOneRule.Id, paid.RecurringRuleId);
+        Assert.Equal(2361.52m, paid.ActualAmount);
+        var stillForecast = await Db.LedgerEntries.SingleAsync(entry =>
+            entry.UserId == UserId && entry.RecurringRuleId == dayThreeRule.Id);
+        Assert.NotEqual(EntryStatus.Paid, stillForecast.Status);
+        Assert.Null(stillForecast.ActualAmount);
+    }
+
+    [Fact]
+    public async Task Reparte_pagos_parecidos_entre_previsiones_y_no_empareja_importes_muy_distintos()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(12.80m, new DateOnly(2026, 10, 1), "Revolut");
+        var (_, pets) = SeedConcept("Mascotas", "Paseos del perro", ConceptKind.Expense);
+        var mother = await Db.Concepts.SingleAsync(concept =>
+            concept.UserId == UserId && concept.Name == "Liquidaciones pagadas a mamá");
+        await SeedMappingForAllAsync(accountId, new[]
+        {
+            ("ROVER", "Paseos del perro"),
+            ("JUANA DOG", "Paseos del perro"),
+            ("JENNY", "Liquidaciones pagadas a mamá")
+        });
+        var october = new MonthlyPeriod { UserId = UserId, Year = 2026, Month = 10, Status = PeriodStatus.Open };
+        Db.MonthlyPeriods.Add(october);
+        LedgerEntry Forecast(Concept concept, DateOnly dueDate, decimal amount) => new()
+        {
+            UserId = UserId,
+            AccountId = accountId,
+            PeriodId = october.Id,
+            ConceptId = concept.Id,
+            Direction = EntryDirection.Out,
+            Status = EntryStatus.Planned,
+            DueDate = dueDate,
+            ForecastAmount = amount
+        };
+        var thursdayWalk = Forecast(pets, new DateOnly(2026, 10, 1), 27.50m);
+        var fridayWalk = Forecast(pets, new DateOnly(2026, 10, 2), 27.50m);
+        var settlement = Forecast(mother, new DateOnly(2026, 10, 1), 118.50m);
+        Db.LedgerEntries.AddRange(thursdayWalk, fridayWalk, settlement);
+        await Db.SaveChangesAsync();
+
+        // Caso real del 29/09: antes daba 409 porque cada pago encajaba con dos previsiones.
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv(
+                        "Pago con tarjeta;Actual;29/09/2026 10:00;29/09/2026 10:00;ROVER;-19.55;0.00;EUR;COMPLETADO;0.00",
+                        "Pago con tarjeta;Actual;29/09/2026 11:00;29/09/2026 11:00;JUANA DOG;-18.65;0.00;EUR;COMPLETADO;0.00",
+                        "Transferencia;Actual;29/09/2026 12:00;29/09/2026 12:00;JENNY;-20.00;0.00;EUR;COMPLETADO;0.00"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+
+        var result = await CreateController(UserId).Apply(batch.Id, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        var entries = await Db.LedgerEntries.AsNoTracking().Where(entry => entry.UserId == UserId).ToListAsync();
+        Assert.Equal(19.55m, entries.Single(entry => entry.Id == thursdayWalk.Id).ActualAmount);
+        Assert.Equal(18.65m, entries.Single(entry => entry.Id == fridayWalk.Id).ActualAmount);
+        // 20 € no es "la liquidación de 118,50 €": queda como movimiento aparte.
+        var pendingSettlement = entries.Single(entry => entry.Id == settlement.Id);
+        Assert.NotEqual(EntryStatus.Paid, pendingSettlement.Status);
+        Assert.Null(pendingSettlement.ActualAmount);
+        var transfer = entries.Single(entry => entry.Description == "JENNY");
+        Assert.Equal(EntryStatus.Paid, transfer.Status);
+        Assert.Equal(20.00m, transfer.ActualAmount);
+        Assert.Equal(12.80m, (await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId)).OpeningBalance);
+    }
+
+    [Fact]
+    public async Task Un_pago_importado_pendiente_pasa_a_pagado_cuando_el_extracto_lo_trae_completado()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Revolut");
+        await SeedMappingForAllAsync(accountId, new[]
+        {
+            ("LAVALOTODO", "Compras personales"),
+            ("MERCADONA", "Supermercado y alimentación del hogar")
+        });
+
+        var first = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv(
+                        "Pago con tarjeta;Actual;24/09/2026 12:00;;LAVALOTODO;-8.00;0.00;EUR;PENDIENTE;",
+                        "Pago con tarjeta;Actual;24/09/2026 12:05;;LAVALOTODO;-6.00;0.00;EUR;PENDIENTE;"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+        Assert.IsType<OkObjectResult>((await CreateController(UserId).Apply(first.Id, CancellationToken.None)).Result);
+        Assert.Equal(2, await Db.LedgerEntries.CountAsync(entry =>
+            entry.UserId == UserId && entry.Status == EntryStatus.Pending));
+
+        // Nuevo extracto: el de 8 € ya está COMPLETADO y además llega un movimiento nuevo.
+        var second = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv(
+                        "Pago con tarjeta;Actual;24/09/2026 12:00;25/09/2026 09:00;LAVALOTODO;-8.00;0.00;EUR;COMPLETADO;-8.00",
+                        "Pago con tarjeta;Actual;26/09/2026 10:00;26/09/2026 10:00;MERCADONA;-30.00;0.00;EUR;COMPLETADO;-38.00"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+        Assert.Equal(1, second.AcceptedRows);
+        Assert.Equal(1, second.DuplicateRows);
+        Assert.Equal(1, second.ConfirmedPendingRows);
+
+        // Sólo trae el de 6 €, ya completado: no hay nada nuevo que revisar, pero se confirma igual.
+        var third = await CreateController(UserId).Create(
+            accountId,
+            BuildCsv("Pago con tarjeta;Actual;24/09/2026 12:05;25/09/2026 09:00;LAVALOTODO;-6.00;0.00;EUR;COMPLETADO;-14.00"),
+            CancellationToken.None);
+        var conflict = Assert.IsType<ConflictObjectResult>(third.Result);
+        Assert.Contains("1 movimiento que seguía pendiente", conflict.Value!.ToString());
+
+        var entries = await Db.LedgerEntries.AsNoTracking()
+            .Where(entry => entry.UserId == UserId && entry.AccountId == accountId)
+            .ToListAsync();
+        Assert.Equal(2, entries.Count);
+        Assert.All(entries, entry => Assert.Equal(EntryStatus.Paid, entry.Status));
+        Assert.Equal(new DateOnly(2026, 9, 24), entries.Single(entry => entry.ActualAmount == 8.00m).ValueDate);
+        var account = await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId);
+        Assert.Equal(-14.00m, PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
+            account, entries, new DateOnly(2026, 9, 30)));
     }
 
     [Fact]

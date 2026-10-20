@@ -26,21 +26,26 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public sealed class ImportBatchApplicationService : IImportBatchApplicationService
     {
         private const int ForecastMatchWindowDays = 5;
+        private const decimal MinForecastAmountRatio = 0.5m;
+        private const decimal MaxForecastAmountRatio = 2m;
 
         private sealed record ForecastMatch(
             ImportRow Row,
             Guid ConceptId,
             EntryDirection Direction,
             DateOnly DueDate,
+            decimal ForecastAmount,
             LedgerEntry? Entry,
             RecurringRule? Rule)
         {
             public string Key => Entry is not null
                 ? $"entry:{Entry.Id}"
                 : $"rule:{Rule!.Id}:{DueDate.Year:D4}-{DueDate.Month:D2}";
-        }
 
-        private sealed record ForecastMatchResult(List<ForecastMatch> Matches, int? AmbiguousRowNumber);
+            public decimal AmountGap => Math.Abs(Math.Abs(Row.Amount) - ForecastAmount);
+
+            public int DayGap => Math.Abs(DueDate.DayNumber - Row.ValueDate.DayNumber);
+        }
 
         private readonly IAppDbContext _db;
         private readonly PeriodProvisioner _periods;
@@ -94,7 +99,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .Select(entry => entry.Fingerprint!)
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
-            var matchResult = await FindForecastMatchesAsync(
+            var plannedMatches = await FindForecastMatchesAsync(
                 userId,
                 accountId.Value,
                 batch.Rows.Where(row =>
@@ -103,30 +108,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Allocations.Count == 0 &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 ct);
-            if (matchResult.AmbiguousRowNumber is int ambiguousRowNumber)
-            {
-                return new(
-                    false,
-                    0,
-                    batchId,
-                    $"La fila {ambiguousRowNumber} coincide con varias previsiones cercanas. Revisa el concepto o la fecha antes de aplicar.",
-                    Conflict: true);
-            }
-            var plannedMatches = matchResult.Matches;
-
-            var duplicateMatch = plannedMatches
-                .GroupBy(match => match.Key, StringComparer.Ordinal)
-                .FirstOrDefault(group => group.Count() > 1);
-            if (duplicateMatch is not null)
-            {
-                return new(
-                    false,
-                    0,
-                    batchId,
-                    "Varios movimientos del archivo coinciden con la misma previsión. Revisa las filas antes de aplicar.",
-                    Conflict: true);
-            }
-
             var matchByRowId = plannedMatches.ToDictionary(match => match.Row.Id);
             var periods = new Dictionary<(int Year, int Month), MonthlyPeriod>();
             foreach (var month in batch.Rows
@@ -292,18 +273,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     forecastEntry.UpdatedAt = DateTime.UtcNow;
                     row.LedgerEntryId = forecastEntry.Id;
 
-                    var account = await _db.Accounts.FirstOrDefaultAsync(
-                        item => item.Id == accountId && item.UserId == userId,
-                        ct);
-                    if (account is not null &&
-                        row.ValueDate < account.OpeningDate &&
-                        forecastEntry.DueDate >= account.OpeningDate)
-                    {
-                        account.OpeningBalance += forecastEntry.Direction == EntryDirection.In
-                            ? amount
-                            : -amount;
-                    }
-
+                    // El saldo inicial es el real del banco en la fecha de apertura: un movimiento
+                    // anterior ya está incluido en él, así que emparejarlo no debe modificarlo.
                     if (row.Fee != 0m && feeConcept is not null)
                     {
                         var feeFingerprint = CreateFeeFingerprint(row.Fingerprint);
@@ -326,12 +297,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 ImportRowId = row.Id,
                                 Fingerprint = feeFingerprint
                             });
-                            if (account is not null &&
-                                row.ValueDate < account.OpeningDate &&
-                                match.DueDate >= account.OpeningDate)
-                            {
-                                account.OpeningBalance -= row.Fee;
-                            }
                         }
                     }
                 }
@@ -397,7 +362,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             return new(true, applied, batch.Id, MatchedForecasts: plannedMatches.Count);
         }
 
-        private async Task<ForecastMatchResult> FindForecastMatchesAsync(
+        private async Task<List<ForecastMatch>> FindForecastMatchesAsync(
             Guid userId,
             Guid accountId,
             IEnumerable<ImportRow> rows,
@@ -406,7 +371,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var candidates = rows
                 .Where(row => row.ConfirmedConceptId.HasValue || row.SuggestedConceptId.HasValue)
                 .ToList();
-            if (candidates.Count == 0) return new(new(), null);
+            if (candidates.Count == 0) return new();
 
             var firstDate = candidates.Min(row => row.ValueDate).AddDays(-ForecastMatchWindowDays);
             var lastDate = candidates.Max(row => row.ValueDate).AddDays(ForecastMatchWindowDays);
@@ -435,7 +400,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     rule.AccountId == accountId &&
                     conceptIds.Contains(rule.ConceptId))
                 .ToListAsync(ct);
-            var matches = new List<ForecastMatch>();
+            var options = new List<ForecastMatch>();
 
             foreach (var row in candidates)
             {
@@ -443,19 +408,22 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var direction = directionByRow[row.Id];
                 var earliest = row.ValueDate.AddDays(-ForecastMatchWindowDays);
                 var latest = row.ValueDate.AddDays(ForecastMatchWindowDays);
-                var rowMatches = availableEntries
+                var amount = Math.Abs(row.Amount);
+                options.AddRange(availableEntries
                     .Where(entry =>
                         entry.ConceptId == conceptId &&
                         entry.Direction == direction &&
-                        Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays)
-                    .Select(entry => new ForecastMatch(row, conceptId, direction, entry.DueDate, entry, null))
-                    .ToList();
+                        Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays &&
+                        IsPlausibleAmount(amount, entry.ForecastAmount))
+                    .Select(entry => new ForecastMatch(
+                        row, conceptId, direction, entry.DueDate, entry.ForecastAmount, entry, null)));
 
                 foreach (var rule in rules.Where(rule =>
                              rule.ConceptId == conceptId &&
                              rule.Direction == direction &&
                              rule.StartDate <= latest &&
-                             (rule.EndDate is null || rule.EndDate >= earliest)))
+                             (rule.EndDate is null || rule.EndDate >= earliest) &&
+                             IsPlausibleAmount(amount, rule.ForecastAmount)))
                 {
                     for (var cursor = new DateOnly(earliest.Year, earliest.Month, 1);
                          cursor <= latest;
@@ -472,21 +440,36 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             entry.DueDate.Month == dueDate.Month);
                         if (!occurrenceExists)
                         {
-                            rowMatches.Add(new ForecastMatch(row, conceptId, direction, dueDate, null, rule));
+                            options.Add(new ForecastMatch(
+                                row, conceptId, direction, dueDate, rule.ForecastAmount, null, rule));
                         }
                     }
                 }
-
-                if (rowMatches.Count > 1)
-                {
-                    return new(matches, row.RowNumber);
-                }
-
-                if (rowMatches.Count == 1) matches.Add(rowMatches[0]);
             }
 
-            return new(matches, null);
+            // Reparto uno a uno: gana la pareja con el importe más parecido y, si empatan,
+            // la de fecha más cercana. Lo que no encaje se importa como movimiento nuevo.
+            var matches = new List<ForecastMatch>();
+            var matchedRows = new HashSet<Guid>();
+            var usedForecasts = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var option in options
+                         .OrderBy(option => option.AmountGap)
+                         .ThenBy(option => option.DayGap)
+                         .ThenBy(option => option.DueDate)
+                         .ThenBy(option => option.Row.RowNumber)
+                         .ThenBy(option => option.Key, StringComparer.Ordinal))
+            {
+                if (matchedRows.Contains(option.Row.Id) || !usedForecasts.Add(option.Key)) continue;
+                matchedRows.Add(option.Row.Id);
+                matches.Add(option);
+            }
+
+            return matches;
         }
+
+        private static bool IsPlausibleAmount(decimal actual, decimal forecast) =>
+            forecast <= 0m ||
+            (actual >= forecast * MinForecastAmountRatio && actual <= forecast * MaxForecastAmountRatio);
 
         private static string CreateFeeFingerprint(string rowFingerprint)
         {

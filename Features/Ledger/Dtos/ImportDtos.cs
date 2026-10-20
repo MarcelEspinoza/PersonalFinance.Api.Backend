@@ -73,6 +73,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public int AcceptedRows { get; set; }
         public int DuplicateRows { get; set; }
         public int ExcludedRows { get; set; }
+        /// <summary>Movimientos que estaban pendientes y el extracto ya muestra completados.</summary>
+        public int ConfirmedPendingRows { get; set; }
         public IReadOnlyList<string> Problems { get; set; } = Array.Empty<string>();
     }
 
