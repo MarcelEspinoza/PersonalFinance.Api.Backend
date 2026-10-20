@@ -177,6 +177,29 @@ public class MonthlyLedgerTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Una_regla_cada_dos_meses_aparece_un_mes_si_y_otro_no()
+    {
+        var (_, concept) = SeedConcept("Hogar", "Agua", ConceptKind.Expense);
+
+        Db.RecurringRules.Add(new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = concept.Id,
+            Direction = EntryDirection.Out,
+            Frequency = RecurrenceFrequency.Bimonthly,
+            DayOfMonth = 5,
+            ForecastAmount = 75m,
+            StartDate = new DateOnly(2026, 2, 1)
+        });
+        await Db.SaveChangesAsync();
+
+        Assert.Empty(Expenses(await Summary(2026, 1)));
+        Assert.Single(Expenses(await Summary(2026, 2)));
+        Assert.Empty(Expenses(await Summary(2026, 3)));
+        Assert.Single(Expenses(await Summary(2026, 4)));
+    }
+
+    [Fact]
     public async Task Una_prevision_vencida_pasa_a_pendiente()
     {
         var (_, concept) = SeedConcept("Subscriptions", "Netflix", ConceptKind.Expense);

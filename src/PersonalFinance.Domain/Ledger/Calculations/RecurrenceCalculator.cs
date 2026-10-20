@@ -25,6 +25,7 @@ namespace PersonalFinance.Domain.Ledger.Calculations
             return rule.Frequency switch
             {
                 RecurrenceFrequency.Monthly => true,
+                RecurrenceFrequency.Bimonthly => monthsSinceStart % 2 == 0,
                 RecurrenceFrequency.Quarterly => monthsSinceStart % 3 == 0,
                 RecurrenceFrequency.Yearly => monthsSinceStart % 12 == 0,
                 _ => false

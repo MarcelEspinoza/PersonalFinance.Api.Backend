@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Controllers;
 using PersonalFinance.Api.Features.Ledger.Dtos;
+using PersonalFinance.Api.Features.Ledger.Queries.GetMonthlySummary;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
 
@@ -196,6 +197,74 @@ public sealed class ExpensePlanningTests : LedgerTestBase
             rule.AccountId == jointAccount.Id &&
             rule.ForecastAmount == 21.58m &&
             rule.DayOfMonth == 1);
+    }
+
+    [Fact]
+    public async Task Un_fijo_cada_dos_meses_quita_el_recibo_de_los_meses_que_no_tocan()
+    {
+        var (_, concept) = SeedConcept("Hogar", "Agua", ConceptKind.Expense);
+        var account = SeedAccount();
+        var controller = CreateController();
+
+        await controller.Update(
+            concept.Id,
+            new UpdateExpensePlanningDto
+            {
+                Nature = ConceptNature.Fixed,
+                MonthlyAmount = 75m,
+                DayOfMonth = 5,
+                AccountId = account.Id
+            },
+            default);
+        await Mediator.Send(new GetMonthlySummaryQuery(UserId, 2026, 1));
+        await Mediator.Send(new GetMonthlySummaryQuery(UserId, 2026, 2));
+        Assert.Equal(2, await Db.LedgerEntries.CountAsync(entry => entry.ConceptId == concept.Id));
+
+        var result = await controller.Update(
+            concept.Id,
+            new UpdateExpensePlanningDto
+            {
+                Nature = ConceptNature.Fixed,
+                MonthlyAmount = 75m,
+                DayOfMonth = 5,
+                AccountId = account.Id,
+                Frequency = RecurrenceFrequency.Bimonthly,
+                FirstDueMonth = new DateOnly(2026, 2, 1)
+            },
+            default);
+
+        var item = Assert.IsType<ExpensePlanningItemDto>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(RecurrenceFrequency.Bimonthly, item.Frequency);
+        Assert.Equal(new DateOnly(2026, 2, 1), item.NextDueMonth);
+        var remaining = Assert.Single(await Db.LedgerEntries
+            .Where(entry => entry.ConceptId == concept.Id)
+            .ToListAsync());
+        Assert.Equal(new DateOnly(2026, 2, 5), remaining.DueDate);
+
+        await Mediator.Send(new GetMonthlySummaryQuery(UserId, 2026, 3));
+        await Mediator.Send(new GetMonthlySummaryQuery(UserId, 2026, 4));
+        var dueDates = (await Db.LedgerEntries
+                .Where(entry => entry.ConceptId == concept.Id)
+                .Select(entry => entry.DueDate)
+                .ToListAsync())
+            .OrderBy(date => date)
+            .ToList();
+        Assert.Equal(new[] { new DateOnly(2026, 2, 5), new DateOnly(2026, 4, 5) }, dueDates);
+
+        var resaved = await controller.Update(
+            concept.Id,
+            new UpdateExpensePlanningDto
+            {
+                Nature = ConceptNature.Fixed,
+                MonthlyAmount = 80m,
+                DayOfMonth = 5,
+                AccountId = account.Id
+            },
+            default);
+
+        var resavedItem = Assert.IsType<ExpensePlanningItemDto>(Assert.IsType<OkObjectResult>(resaved.Result).Value);
+        Assert.Equal(RecurrenceFrequency.Bimonthly, resavedItem.Frequency);
+        Assert.Equal(new DateOnly(2026, 2, 1), resavedItem.NextDueMonth);
     }
 
     private Account SeedAccount()

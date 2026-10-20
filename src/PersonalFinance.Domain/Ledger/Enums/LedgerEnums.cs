@@ -56,7 +56,8 @@
     {
         Monthly = 0,
         Quarterly = 1,
-        Yearly = 2
+        Yearly = 2,
+        Bimonthly = 3
     }
 
     public enum DebtKind

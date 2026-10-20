@@ -18,6 +18,13 @@ namespace PersonalFinance.Api.Controllers
         private readonly IAppDbContext _db;
         private readonly IClock _clock;
 
+        // Frecuencias que se gestionan desde la planificación.
+        private static readonly RecurrenceFrequency[] PlanningFrequencies =
+        {
+            RecurrenceFrequency.Monthly,
+            RecurrenceFrequency.Bimonthly
+        };
+
         public ExpensePlanningController(IAppDbContext db, IClock clock)
         {
             _db = db;
@@ -53,7 +60,7 @@ namespace PersonalFinance.Api.Controllers
                 .Where(rule =>
                     rule.UserId == userId.Value &&
                     rule.IsActive &&
-                    rule.Frequency == RecurrenceFrequency.Monthly)
+                    PlanningFrequencies.Contains(rule.Frequency))
                 .OrderBy(rule => rule.CreatedAt)
                 .ToListAsync(ct);
             var accounts = await _db.Accounts
@@ -61,6 +68,7 @@ namespace PersonalFinance.Api.Controllers
                 .Where(account => account.UserId == userId.Value && account.IsActive)
                 .OrderBy(account => account.Name)
                 .ToListAsync(ct);
+            var monthStart = new DateOnly(_clock.Today.Year, _clock.Today.Month, 1);
 
             var rulesByConcept = rules
                 .GroupBy(rule => rule.ConceptId)
@@ -87,7 +95,11 @@ namespace PersonalFinance.Api.Controllers
                             DayOfMonth = rule?.DayOfMonth,
                             AccountId = concept.Nature == ConceptNature.Variable
                                 ? concept.AccountId
-                                : rule?.AccountId
+                                : rule?.AccountId,
+                            Frequency = concept.Nature == ConceptNature.Fixed ? rule?.Frequency : null,
+                            NextDueMonth = concept.Nature == ConceptNature.Fixed
+                                ? NextDueMonth(rule, monthStart)
+                                : null
                         };
                     }).ToList()
                 }).Where(group => group.Items.Count > 0).ToList(),
@@ -244,7 +256,7 @@ namespace PersonalFinance.Api.Controllers
                 .Where(rule =>
                     rule.UserId == userId.Value &&
                     rule.ConceptId == conceptId &&
-                    rule.Frequency == RecurrenceFrequency.Monthly)
+                    PlanningFrequencies.Contains(rule.Frequency))
                 .OrderBy(rule => rule.CreatedAt)
                 .ToListAsync(ct);
             var monthStart = new DateOnly(_clock.Today.Year, _clock.Today.Month, 1);
@@ -259,6 +271,16 @@ namespace PersonalFinance.Api.Controllers
                     return BadRequest("El día de cobro debe estar entre 1 y 31.");
                 if (dto.AccountId is null)
                     return BadRequest("Selecciona la cuenta del movimiento fijo.");
+
+                var previousFrequency = rules.FirstOrDefault()?.Frequency;
+                var frequency = dto.Frequency ?? previousFrequency ?? RecurrenceFrequency.Monthly;
+                if (!PlanningFrequencies.Contains(frequency))
+                    return BadRequest("La frecuencia debe ser cada mes o cada 2 meses.");
+                DateOnly? firstDueMonth = dto.FirstDueMonth is { } requested
+                    ? new DateOnly(requested.Year, requested.Month, 1)
+                    : null;
+                if (firstDueMonth < monthStart)
+                    return BadRequest("El próximo recibo no puede ser de un mes que ya pasó.");
 
                 concept.DefaultMonthlyBudget = null;
                 concept.AccountId = null;
@@ -283,6 +305,19 @@ namespace PersonalFinance.Api.Controllers
                 rule.ForecastAmount = dto.MonthlyAmount.Value;
                 rule.IsActive = true;
                 rule.EndDate = null;
+                rule.Frequency = frequency;
+                if (frequency == RecurrenceFrequency.Bimonthly)
+                {
+                    // El mes de inicio marca en qué meses toca (uno sí, otro no).
+                    if (firstDueMonth is not null)
+                        rule.StartDate = firstDueMonth.Value;
+                    else if (previousFrequency != RecurrenceFrequency.Bimonthly)
+                        rule.StartDate = monthStart;
+                }
+                else if (previousFrequency == RecurrenceFrequency.Bimonthly && rule.StartDate > monthStart)
+                {
+                    rule.StartDate = monthStart;
+                }
 
                 foreach (var duplicate in rules.Skip(1))
                     duplicate.IsActive = false;
@@ -307,6 +342,13 @@ namespace PersonalFinance.Api.Controllers
                     .ToListAsync(ct);
                 foreach (var entry in futureEntries)
                 {
+                    if (rule.Frequency != RecurrenceFrequency.Monthly &&
+                        !RecurrenceCalculator.OccursIn(rule, entry.DueDate.Year, entry.DueDate.Month))
+                    {
+                        _db.LedgerEntries.Remove(entry);
+                        continue;
+                    }
+
                     entry.AccountId = dto.AccountId;
                     entry.ForecastAmount = dto.MonthlyAmount.Value;
                     entry.Description = concept.Name;
@@ -354,8 +396,23 @@ namespace PersonalFinance.Api.Controllers
                 MonthlyAmount = activeRule?.ForecastAmount ?? dto.MonthlyAmount,
                 MonthlyBudget = concept.DefaultMonthlyBudget,
                 DayOfMonth = activeRule?.DayOfMonth ?? dto.DayOfMonth,
-                AccountId = activeRule?.AccountId ?? dto.AccountId
+                AccountId = activeRule?.AccountId ?? dto.AccountId,
+                Frequency = activeRule?.Frequency,
+                NextDueMonth = NextDueMonth(activeRule, monthStart)
             });
+        }
+
+        private static DateOnly? NextDueMonth(RecurringRule? rule, DateOnly monthStart)
+        {
+            if (rule is null) return null;
+
+            for (var offset = 0; offset < 24; offset++)
+            {
+                var month = monthStart.AddMonths(offset);
+                if (RecurrenceCalculator.OccursIn(rule, month.Year, month.Month)) return month;
+            }
+
+            return null;
         }
     }
 }

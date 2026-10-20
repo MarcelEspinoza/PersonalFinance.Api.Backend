@@ -25,6 +25,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public decimal? MonthlyBudget { get; set; }
         public int? DayOfMonth { get; set; }
         public Guid? AccountId { get; set; }
+        public RecurrenceFrequency? Frequency { get; set; }
+        public DateOnly? NextDueMonth { get; set; }
     }
 
     public sealed class ExpensePlanningAccountDto
@@ -40,5 +42,15 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public decimal? MonthlyBudget { get; set; }
         public int? DayOfMonth { get; set; }
         public Guid? AccountId { get; set; }
+
+        /// <summary>
+        /// Solo para fijos. Si no llega, se conserva la frecuencia que ya tenía.
+        /// </summary>
+        public RecurrenceFrequency? Frequency { get; set; }
+
+        /// <summary>
+        /// Para "cada 2 meses": mes del próximo recibo (se ignora el día).
+        /// </summary>
+        public DateOnly? FirstDueMonth { get; set; }
     }
 }
