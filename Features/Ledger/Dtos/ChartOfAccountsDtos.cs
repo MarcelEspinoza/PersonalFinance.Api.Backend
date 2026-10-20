@@ -26,6 +26,11 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public bool IsActive { get; set; }
     }
 
+    public class RenameConceptDto
+    {
+        public string? Name { get; set; }
+    }
+
     /// <summary>Qué ha hecho realmente la siembra, para poder repetirla sin miedo.</summary>
     public class SeedChartOfAccountsResultDto
     {

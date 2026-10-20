@@ -67,6 +67,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public decimal? ActualAmount { get; set; }
         public decimal Remaining { get; set; }
         public string? Description { get; set; }
+        /// <summary>Nota libre del usuario (por qué se pagó así, a quién se debe, etc.).</summary>
+        public string? Notes { get; set; }
         public Guid? AccountId { get; set; }
         public string? AccountName { get; set; }
         public bool FromRecurringRule { get; set; }

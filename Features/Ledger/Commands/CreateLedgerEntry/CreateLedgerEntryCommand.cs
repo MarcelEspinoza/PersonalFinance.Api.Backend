@@ -28,7 +28,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry
         {
             var dto = request.Payload;
 
-            await LedgerGuards.EnsureConceptBelongsToUserAsync(_db, request.UserId, dto.ConceptId, ct);
+            var concept = await LedgerGuards.EnsureConceptBelongsToUserAsync(_db, request.UserId, dto.ConceptId, ct);
             await LedgerGuards.EnsureAccountBelongsToUserAsync(_db, request.UserId, dto.AccountId, ct);
 
             var period = await _provisioner.GetOrOpenAsync(
@@ -47,6 +47,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry
                 ConceptId = dto.ConceptId,
                 AccountId = dto.AccountId,
                 Direction = dto.Direction,
+                IsTransfer = concept.Kind == ConceptKind.Transfer,
                 DueDate = dto.DueDate,
                 ForecastAmount = dto.ForecastAmount,
                 ActualAmount = dto.ActualAmount,

@@ -153,6 +153,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             ActualAmount = e.ActualAmount,
             Remaining = e.ForecastAmount - (e.ActualAmount ?? 0m),
             Description = e.Description,
+            Notes = e.Notes,
             AccountId = e.AccountId,
             AccountName = e.Account?.Name,
             FromRecurringRule = e.RecurringRuleId.HasValue

@@ -31,8 +31,10 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
 
             if (dto.ConceptId.HasValue)
             {
-                await LedgerGuards.EnsureConceptBelongsToUserAsync(_db, request.UserId, dto.ConceptId.Value, ct);
-                entry.ConceptId = dto.ConceptId.Value;
+                var concept = await LedgerGuards.EnsureConceptBelongsToUserAsync(_db, request.UserId, dto.ConceptId.Value, ct);
+                entry.ConceptId = concept.Id;
+                // Un traspaso entre cuentas propias no es ingreso ni gasto: lo decide el concepto.
+                entry.IsTransfer = concept.Kind == ConceptKind.Transfer;
             }
 
             if (dto.AccountId.HasValue)

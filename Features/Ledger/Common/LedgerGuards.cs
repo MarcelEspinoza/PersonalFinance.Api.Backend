@@ -32,13 +32,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             return entry;
         }
 
-        public static async Task EnsureConceptBelongsToUserAsync(
+        public static async Task<Concept> EnsureConceptBelongsToUserAsync(
             IAppDbContext db, Guid userId, Guid conceptId, CancellationToken ct)
         {
-            var exists = await db.Concepts.AnyAsync(c => c.Id == conceptId && c.UserId == userId, ct);
-
-            if (!exists)
-                throw new BusinessRuleException("El concepto no existe o no pertenece al usuario.");
+            return await db.Concepts.FirstOrDefaultAsync(c => c.Id == conceptId && c.UserId == userId, ct)
+                ?? throw new BusinessRuleException("El concepto no existe o no pertenece al usuario.");
         }
 
         public static async Task EnsureAccountBelongsToUserAsync(

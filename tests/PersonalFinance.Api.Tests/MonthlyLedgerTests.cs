@@ -528,6 +528,63 @@ public class MonthlyLedgerTests : LedgerTestBase
     }
 
     [Fact]
+    public async Task Crear_un_asiento_con_concepto_de_traspaso_lo_marca_como_traspaso()
+    {
+        var (_, traspaso) = SeedConcept("Traspasos", "Mov. entre mis bancos", ConceptKind.Transfer);
+
+        var created = await Create(new CreateLedgerEntryDto
+        {
+            ConceptId = traspaso.Id,
+            Direction = EntryDirection.Out,
+            DueDate = new DateOnly(2030, 3, 5),
+            ForecastAmount = 25.44m
+        });
+
+        Assert.True((await Db.LedgerEntries.AsNoTracking().SingleAsync(e => e.Id == created.Id)).IsTransfer);
+    }
+
+    [Fact]
+    public async Task Cambiar_el_concepto_a_un_traspaso_lo_marca_y_volver_a_un_gasto_lo_desmarca()
+    {
+        var (_, gasto) = SeedConcept("Varios", "Otros gastos", ConceptKind.Expense);
+        var (_, traspaso) = SeedConcept("Traspasos", "Mov. entre mis bancos", ConceptKind.Transfer);
+
+        var created = await Create(new CreateLedgerEntryDto
+        {
+            ConceptId = gasto.Id,
+            Direction = EntryDirection.Out,
+            DueDate = new DateOnly(2030, 3, 5),
+            ForecastAmount = 70m
+        });
+
+        await Mediator.Send(new UpdateLedgerEntryCommand(UserId, created.Id,
+            new UpdateLedgerEntryDto { ConceptId = traspaso.Id }));
+        Assert.True((await Db.LedgerEntries.AsNoTracking().SingleAsync(e => e.Id == created.Id)).IsTransfer);
+
+        await Mediator.Send(new UpdateLedgerEntryCommand(UserId, created.Id,
+            new UpdateLedgerEntryDto { ConceptId = gasto.Id }));
+        Assert.False((await Db.LedgerEntries.AsNoTracking().SingleAsync(e => e.Id == created.Id)).IsTransfer);
+    }
+
+    [Fact]
+    public async Task La_nota_del_asiento_sale_en_el_resumen_del_mes()
+    {
+        var (_, concept) = SeedConcept("Subscriptions", "Netflix", ConceptKind.Expense);
+
+        var created = await Create(new CreateLedgerEntryDto
+        {
+            ConceptId = concept.Id,
+            Direction = EntryDirection.Out,
+            DueDate = new DateOnly(2030, 3, 5),
+            ForecastAmount = 13.99m,
+            Notes = "Se descuenta de lo de Vanessa"
+        });
+
+        Assert.Equal("Se descuenta de lo de Vanessa", created.Notes);
+        Assert.Equal("Se descuenta de lo de Vanessa", Expenses(await Summary(2030, 3)).Single().Notes);
+    }
+
+    [Fact]
     public async Task No_se_puede_mover_un_asiento_a_un_mes_cerrado()
     {
         var (_, concept) = SeedConcept("Subscriptions", "Netflix", ConceptKind.Expense);
