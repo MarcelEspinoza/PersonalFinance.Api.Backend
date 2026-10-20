@@ -35,6 +35,7 @@ public sealed class ImportChatServiceTests
                 new ImportAiCandidate(Guid.NewGuid(), "Préstamos cobrados", "Income"),
                 new ImportAiCandidate(Guid.NewGuid(), "Reembolsos y devoluciones", "Income")
             },
+            Array.Empty<string>(),
             CancellationToken.None);
 
         Assert.Equal("Sí, son dos movimientos separados.", result.Reply);
@@ -61,10 +62,34 @@ public sealed class ImportChatServiceTests
             Array.Empty<ImportChatMessage>(),
             Array.Empty<ImportChatRowContext>(),
             Array.Empty<ImportAiCandidate>(),
+            Array.Empty<string>(),
             CancellationToken.None);
 
         Assert.Equal("Sí. Son dos movimientos independientes: el préstamo y el reembolso.", result.Reply);
         Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public async Task Le_pasa_al_asistente_la_revision_automatica_y_las_reglas_de_traspasos()
+    {
+        var handler = new RecordingHandler(
+            """{"content":[{"type":"text","text":"{\"reply\":\"El saldo no cuadra por 12,00 €.\",\"changes\":[],\"unrecognized\":[]}"}]}""");
+        var service = CreateService(handler);
+
+        await service.AskAsync(
+            "¿Por qué no cuadra?",
+            Array.Empty<ImportChatMessage>(),
+            Array.Empty<ImportChatRowContext>(),
+            Array.Empty<ImportAiCandidate>(),
+            new[] { "[warning] El saldo no cuadra con el banco: La app marca 12,00 € más que el banco." },
+            CancellationToken.None);
+
+        using var request = JsonDocument.Parse(handler.RequestBody!);
+        var system = request.RootElement.GetProperty("system").GetString();
+        Assert.Contains("REVISIÓN AUTOMÁTICA", system);
+        Assert.Contains("- [warning] El saldo no cuadra con el banco: La app marca 12,00 € más que el banco.", system);
+        Assert.Contains("Transfer (traspasos) valen para importes positivos y negativos", system);
+        Assert.Contains("dinero de paso", system);
     }
 
     private static ImportChatService CreateService(RecordingHandler handler)

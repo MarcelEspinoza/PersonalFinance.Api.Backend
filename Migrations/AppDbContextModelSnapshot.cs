@@ -1272,10 +1272,19 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateTime?>("AppliedAt")
                         .HasColumnType("datetime(6)");
 
+                    b.Property<decimal?>("BankBalance")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateOnly?>("BankBalanceDate")
+                        .HasColumnType("date");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
                     b.Property<int>("DuplicateRows")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ExcludedRows")
                         .HasColumnType("int");
 
                     b.Property<string>("FileName")

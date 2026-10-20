@@ -44,6 +44,28 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string Status { get; set; } = string.Empty;
         public IReadOnlyList<ImportRowDto> Rows { get; set; } = Array.Empty<ImportRowDto>();
         public IReadOnlyList<ImportConceptOptionDto> Concepts { get; set; } = Array.Empty<ImportConceptOptionDto>();
+        public ImportAnalysisDto? Analysis { get; set; }
+    }
+
+    /// <summary>Revisión automática del extracto: lo que miraría una persona con el banco delante.</summary>
+    public sealed class ImportAnalysisDto
+    {
+        public decimal? BankBalance { get; set; }
+        public DateOnly? BankBalanceDate { get; set; }
+        /// <summary>Saldo de la app en esa fecha contando este extracto (aplicado o por aplicar).</summary>
+        public decimal? AppBalance { get; set; }
+        /// <summary>Banco menos app. Cero si cuadra.</summary>
+        public decimal? Difference { get; set; }
+        public IReadOnlyList<ImportFindingDto> Findings { get; set; } = Array.Empty<ImportFindingDto>();
+    }
+
+    public sealed class ImportFindingDto
+    {
+        /// <summary>"ok", "info" o "warning".</summary>
+        public string Severity { get; set; } = "info";
+        public string Title { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+        public IReadOnlyList<int> RowNumbers { get; set; } = Array.Empty<int>();
     }
 
     public sealed class SelectImportConceptDto

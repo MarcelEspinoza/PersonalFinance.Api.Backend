@@ -289,6 +289,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.ToTable("ImportBatches");
                 e.HasKey(x => x.Id);
                 e.Property(x => x.FileName).HasMaxLength(260);
+                e.Property(x => x.BankBalance).HasColumnType(Money);
 
                 e.HasOne(x => x.Account)
                     .WithMany()

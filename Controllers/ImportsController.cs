@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts;
@@ -25,19 +26,22 @@ namespace PersonalFinance.Api.Controllers
         private readonly IImportChatService _chat;
         private readonly IImportBatchApplicationService _application;
         private readonly IMediator _mediator;
+        private readonly ILogger<ImportsController> _logger;
 
         public ImportsController(
             IAppDbContext db,
             IImportAiSuggestionService aiSuggestions,
             IImportChatService chat,
             IImportBatchApplicationService application,
-            IMediator mediator)
+            IMediator mediator,
+            ILogger<ImportsController>? logger = null)
         {
             _db = db;
             _aiSuggestions = aiSuggestions;
             _chat = chat;
             _application = application;
             _mediator = mediator;
+            _logger = logger ?? NullLogger<ImportsController>.Instance;
         }
 
         [HttpGet("{batchId:guid}")]
@@ -76,8 +80,36 @@ namespace PersonalFinance.Api.Controllers
                     .OrderBy(r => r.RowNumber)
                     .Select(MapRow)
                     .ToList(),
-                Concepts = concepts
+                Concepts = concepts,
+                Analysis = await AnalyzeSafelyAsync(batch, ct)
             });
+        }
+
+        /// <summary>La revisión automática es una ayuda: si falla, la importación sigue funcionando.</summary>
+        private async Task<ImportAnalysisDto> AnalyzeSafelyAsync(ImportBatch batch, CancellationToken ct)
+        {
+            try
+            {
+                return await ImportBatchAnalyzer.AnalyzeAsync(_db, _application, batch, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Automatic review failed for import batch {BatchId}", batch.Id);
+                return new ImportAnalysisDto
+                {
+                    BankBalance = batch.BankBalance,
+                    BankBalanceDate = batch.BankBalanceDate,
+                    Findings = new[]
+                    {
+                        new ImportFindingDto
+                        {
+                            Severity = ImportBatchAnalyzer.SeverityInfo,
+                            Title = "No he podido hacer la revisión automática",
+                            Detail = "Algo falló al revisar este extracto. Puedes revisarlo e importarlo igual."
+                        }
+                    }
+                };
+            }
         }
 
         [HttpDelete("{batchId:guid}")]
@@ -532,6 +564,7 @@ namespace PersonalFinance.Api.Controllers
 
             var batch = await _db.ImportBatches
                 .Include(b => b.Rows)
+                    .ThenInclude(row => row.Allocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
 
@@ -541,6 +574,7 @@ namespace PersonalFinance.Api.Controllers
                 .Select(c => new ImportAiCandidate(c.Id, c.Name, c.Kind.ToString()))
                 .ToListAsync(ct);
             var conceptNames = concepts.ToDictionary(c => c.Id, c => c.Name);
+            var analysis = ImportBatchAnalyzer.ToChatLines(await AnalyzeSafelyAsync(batch, ct));
 
             // Sólo las filas aún pendientes de decisión: aplicadas o duplicadas
             // no tiene sentido tocarlas desde el chat.
@@ -563,7 +597,7 @@ namespace PersonalFinance.Api.Controllers
                 .Select(h => new ImportChatMessage(h.Role, h.Content))
                 .ToList();
 
-            var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, ct);
+            var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, analysis, ct);
 
             var applied = 0;
             foreach (var change in result.Changes)
@@ -808,6 +842,9 @@ namespace PersonalFinance.Api.Controllers
                 FileName = file.FileName,
                 TotalRows = parsed.Movements.Count
             };
+            var closing = ImportBatchAnalyzer.FindClosingBalance(parsed.Movements, account.Currency);
+            batch.BankBalance = closing?.Balance;
+            batch.BankBalanceDate = closing?.Date;
 
             var excludedRows = 0;
             var duplicateRows = 0;
@@ -911,20 +948,27 @@ namespace PersonalFinance.Api.Controllers
 
             batch.AcceptedRows = batch.Rows.Count;
             batch.DuplicateRows = duplicateRows;
+            batch.ExcludedRows = excludedRows;
             if (batch.AcceptedRows == 0)
             {
                 if (confirmedPendingRows > 0)
                     await _db.SaveChangesAsync(ct);
 
+                // Aunque no haya nada nuevo, el extracto sirve para comprobar que el saldo cuadra.
+                var balanceCheck = duplicateRows > 0 && closing is { } bank
+                    ? await CheckBalanceSafelyAsync(account, bank.Balance, bank.Date, file.FileName, ct)
+                    : null;
                 return Conflict(new
                 {
                     message = duplicateRows > 0
                         ? "Todos los movimientos del archivo ya están aplicados al libro contable." +
-                          DescribeConfirmedPendingRows(confirmedPendingRows)
+                          DescribeConfirmedPendingRows(confirmedPendingRows) +
+                          (balanceCheck is null ? string.Empty : $" {balanceCheck.Title}: {balanceCheck.Detail}")
                         : "El archivo no contiene movimientos importables.",
                     duplicateRows,
                     excludedRows,
-                    confirmedPendingRows
+                    confirmedPendingRows,
+                    balanceCheck
                 });
             }
 
@@ -943,6 +987,22 @@ namespace PersonalFinance.Api.Controllers
                 ConfirmedPendingRows = confirmedPendingRows,
                 Problems = parsed.Problems
             });
+        }
+
+        private async Task<ImportFindingDto?> CheckBalanceSafelyAsync(
+            Account account, decimal bankBalance, DateOnly bankDate, string? fileName, CancellationToken ct)
+        {
+            try
+            {
+                var check = await ImportBatchAnalyzer.CheckBalanceAsync(
+                    _db, account, bankBalance, bankDate, 0m, applied: true, fileName, ct);
+                return check.Finding;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Balance check failed for account {AccountId}", account.Id);
+                return null;
+            }
         }
 
         /// <summary>

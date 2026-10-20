@@ -23,6 +23,12 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public int TotalRows { get; set; }
         public int AcceptedRows { get; set; }
         public int DuplicateRows { get; set; }
+        /// <summary>Movimientos del fichero que no se importan (devueltos o reflejos de la hucha).</summary>
+        public int ExcludedRows { get; set; }
+
+        /// <summary>Saldo con el que el banco cierra el extracto: el del último movimiento completado.</summary>
+        public decimal? BankBalance { get; set; }
+        public DateOnly? BankBalanceDate { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? AppliedAt { get; set; }

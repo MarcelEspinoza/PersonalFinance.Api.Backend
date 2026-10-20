@@ -21,7 +21,22 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public interface IImportBatchApplicationService
     {
         Task<ImportApplicationResult> ApplyAsync(Guid userId, Guid batchId, CancellationToken ct);
+
+        /// <summary>
+        /// Con qué previsión se emparejaría cada fila si el lote se aplicara ahora.
+        /// No modifica nada: sirve para revisar el extracto antes de aplicarlo.
+        /// </summary>
+        Task<IReadOnlyList<ImportForecastPreview>> PreviewForecastMatchesAsync(
+            Guid userId, ImportBatch batch, CancellationToken ct);
     }
+
+    /// <summary>Previsión que absorbería una fila: un asiento ya generado o una regla aún sin generar.</summary>
+    public sealed record ImportForecastPreview(
+        Guid RowId,
+        DateOnly DueDate,
+        decimal ForecastAmount,
+        Guid? EntryId,
+        Guid? RuleId);
 
     public sealed class ImportBatchApplicationService : IImportBatchApplicationService
     {
@@ -408,6 +423,44 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             await _db.SaveChangesAsync(ct);
 
             return new(true, applied, batch.Id, MatchedForecasts: matchedForecasts);
+        }
+
+        public async Task<IReadOnlyList<ImportForecastPreview>> PreviewForecastMatchesAsync(
+            Guid userId, ImportBatch batch, CancellationToken ct)
+        {
+            ArgumentNullException.ThrowIfNull(batch);
+            if (batch.Status == ImportBatchStatus.Applied || batch.AccountId is null)
+                return Array.Empty<ImportForecastPreview>();
+
+            // Mismo filtro que ApplyAsync: lo que ya está en el libro no se vuelve a emparejar.
+            var fingerprints = batch.Rows.Select(row => row.Fingerprint).ToList();
+            var existingFingerprints = (await _db.LedgerEntries
+                    .AsNoTracking()
+                    .Where(entry =>
+                        entry.UserId == userId &&
+                        entry.Fingerprint != null &&
+                        fingerprints.Contains(entry.Fingerprint))
+                    .Select(entry => entry.Fingerprint!)
+                    .ToListAsync(ct))
+                .ToHashSet(StringComparer.Ordinal);
+            var matches = await FindForecastMatchesAsync(
+                userId,
+                batch.AccountId.Value,
+                batch.Rows.Where(row =>
+                    row.Status == ImportRowStatus.Pending &&
+                    row.ClassifiedStatus == EntryStatus.Paid &&
+                    row.Allocations.Count == 0 &&
+                    !existingFingerprints.Contains(row.Fingerprint)),
+                ct);
+
+            return matches
+                .Select(match => new ImportForecastPreview(
+                    match.Row.Id,
+                    match.DueDate,
+                    match.ForecastAmount,
+                    match.Entry?.Id,
+                    match.Rule?.Id))
+                .ToList();
         }
 
         /// <summary>

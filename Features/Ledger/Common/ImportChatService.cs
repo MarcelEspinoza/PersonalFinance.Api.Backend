@@ -17,6 +17,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IReadOnlyList<ImportChatMessage> history,
             IReadOnlyList<ImportChatRowContext> rows,
             IReadOnlyList<ImportAiCandidate> concepts,
+            IReadOnlyList<string> analysis,
             CancellationToken ct);
     }
 
@@ -44,6 +45,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IReadOnlyList<ImportChatMessage> history,
             IReadOnlyList<ImportChatRowContext> rows,
             IReadOnlyList<ImportAiCandidate> concepts,
+            IReadOnlyList<string> analysis,
             CancellationToken ct)
         {
             var apiKey = _configuration["Anthropic:ApiKey"]
@@ -58,15 +60,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             }
 
             var model = _configuration["Anthropic:Model"] ?? "claude-haiku-4-5-20251001";
+            var review = analysis.Count == 0
+                ? "(sin datos)"
+                : string.Join("\n", analysis.Select(line => "- " + line));
             var system = $$"""
                 Eres el asistente de revisión de un importador bancario personal.
                 El usuario te habla en español sobre los movimientos de su extracto.
-                Puedes: explicar una fila, decir qué no reconoces, y proponer cambios
-                de concepto cuando el usuario te lo pida explícitamente.
+                Puedes: explicar una fila, explicar la revisión automática, decir qué
+                no reconoces, y proponer cambios de concepto cuando el usuario te lo
+                pida explícitamente.
                 Trata cada fila como un movimiento independiente: nunca agrupes,
                 combines ni sumes transacciones distintas para clasificarlas.
                 El importe positivo es un ingreso y el negativo un gasto; el concepto
-                elegido debe tener el mismo tipo (Income o Expense).
+                elegido debe tener el mismo tipo (Income o Expense). Los conceptos de
+                tipo Transfer (traspasos) valen para importes positivos y negativos.
                 Lee todo el historial antes de responder. La aclaración más reciente
                 del usuario prevalece sobre una respuesta o cambio anterior del asistente.
                 Si el usuario señala o pregunta si una clasificación anterior era
@@ -77,6 +84,26 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 cambiarlos. Nunca presentes filas distintas como un único importe.
                 Si no puedes identificar con seguridad la fila o el concepto, pregunta
                 qué quiere hacer y no propongas cambios.
+
+                CÓMO TRABAJA ESTE USUARIO (aplícalo al explicar y al proponer conceptos):
+                - Dinero que se mueve entre sus propias cuentas (Revolut, la conjunta,
+                  la hucha, efectivo) es un traspaso: usa el concepto Transfer de
+                  movimientos entre sus bancos o el de la hucha, nunca un gasto o ingreso.
+                - Dinero que no es suyo y sólo pasa por su cuenta (lo cobra para
+                  dárselo a otra persona) va al concepto Transfer de dinero de paso.
+                - Un gasto pagado los últimos días del mes puede ser el del mes
+                  siguiente pagado por adelantado; un ingreso fuera de lo previsto de
+                  quien le paga la nómina puede ser un adelanto de una paga. Plantéalo
+                  como posibilidad y pregúntale; no lo des por hecho.
+                - Si el saldo no cuadra, lo más habitual es que el extracto no empiece
+                  el día 1 del mes, que falte un extracto anterior o que haya apuntes
+                  hechos a mano en esa cuenta.
+                - Explícalo todo fácil: frases cortas, sin tecnicismos, en español
+                  neutro tuteando (tú). Di qué botón pulsar si hace falta.
+
+                REVISIÓN AUTOMÁTICA DE ESTE EXTRACTO (la calculó la app con los datos
+                reales; no la contradigas ni inventes cifras distintas):
+                {{review}}
 
                 CONCEPTOS VÁLIDOS (usa sólo estos "id"):
                 {{JsonSerializer.Serialize(concepts)}}
