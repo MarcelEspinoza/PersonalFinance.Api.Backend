@@ -951,6 +951,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateOnly>("OpeningDate")
                         .HasColumnType("date");
 
+                    b.Property<Guid?>("TransferConceptId")
+                        .HasColumnType("char(36)");
+
                     b.Property<int>("Type")
                         .HasColumnType("int");
 
@@ -958,6 +961,8 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("char(36)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("TransferConceptId");
 
                     b.HasIndex("UserId");
 
@@ -2029,6 +2034,14 @@ namespace PersonalFinance.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("SavingAccount");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.Account", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.Concept", null)
+                        .WithMany()
+                        .HasForeignKey("TransferConceptId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.Concept", b =>

@@ -36,8 +36,14 @@ namespace PersonalFinance.Api.Data.Configuration
             e.Property(x => x.Currency).IsRequired().HasMaxLength(3);
             e.Property(x => x.OpeningBalance).HasColumnType(Money);
 
+            e.HasOne<Concept>()
+                .WithMany()
+                .HasForeignKey(x => x.TransferConceptId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             e.HasIndex(x => new { x.UserId, x.Name }).IsUnique();
             e.HasIndex(x => x.UserId);
+            e.HasIndex(x => x.TransferConceptId);
         });
 
         private static void ConfigureConcepts(ModelBuilder b)

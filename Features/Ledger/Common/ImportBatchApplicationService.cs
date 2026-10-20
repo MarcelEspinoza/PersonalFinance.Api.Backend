@@ -94,6 +94,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     concept.Name,
                     "Comisiones bancarias",
                     StringComparison.OrdinalIgnoreCase));
+            var mirrorAccountByConcept = (await _db.Accounts
+                    .Where(account =>
+                        account.UserId == userId &&
+                        account.IsActive &&
+                        account.TransferConceptId != null)
+                    .OrderBy(account => account.CreatedAt)
+                    .ToListAsync(ct))
+                .GroupBy(account => account.TransferConceptId!.Value)
+                .ToDictionary(group => group.Key, group => group.First());
             var existingFingerprints = (await _db.LedgerEntries
                     .Where(entry => entry.UserId == userId && entry.Fingerprint != null)
                     .Select(entry => entry.Fingerprint!)
@@ -267,11 +276,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     forecastEntry.ActualAmount = amount;
                     forecastEntry.ValueDate = row.ValueDate;
                     forecastEntry.AccountId = accountId;
+                    forecastEntry.IsTransfer = concept.Kind == ConceptKind.Transfer;
                     forecastEntry.ImportRowId = row.Id;
                     forecastEntry.Fingerprint = row.Fingerprint;
                     forecastEntry.Description = row.RawDescription;
                     forecastEntry.UpdatedAt = DateTime.UtcNow;
                     row.LedgerEntryId = forecastEntry.Id;
+                    AddTransferMirror(forecastEntry, mirrorAccountByConcept);
 
                     // El saldo inicial es el real del banco en la fecha de apertura: un movimiento
                     // anterior ya está incluido en él, así que emparejarlo no debe modificarlo.
@@ -322,6 +333,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     };
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
+                    AddTransferMirror(importedEntry, mirrorAccountByConcept);
 
                     if (row.Fee != 0m && feeConcept is not null)
                     {
@@ -360,6 +372,21 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             await _db.SaveChangesAsync(ct);
 
             return new(true, applied, batch.Id, MatchedForecasts: plannedMatches.Count);
+        }
+
+        /// <summary>
+        /// Un traspaso hacia una cuenta sin extracto propio (la hucha) también
+        /// mueve su saldo: se añade el asiento contrario en esa cuenta.
+        /// </summary>
+        private void AddTransferMirror(
+            LedgerEntry source,
+            IReadOnlyDictionary<Guid, Account> mirrorAccountByConcept)
+        {
+            if (mirrorAccountByConcept.TryGetValue(source.ConceptId, out var target) &&
+                TransferMirror.ShouldMirror(source, target))
+            {
+                _db.LedgerEntries.Add(TransferMirror.Create(source, target.Id));
+            }
         }
 
         private async Task<List<ForecastMatch>> FindForecastMatchesAsync(

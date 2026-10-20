@@ -33,6 +33,14 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public bool IsActive { get; set; } = true;
 
+        /// <summary>
+        /// Concepto de traspaso cuyos movimientos importados en otra cuenta se
+        /// reflejan aquí en sentido contrario. Sirve para cuentas sin extracto
+        /// propio, como la hucha de Revolut: lo que sale de la cuenta principal
+        /// con ese concepto entra en esta, y al revés.
+        /// </summary>
+        public Guid? TransferConceptId { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public ICollection<LedgerEntry> Entries { get; set; } = new List<LedgerEntry>();

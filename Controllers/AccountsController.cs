@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Extensions;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Domain.Ledger.Calculations;
 using PersonalFinance.Domain.Ledger.Entities;
@@ -53,6 +54,11 @@ namespace PersonalFinance.Api.Controllers
                 a => a.UserId == userId.Value && a.Name == name, ct);
             if (exists) return Conflict("Ya existe una cuenta con ese nombre.");
 
+            var transferConceptId = dto.TransferConceptId == Guid.Empty ? null : dto.TransferConceptId;
+            var linkError = await ValidateTransferConceptAsync(
+                userId.Value, Guid.Empty, transferConceptId, isActive: true, ct);
+            if (linkError is not null) return BadRequest(linkError);
+
             var account = new Account
             {
                 UserId = userId.Value,
@@ -63,11 +69,14 @@ namespace PersonalFinance.Api.Controllers
                 OpeningDate = dto.OpeningDate,
                 Entity = dto.Entity?.Trim(),
                 AccountNumber = dto.AccountNumber?.Trim(),
-                Color = dto.Color?.Trim()
+                Color = dto.Color?.Trim(),
+                TransferConceptId = transferConceptId
             };
 
             _db.Accounts.Add(account);
             MirrorToBank(account);
+            if (account.TransferConceptId is not null)
+                await TransferMirror.SyncAccountAsync(_db, account, null, ct);
             await _db.SaveChangesAsync(ct);
 
             return Ok(ToDto(account));
@@ -88,6 +97,19 @@ namespace PersonalFinance.Api.Controllers
             if (name.Length == 0 || currency.Length != 3)
                 return BadRequest("Nombre y divisa son obligatorios.");
 
+            var previousConceptId = account.TransferConceptId;
+            var nextConceptId = dto.TransferConceptId is null
+                ? previousConceptId
+                : dto.TransferConceptId == Guid.Empty ? null : dto.TransferConceptId;
+            var reactivated = dto.IsActive && !account.IsActive;
+            var linkChanged = nextConceptId != previousConceptId;
+            if (linkChanged || reactivated)
+            {
+                var linkError = await ValidateTransferConceptAsync(
+                    userId.Value, account.Id, nextConceptId, dto.IsActive, ct);
+                if (linkError is not null) return BadRequest(linkError);
+            }
+
             account.Name = name;
             account.Type = dto.Type;
             account.Currency = currency;
@@ -95,8 +117,13 @@ namespace PersonalFinance.Api.Controllers
             account.AccountNumber = dto.AccountNumber?.Trim();
             account.Color = dto.Color?.Trim();
             account.IsActive = dto.IsActive;
+            account.TransferConceptId = nextConceptId;
+            if (dto.OpeningBalance.HasValue) account.OpeningBalance = dto.OpeningBalance.Value;
+            if (dto.OpeningDate.HasValue) account.OpeningDate = dto.OpeningDate.Value;
 
             MirrorToBank(account);
+            if (linkChanged || reactivated)
+                await TransferMirror.SyncAccountAsync(_db, account, previousConceptId, ct);
             await _db.SaveChangesAsync(ct);
 
             return Ok(ToDto(account));
@@ -166,8 +193,35 @@ namespace PersonalFinance.Api.Controllers
             IsActive = a.IsActive,
             Entity = a.Entity,
             AccountNumber = a.AccountNumber,
-            Color = a.Color
+            Color = a.Color,
+            TransferConceptId = a.TransferConceptId
         };
+
+        /// <summary>
+        /// Sólo se puede reflejar un concepto de traspaso propio, y como mucho
+        /// en una cuenta activa: dos espejos del mismo movimiento lo contarían
+        /// dos veces.
+        /// </summary>
+        private async Task<string?> ValidateTransferConceptAsync(
+            Guid userId, Guid accountId, Guid? conceptId, bool isActive, CancellationToken ct)
+        {
+            if (conceptId is null) return null;
+
+            var concept = await _db.Concepts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == conceptId.Value && c.UserId == userId, ct);
+            if (concept is null) return "El concepto de traspaso no existe.";
+            if (concept.Kind != ConceptKind.Transfer)
+                return "El concepto enlazado tiene que ser de tipo traspaso.";
+            if (!isActive) return null;
+
+            var taken = await _db.Accounts.AnyAsync(a =>
+                a.UserId == userId &&
+                a.IsActive &&
+                a.Id != accountId &&
+                a.TransferConceptId == conceptId.Value, ct);
+            return taken ? "Otra cuenta activa ya refleja ese concepto de traspaso." : null;
+        }
 
         /// <summary>
         /// El módulo legado (Gastos/Ingresos/Compromisos/Conciliación) todavía lee la

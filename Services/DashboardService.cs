@@ -129,9 +129,15 @@ namespace PersonalFinance.Api.Services
             }).ToList();
             var currentBalance = accountBalances.Sum(account => account.Balance);
             var previousMonthEnd = currentMonth.AddDays(-1);
+            var activeAccountIds = accounts.Select(account => account.Id).ToHashSet();
             var monthOpeningBalance = accounts.Sum(account => account.OpeningDate > previousMonthEnd
-                ? account.OpeningBalance
-                : AccountBalanceCalculator.ComputeBalance(account, paidEntries, previousMonthEnd));
+                    ? account.OpeningBalance
+                    : AccountBalanceCalculator.ComputeBalance(account, paidEntries, previousMonthEnd))
+                + AccountBalanceCalculator.ComputeMonthStartAdjustment(
+                    paidEntries.Where(entry =>
+                        entry.AccountId is not null && activeAccountIds.Contains(entry.AccountId.Value)),
+                    currentMonth,
+                    entry => new DateOnly(entry.DueDate.Year, entry.DueDate.Month, 1));
 
             var conceptById = concepts.ToDictionary(concept => concept.Id);
             var variableExpenseConcepts = concepts

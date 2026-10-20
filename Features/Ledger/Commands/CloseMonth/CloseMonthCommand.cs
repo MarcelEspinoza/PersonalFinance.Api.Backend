@@ -18,14 +18,20 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CloseMonth
         private readonly IClock _clock;
         private readonly MonthlySummaryLoader _loader;
         private readonly ILedgerAuditLog _audit;
+        private readonly PeriodProvisioner _periods;
 
         public CloseMonthCommandHandler(
-            IAppDbContext db, IClock clock, MonthlySummaryLoader loader, ILedgerAuditLog audit)
+            IAppDbContext db,
+            IClock clock,
+            MonthlySummaryLoader loader,
+            ILedgerAuditLog audit,
+            PeriodProvisioner periods)
         {
             _db = db;
             _clock = clock;
             _loader = loader;
             _audit = audit;
+            _periods = periods;
         }
 
         public async Task<MonthlySummaryDto> Handle(CloseMonthCommand request, CancellationToken ct)
@@ -36,6 +42,8 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CloseMonth
                 .FirstOrDefaultAsync(
                     p => p.UserId == request.UserId && p.Year == request.Year && p.Month == request.Month, ct)
                 ?? throw new NotFoundException($"El periodo {request.Year}-{request.Month:D2} no existe.");
+
+            await _periods.RefreshAnchoredCarryOverAsync(period, ct);
 
             var entries = await _db.LedgerEntries
                 .Where(e => e.UserId == request.UserId && e.PeriodId == period.Id)
@@ -54,14 +62,19 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CloseMonth
                     request.UserId, request.Year, request.Month, declared.Value, computed);
             }
 
-            // El cierre alimenta el arrastre del mes siguiente si ya estaba abierto.
+            // El cierre alimenta el arrastre del mes siguiente si ya estaba abierto,
+            // salvo que ese mes parta de saldos de apertura rebasados el día 1.
             var (nextYear, nextMonth) = PeriodProvisioner.NextMonth(request.Year, request.Month);
 
             var next = await _db.MonthlyPeriods
                 .FirstOrDefaultAsync(p => p.UserId == request.UserId && p.Year == nextYear && p.Month == nextMonth, ct);
 
             if (next is not null && next.Status != PeriodStatus.Closed)
-                next.CarryOverAmount = period.ClosingBalance.Value;
+            {
+                next.CarryOverAmount = await _periods.ResolveAnchoredCarryOverAsync(
+                        request.UserId, nextYear, nextMonth, ct)
+                    ?? period.ClosingBalance.Value;
+            }
 
             await _db.SaveChangesAsync(ct);
 
