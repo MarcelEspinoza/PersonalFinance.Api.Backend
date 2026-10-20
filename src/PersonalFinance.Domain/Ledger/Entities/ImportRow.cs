@@ -19,6 +19,13 @@ namespace PersonalFinance.Domain.Ledger.Entities
 
         public DateOnly ValueDate { get; set; }
 
+        /// <summary>
+        /// Día en que el banco liquidó el movimiento («Fecha de finalización»). Es el que
+        /// mueve el saldo; <see cref="ValueDate"/> es el de la operación y decide el mes.
+        /// Vacío si sigue pendiente o el extracto no lo trae.
+        /// </summary>
+        public DateOnly? SettledDate { get; set; }
+
         /// <summary>Importe con signo tal y como viene del extracto.</summary>
         public decimal Amount { get; set; }
 

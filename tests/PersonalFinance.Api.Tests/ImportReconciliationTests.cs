@@ -355,14 +355,14 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         Db.LedgerEntries.AddRange(thursdayWalk, fridayWalk, settlement);
         await Db.SaveChangesAsync();
 
-        // Caso real del 29/09: antes daba 409 porque cada pago encajaba con dos previsiones.
+        // Dos pagos parecidos que encajan con las dos previsiones: antes daba 409.
         var batch = (Assert.IsType<OkObjectResult>(
                 (await CreateController(UserId).Create(
                     accountId,
                     BuildCsv(
-                        "Pago con tarjeta;Actual;29/09/2026 10:00;29/09/2026 10:00;ROVER;-19.55;0.00;EUR;COMPLETADO;0.00",
-                        "Pago con tarjeta;Actual;29/09/2026 11:00;29/09/2026 11:00;JUANA DOG;-18.65;0.00;EUR;COMPLETADO;0.00",
-                        "Transferencia;Actual;29/09/2026 12:00;29/09/2026 12:00;JENNY;-20.00;0.00;EUR;COMPLETADO;0.00"),
+                        "Pago con tarjeta;Actual;01/10/2026 10:00;01/10/2026 10:00;ROVER;-19.55;0.00;EUR;COMPLETADO;0.00",
+                        "Pago con tarjeta;Actual;01/10/2026 11:00;01/10/2026 11:00;JUANA DOG;-18.65;0.00;EUR;COMPLETADO;0.00",
+                        "Transferencia;Actual;01/10/2026 12:00;01/10/2026 12:00;JENNY;-20.00;0.00;EUR;COMPLETADO;0.00"),
                     CancellationToken.None)).Result)
             .Value as ImportBatchDto)!;
 
@@ -431,10 +431,151 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             .ToListAsync();
         Assert.Equal(2, entries.Count);
         Assert.All(entries, entry => Assert.Equal(EntryStatus.Paid, entry.Status));
-        Assert.Equal(new DateOnly(2026, 9, 24), entries.Single(entry => entry.ActualAmount == 8.00m).ValueDate);
+        // Se compraron el 24/09 (mes y día del gasto) y el banco los cobró el 25/09 (saldo).
+        Assert.All(entries, entry => Assert.Equal(new DateOnly(2026, 9, 24), entry.DueDate));
+        Assert.All(entries, entry => Assert.Equal(new DateOnly(2026, 9, 25), entry.ValueDate));
         var account = await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId);
         Assert.Equal(-14.00m, PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
             account, entries, new DateOnly(2026, 9, 30)));
+    }
+
+    [Fact]
+    public async Task Una_compra_del_ultimo_dia_cobrada_al_siguiente_cuenta_en_su_mes_y_mueve_el_saldo_al_cobrarse()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Revolut");
+        await SeedMappingForAllAsync(accountId, new[] { ("MERCADONA", "Supermercado y alimentación del hogar") });
+
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv("Pago con tarjeta;Actual;30/09/2026 20:00;01/10/2026 08:00;MERCADONA;-30.00;0.00;EUR;COMPLETADO;-30.00"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+        Assert.IsType<OkObjectResult>((await CreateController(UserId).Apply(batch.Id, CancellationToken.None)).Result);
+
+        var row = await Db.ImportRows.AsNoTracking().SingleAsync(item => item.BatchId == batch.Id);
+        Assert.Equal(new DateOnly(2026, 9, 30), row.ValueDate);
+        Assert.Equal(new DateOnly(2026, 10, 1), row.SettledDate);
+        var entries = await Db.LedgerEntries.AsNoTracking()
+            .Where(entry => entry.UserId == UserId && entry.AccountId == accountId)
+            .ToListAsync();
+        var purchase = Assert.Single(entries);
+        var september = await Db.MonthlyPeriods.AsNoTracking().SingleAsync(period =>
+            period.UserId == UserId && period.Year == 2026 && period.Month == 9);
+        Assert.Equal(september.Id, purchase.PeriodId);
+        Assert.Equal(new DateOnly(2026, 9, 30), purchase.DueDate);
+        Assert.Equal(new DateOnly(2026, 10, 1), purchase.ValueDate);
+        var account = await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId);
+        Assert.Equal(0m, PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
+            account, entries, new DateOnly(2026, 9, 30)));
+        Assert.Equal(-30m, PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
+            account, entries, new DateOnly(2026, 10, 1)));
+    }
+
+    [Fact]
+    public async Task Un_gasto_de_fin_de_mes_no_se_empareja_con_la_prevision_del_mes_siguiente()
+    {
+        await SeedChartOfAccountsAsync();
+        var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Revolut");
+        var (_, pets) = SeedConcept("Mascotas", "Paseos del perro", ConceptKind.Expense);
+        await SeedMappingForAllAsync(accountId, new[] { ("ROVER", "Paseos del perro") });
+        var october = new MonthlyPeriod { UserId = UserId, Year = 2026, Month = 10, Status = PeriodStatus.Open };
+        Db.MonthlyPeriods.Add(october);
+        var octoberWalk = new LedgerEntry
+        {
+            UserId = UserId,
+            AccountId = accountId,
+            PeriodId = october.Id,
+            ConceptId = pets.Id,
+            Direction = EntryDirection.Out,
+            Status = EntryStatus.Planned,
+            DueDate = new DateOnly(2026, 10, 1),
+            ForecastAmount = 27.50m
+        };
+        Db.LedgerEntries.Add(octoberWalk);
+        await Db.SaveChangesAsync();
+
+        // Caso real: el paseo pagado el 29/09 es de septiembre, no un adelanto del de octubre.
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    accountId,
+                    BuildCsv("Pago con tarjeta;Actual;29/09/2026 10:00;29/09/2026 10:00;ROVER;-19.55;0.00;EUR;COMPLETADO;-19.55"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+        Assert.IsType<OkObjectResult>((await CreateController(UserId).Apply(batch.Id, CancellationToken.None)).Result);
+
+        var stillPlanned = await Db.LedgerEntries.AsNoTracking().SingleAsync(entry => entry.Id == octoberWalk.Id);
+        Assert.NotEqual(EntryStatus.Paid, stillPlanned.Status);
+        Assert.Null(stillPlanned.ActualAmount);
+        var walk = await Db.LedgerEntries.AsNoTracking().SingleAsync(entry =>
+            entry.UserId == UserId && entry.Description == "ROVER");
+        var september = await Db.MonthlyPeriods.AsNoTracking().SingleAsync(period =>
+            period.UserId == UserId && period.Year == 2026 && period.Month == 9);
+        Assert.Equal(september.Id, walk.PeriodId);
+        Assert.Equal(new DateOnly(2026, 9, 29), walk.DueDate);
+        Assert.Equal(EntryStatus.Paid, walk.Status);
+        Assert.Equal(19.55m, walk.ActualAmount);
+    }
+
+    [Fact]
+    public async Task Una_regla_que_cambio_de_cuenta_y_de_dia_empareja_la_prevision_ya_generada_sin_409()
+    {
+        await SeedChartOfAccountsAsync();
+        var personalId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Revolut");
+        var jointId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Conjunta");
+        var (_, power) = SeedConcept("Suministros de prueba", "Factura de la luz (prueba)", ConceptKind.Expense);
+        await SeedMappingForAllAsync(jointId, new[] { ("IBERDROLA", "Factura de la luz (prueba)") });
+        // Hoy la regla es de la conjunta y vence el día 5, pero la previsión de septiembre
+        // se generó cuando era de la personal y vencía el 20 (caso real de la luz).
+        var rule = new RecurringRule
+        {
+            UserId = UserId,
+            ConceptId = power.Id,
+            AccountId = jointId,
+            Direction = EntryDirection.Out,
+            Frequency = RecurrenceFrequency.Monthly,
+            DayOfMonth = 5,
+            ForecastAmount = 60m,
+            StartDate = new DateOnly(2026, 9, 1),
+            IsActive = true
+        };
+        var september = new MonthlyPeriod { UserId = UserId, Year = 2026, Month = 9, Status = PeriodStatus.Open };
+        Db.RecurringRules.Add(rule);
+        Db.MonthlyPeriods.Add(september);
+        var forecast = new LedgerEntry
+        {
+            UserId = UserId,
+            AccountId = personalId,
+            PeriodId = september.Id,
+            ConceptId = power.Id,
+            RecurringRuleId = rule.Id,
+            Direction = EntryDirection.Out,
+            Status = EntryStatus.Planned,
+            DueDate = new DateOnly(2026, 9, 20),
+            ForecastAmount = 60m
+        };
+        Db.LedgerEntries.Add(forecast);
+        await Db.SaveChangesAsync();
+
+        var batch = (Assert.IsType<OkObjectResult>(
+                (await CreateController(UserId).Create(
+                    jointId,
+                    BuildCsv("Pago con tarjeta;Actual;07/09/2026 09:00;07/09/2026 09:00;IBERDROLA;-58.00;0.00;EUR;COMPLETADO;-58.00"),
+                    CancellationToken.None)).Result)
+            .Value as ImportBatchDto)!;
+        var result = await CreateController(UserId).Apply(batch.Id, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        var powerEntries = await Db.LedgerEntries.AsNoTracking()
+            .Where(entry => entry.UserId == UserId && entry.ConceptId == power.Id)
+            .ToListAsync();
+        var paid = Assert.Single(powerEntries);
+        Assert.Equal(forecast.Id, paid.Id);
+        Assert.Equal(EntryStatus.Paid, paid.Status);
+        Assert.Equal(58.00m, paid.ActualAmount);
+        Assert.Equal(jointId, paid.AccountId);
+        Assert.Equal(new DateOnly(2026, 9, 7), paid.ValueDate);
     }
 
     [Fact]

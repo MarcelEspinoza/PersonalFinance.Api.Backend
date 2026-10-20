@@ -860,7 +860,7 @@ namespace PersonalFinance.Api.Controllers
                         {
                             completedPendingRows.Add((
                                 pendingRowIds[pendingIndex],
-                                DateOnly.FromDateTime(movement.StartedAt)));
+                                DateOnly.FromDateTime(movement.CompletedAt ?? movement.StartedAt)));
                         }
                     }
                     continue;
@@ -879,6 +879,9 @@ namespace PersonalFinance.Api.Controllers
                     UserId = userId.Value,
                     RowNumber = movement.RowNumber,
                     ValueDate = DateOnly.FromDateTime(movement.StartedAt),
+                    SettledDate = classified.Status == EntryStatus.Paid && movement.CompletedAt is { } completedAt
+                        ? DateOnly.FromDateTime(completedAt)
+                        : null,
                     Amount = movement.Amount,
                     Fee = movement.Fee,
                     ClassifiedStatus = classified.Status,
@@ -1006,6 +1009,7 @@ namespace PersonalFinance.Api.Controllers
             Id = row.Id,
             RowNumber = row.RowNumber,
             ValueDate = row.ValueDate,
+            SettledDate = row.SettledDate,
             Amount = row.Amount,
             Currency = row.Currency,
             RawDescription = row.RawDescription,

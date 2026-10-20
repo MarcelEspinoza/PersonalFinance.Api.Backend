@@ -12,6 +12,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid Id { get; set; }
         public int RowNumber { get; set; }
         public DateOnly ValueDate { get; set; }
+        /// <summary>Día en que el banco liquidó el movimiento; mueve el saldo.</summary>
+        public DateOnly? SettledDate { get; set; }
         public decimal Amount { get; set; }
         public string? Currency { get; set; }
         public string RawDescription { get; set; } = string.Empty;

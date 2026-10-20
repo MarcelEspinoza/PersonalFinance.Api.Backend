@@ -156,7 +156,47 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
             }
 
+            // Al abrir el mes, cada regla ya generó su previsión: se busca en todo el mes porque
+            // el día pudo cambiar. Si no aparece, el movimiento entra como nuevo (sin bloquear).
+            var ruleEntryByRowId = new Dictionary<Guid, LedgerEntry>();
+            foreach (var match in plannedMatches.Where(match => match.Entry is null))
+            {
+                var ruleId = match.Rule!.Id;
+                var matchMonth = new DateOnly(match.DueDate.Year, match.DueDate.Month, 1);
+                var afterMatchMonth = matchMonth.AddMonths(1);
+                var ruleEntry = await _db.LedgerEntries
+                    .FirstOrDefaultAsync(entry =>
+                        entry.UserId == userId &&
+                        entry.RecurringRuleId == ruleId &&
+                        entry.DueDate >= matchMonth &&
+                        entry.DueDate < afterMatchMonth &&
+                        entry.Status != EntryStatus.Paid &&
+                        entry.Status != EntryStatus.Skipped,
+                        ct);
+                if (ruleEntry is not null)
+                {
+                    ruleEntryByRowId[match.Row.Id] = ruleEntry;
+                    continue;
+                }
+
+                matchByRowId.Remove(match.Row.Id);
+                var rowMonth = (match.Row.ValueDate.Year, match.Row.ValueDate.Month);
+                if (periods.ContainsKey(rowMonth)) continue;
+
+                var rowPeriod = await _periods.GetOrOpenAsync(userId, rowMonth.Year, rowMonth.Month, ct);
+                if (rowPeriod.Status == PeriodStatus.Closed)
+                    return new(
+                        false,
+                        0,
+                        batchId,
+                        $"El periodo {rowPeriod.Year}-{rowPeriod.Month:D2} está cerrado.",
+                        Conflict: true);
+
+                periods[rowMonth] = rowPeriod;
+            }
+
             var applied = 0;
+            var matchedForecasts = 0;
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
                 var isSplit = row.Allocations.Count > 0;
@@ -211,7 +251,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             Direction = direction,
                             Status = row.ClassifiedStatus,
                             DueDate = row.ValueDate,
-                            ValueDate = isPaid ? row.ValueDate : null,
+                            ValueDate = isPaid ? SettledOn(row) : null,
                             ForecastAmount = allocation.Amount,
                             ActualAmount = isPaid ? allocation.Amount : null,
                             Description = row.RawDescription,
@@ -237,7 +277,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 Direction = EntryDirection.Out,
                                 Status = row.ClassifiedStatus,
                                 DueDate = row.ValueDate,
-                                ValueDate = isPaid ? row.ValueDate : null,
+                                ValueDate = isPaid ? SettledOn(row) : null,
                                 ForecastAmount = row.Fee,
                                 ActualAmount = isPaid ? row.Fee : null,
                                 Description = $"Comisión: {row.RawDescription}",
@@ -253,16 +293,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
 
                 var concept = concepts[conceptId!.Value];
-                if (isPaid && matchByRowId.TryGetValue(row.Id, out var match))
+                var match = isPaid && matchByRowId.TryGetValue(row.Id, out var plannedMatch) ? plannedMatch : null;
+                var forecastEntry = match is null ? null : match.Entry ?? ruleEntryByRowId[row.Id];
+                if (match is not null && forecastEntry is not null)
                 {
-                    var forecastEntry = match.Entry ?? await _db.LedgerEntries
-                        .FirstOrDefaultAsync(entry =>
-                            entry.UserId == userId &&
-                            entry.RecurringRuleId == match.Rule!.Id &&
-                            entry.DueDate == match.DueDate,
-                            ct);
-                    if (forecastEntry is null ||
-                        forecastEntry.Status is EntryStatus.Paid or EntryStatus.Skipped)
+                    if (forecastEntry.Status is EntryStatus.Paid or EntryStatus.Skipped)
                     {
                         return new(
                             false,
@@ -272,9 +307,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             Conflict: true);
                     }
 
+                    matchedForecasts++;
                     forecastEntry.Status = EntryStatus.Paid;
                     forecastEntry.ActualAmount = amount;
-                    forecastEntry.ValueDate = row.ValueDate;
+                    forecastEntry.ValueDate = SettledOn(row);
                     forecastEntry.AccountId = accountId;
                     forecastEntry.IsTransfer = concept.Kind == ConceptKind.Transfer;
                     forecastEntry.ImportRowId = row.Id;
@@ -301,7 +337,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 Direction = EntryDirection.Out,
                                 Status = EntryStatus.Paid,
                                 DueDate = match.DueDate,
-                                ValueDate = row.ValueDate,
+                                ValueDate = SettledOn(row),
                                 ForecastAmount = row.Fee,
                                 ActualAmount = row.Fee,
                                 Description = $"Comisión: {row.RawDescription}",
@@ -324,7 +360,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         IsTransfer = concept.Kind == ConceptKind.Transfer,
                         Status = row.ClassifiedStatus,
                         DueDate = row.ValueDate,
-                        ValueDate = isPaid ? row.ValueDate : null,
+                        ValueDate = isPaid ? SettledOn(row) : null,
                         ForecastAmount = amount,
                         ActualAmount = isPaid ? amount : null,
                         Description = row.RawDescription,
@@ -350,7 +386,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 IsTransfer = false,
                                 Status = row.ClassifiedStatus,
                                 DueDate = row.ValueDate,
-                                ValueDate = isPaid ? row.ValueDate : null,
+                                ValueDate = isPaid ? SettledOn(row) : null,
                                 ForecastAmount = row.Fee,
                                 ActualAmount = isPaid ? row.Fee : null,
                                 Description = $"Comisión: {row.RawDescription}",
@@ -371,7 +407,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             batch.AppliedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
-            return new(true, applied, batch.Id, MatchedForecasts: plannedMatches.Count);
+            return new(true, applied, batch.Id, MatchedForecasts: matchedForecasts);
         }
 
         /// <summary>
@@ -427,6 +463,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     rule.AccountId == accountId &&
                     conceptIds.Contains(rule.ConceptId))
                 .ToListAsync(ct);
+            // Lo que ya generó cada regla en esos meses, en la cuenta que sea: si la regla cambió
+            // de cuenta o de día, la previsión de ese mes sigue siendo la que se generó entonces.
+            var ruleIds = rules.Select(rule => (Guid?)rule.Id).ToList();
+            var firstMonth = new DateOnly(firstDate.Year, firstDate.Month, 1);
+            var afterLastMonth = new DateOnly(lastDate.Year, lastDate.Month, 1).AddMonths(1);
+            var ruleOccurrences = ruleIds.Count == 0
+                ? new List<LedgerEntry>()
+                : await _db.LedgerEntries
+                    .Where(entry =>
+                        entry.UserId == userId &&
+                        ruleIds.Contains(entry.RecurringRuleId) &&
+                        entry.DueDate >= firstMonth &&
+                        entry.DueDate < afterLastMonth)
+                    .ToListAsync(ct);
             var options = new List<ForecastMatch>();
 
             foreach (var row in candidates)
@@ -436,11 +486,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var earliest = row.ValueDate.AddDays(-ForecastMatchWindowDays);
                 var latest = row.ValueDate.AddDays(ForecastMatchWindowDays);
                 var amount = Math.Abs(row.Amount);
+                // Un gasto de fin de mes es de ese mes: no se adelanta a la previsión del mes
+                // siguiente. Un ingreso sí puede (la nómina del día 28 es la del mes que viene).
+                var nextMonth = new DateOnly(row.ValueDate.Year, row.ValueDate.Month, 1).AddMonths(1);
+                bool InAllowedMonth(DateOnly dueDate) => direction == EntryDirection.In || dueDate < nextMonth;
+
                 options.AddRange(availableEntries
                     .Where(entry =>
                         entry.ConceptId == conceptId &&
                         entry.Direction == direction &&
                         Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays &&
+                        InAllowedMonth(entry.DueDate) &&
                         IsPlausibleAmount(amount, entry.ForecastAmount))
                     .Select(entry => new ForecastMatch(
                         row, conceptId, direction, entry.DueDate, entry.ForecastAmount, entry, null)));
@@ -458,17 +514,27 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     {
                         if (!RecurrenceCalculator.OccursIn(rule, cursor.Year, cursor.Month)) continue;
                         var dueDate = RecurrenceCalculator.ResolveDueDate(rule.DayOfMonth, cursor.Year, cursor.Month);
-                        if (Math.Abs(dueDate.DayNumber - row.ValueDate.DayNumber) > ForecastMatchWindowDays)
+                        if (Math.Abs(dueDate.DayNumber - row.ValueDate.DayNumber) > ForecastMatchWindowDays ||
+                            !InAllowedMonth(dueDate))
                             continue;
 
-                        var occurrenceExists = existingEntries.Any(entry =>
+                        var occurrence = ruleOccurrences.FirstOrDefault(entry =>
                             entry.RecurringRuleId == rule.Id &&
                             entry.DueDate.Year == dueDate.Year &&
                             entry.DueDate.Month == dueDate.Month);
-                        if (!occurrenceExists)
+                        if (occurrence is null)
                         {
                             options.Add(new ForecastMatch(
                                 row, conceptId, direction, dueDate, rule.ForecastAmount, null, rule));
+                        }
+                        else if (occurrence.Status is not (EntryStatus.Paid or EntryStatus.Skipped) &&
+                                 occurrence.ConceptId == conceptId &&
+                                 occurrence.Direction == direction &&
+                                 IsPlausibleAmount(amount, occurrence.ForecastAmount) &&
+                                 !options.Any(option => option.Row.Id == row.Id && option.Entry?.Id == occurrence.Id))
+                        {
+                            options.Add(new ForecastMatch(
+                                row, conceptId, direction, occurrence.DueDate, occurrence.ForecastAmount, occurrence, null));
                         }
                     }
                 }
@@ -497,6 +563,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         private static bool IsPlausibleAmount(decimal actual, decimal forecast) =>
             forecast <= 0m ||
             (actual >= forecast * MinForecastAmountRatio && actual <= forecast * MaxForecastAmountRatio);
+
+        /// <summary>El saldo se mueve el día que el banco liquida, no el de la compra.</summary>
+        private static DateOnly SettledOn(ImportRow row) => row.SettledDate ?? row.ValueDate;
 
         private static string CreateFeeFingerprint(string rowFingerprint)
         {

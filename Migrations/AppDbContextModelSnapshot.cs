@@ -699,11 +699,11 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("varchar(255)");
 
-                    b.Property<int>("CurrentRound")
-                        .HasColumnType("int");
-
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("datetime(6)");
+
+                    b.Property<int>("CurrentRound")
+                        .HasColumnType("int");
 
                     b.Property<bool>("IsCompleted")
                         .HasColumnType("tinyint(1)");
@@ -978,11 +978,11 @@ namespace PersonalFinance.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)");
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime(6)");
-
                     b.Property<Guid?>("AccountId")
                         .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
 
                     b.Property<decimal?>("DefaultMonthlyBudget")
                         .HasColumnType("decimal(18,2)");
@@ -1012,9 +1012,9 @@ namespace PersonalFinance.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("GroupId");
-
                     b.HasIndex("AccountId");
+
+                    b.HasIndex("GroupId");
 
                     b.HasIndex("UserId");
 
@@ -1347,6 +1347,9 @@ namespace PersonalFinance.Api.Migrations
 
                     b.Property<int>("RowNumber")
                         .HasColumnType("int");
+
+                    b.Property<DateOnly?>("SettledDate")
+                        .HasColumnType("date");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -2289,11 +2292,6 @@ namespace PersonalFinance.Api.Migrations
                     b.Navigation("Settlement");
                 });
 
-            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.Settlement", b =>
-                {
-                    b.Navigation("Lines");
-                });
-
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Category", b =>
                 {
                     b.Navigation("Expenses");
@@ -2378,6 +2376,11 @@ namespace PersonalFinance.Api.Migrations
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.SavingsGoal", b =>
                 {
                     b.Navigation("Entries");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Domain.Settlements.Entities.Settlement", b =>
+                {
+                    b.Navigation("Lines");
                 });
 #pragma warning restore 612, 618
         }
