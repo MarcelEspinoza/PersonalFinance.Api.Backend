@@ -263,7 +263,14 @@ namespace PersonalFinance.Api.Controllers
 
             concept.Nature = dto.Nature;
 
-            if (dto.Nature == ConceptNature.Fixed)
+            // Un fijo sin importe, día ni cuenta no lleva regla: sus cuotas se apuntan a mano
+            // (por ejemplo, un pasanaco que termina en una fecha concreta).
+            var fixedWithoutRule = dto.Nature == ConceptNature.Fixed &&
+                dto.MonthlyAmount is null &&
+                dto.DayOfMonth is null &&
+                dto.AccountId is null;
+
+            if (dto.Nature == ConceptNature.Fixed && !fixedWithoutRule)
             {
                 if (dto.MonthlyAmount is null or <= 0m)
                     return BadRequest("Indica un importe mensual mayor que cero.");
@@ -362,7 +369,7 @@ namespace PersonalFinance.Api.Controllers
                 if (dto.MonthlyBudget is < 0m)
                     return BadRequest("El límite mensual no puede ser negativo.");
 
-                concept.DefaultMonthlyBudget = dto.MonthlyBudget;
+                concept.DefaultMonthlyBudget = fixedWithoutRule ? null : dto.MonthlyBudget;
                 concept.AccountId = dto.AccountId;
                 var ruleIds = rules.Select(rule => rule.Id).ToHashSet();
                 foreach (var rule in rules) rule.IsActive = false;
@@ -380,7 +387,7 @@ namespace PersonalFinance.Api.Controllers
 
             await _db.SaveChangesAsync(ct);
 
-            var activeRule = dto.Nature == ConceptNature.Fixed
+            var activeRule = dto.Nature == ConceptNature.Fixed && !fixedWithoutRule
                 ? rules.FirstOrDefault() ?? await _db.RecurringRules
                     .AsNoTracking()
                     .Where(rule => rule.UserId == userId.Value && rule.ConceptId == conceptId && rule.IsActive)
