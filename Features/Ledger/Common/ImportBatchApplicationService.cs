@@ -128,7 +128,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 accountId.Value,
                 batch.Rows.Where(row =>
                     row.Status == ImportRowStatus.Pending &&
-                    row.ClassifiedStatus == EntryStatus.Paid &&
+                    EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 ct);
@@ -230,7 +230,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         batchId,
                         "Falta el concepto 'Comisiones bancarias': prepara el plan de cuentas antes de aplicar.");
 
-                var isPaid = row.ClassifiedStatus == EntryStatus.Paid;
+                var isPaid = EntersAsPaid(row);
                 var amount = Math.Abs(row.Amount);
                 if (isSplit)
                 {
@@ -264,7 +264,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             ConceptId = allocation.ConceptId,
                             AccountId = accountId,
                             Direction = direction,
-                            Status = row.ClassifiedStatus,
+                            Status = isPaid ? EntryStatus.Paid : row.ClassifiedStatus,
                             DueDate = row.ValueDate,
                             ValueDate = isPaid ? SettledOn(row) : null,
                             ForecastAmount = allocation.Amount,
@@ -290,7 +290,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 ConceptId = feeConcept.Id,
                                 AccountId = accountId,
                                 Direction = EntryDirection.Out,
-                                Status = row.ClassifiedStatus,
+                                Status = isPaid ? EntryStatus.Paid : row.ClassifiedStatus,
                                 DueDate = row.ValueDate,
                                 ValueDate = isPaid ? SettledOn(row) : null,
                                 ForecastAmount = row.Fee,
@@ -373,7 +373,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         AccountId = accountId,
                         Direction = row.Amount >= 0 ? EntryDirection.In : EntryDirection.Out,
                         IsTransfer = concept.Kind == ConceptKind.Transfer,
-                        Status = row.ClassifiedStatus,
+                        Status = isPaid ? EntryStatus.Paid : row.ClassifiedStatus,
                         DueDate = row.ValueDate,
                         ValueDate = isPaid ? SettledOn(row) : null,
                         ForecastAmount = amount,
@@ -399,7 +399,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 AccountId = accountId,
                                 Direction = EntryDirection.Out,
                                 IsTransfer = false,
-                                Status = row.ClassifiedStatus,
+                                Status = isPaid ? EntryStatus.Paid : row.ClassifiedStatus,
                                 DueDate = row.ValueDate,
                                 ValueDate = isPaid ? SettledOn(row) : null,
                                 ForecastAmount = row.Fee,
@@ -448,7 +448,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 batch.AccountId.Value,
                 batch.Rows.Where(row =>
                     row.Status == ImportRowStatus.Pending &&
-                    row.ClassifiedStatus == EntryStatus.Paid &&
+                    EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 ct);
@@ -619,6 +619,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         /// <summary>El saldo se mueve el día que el banco liquida, no el de la compra.</summary>
         private static DateOnly SettledOn(ImportRow row) => row.SettledDate ?? row.ValueDate;
+
+        /// <summary>
+        /// Un pago que el banco aún tiene «pendiente» ya tiene el dinero apartado: entra como pagado,
+        /// aunque la fila siga guardando que el banco no lo ha completado.
+        /// </summary>
+        internal static bool EntersAsPaid(ImportRow row) =>
+            row.ClassifiedStatus is EntryStatus.Paid or EntryStatus.Pending;
 
         private static string CreateFeeFingerprint(string rowFingerprint)
         {

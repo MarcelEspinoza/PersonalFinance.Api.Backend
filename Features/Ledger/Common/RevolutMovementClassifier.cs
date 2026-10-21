@@ -65,14 +65,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (string.Equals(state, StateReturned, StringComparison.OrdinalIgnoreCase))
                 return Excluded("Movimiento devuelto: nunca llegó a liquidarse.");
 
-            // Un movimiento aún sin liquidar entra como previsión, no como
-            // hecho consumado: su importe todavía puede cambiar.
+            // Un movimiento aún sin liquidar queda marcado como pendiente en la fila, pero el libro lo
+            // cuenta como pagado: el banco ya apartó el dinero (ImportBatchApplicationService.EntersAsPaid).
             var status = string.Equals(state, StatePending, StringComparison.OrdinalIgnoreCase)
                 ? EntryStatus.Pending
                 : EntryStatus.Paid;
 
             var reason = status == EntryStatus.Pending
-                ? "Pendiente de liquidar: entra como previsión."
+                ? "Pendiente en el banco: el dinero ya está apartado; entra como pagado."
                 : "Liquidado.";
 
             if (!string.Equals(state, StateCompleted, StringComparison.OrdinalIgnoreCase) &&

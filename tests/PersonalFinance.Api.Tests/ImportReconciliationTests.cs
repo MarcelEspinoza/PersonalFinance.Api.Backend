@@ -137,7 +137,7 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             "Transferencia;Actual;06/01/2026 10:00;06/01/2026 10:00;PAGO GENERICO;20.00;0.00;EUR;COMPLETADO;90.00",
             // Comisión bancaria: el banco resta importe y comisión por separado.
             "Reintegro;Actual;07/01/2026 09:00;07/01/2026 09:00;ATM CAIXABANK;-30.00;2.00;EUR;COMPLETADO;58.00",
-            // Pendiente de liquidar: no debe contar en el saldo real todavía.
+            // Pendiente en el banco: el dinero ya está apartado, así que cuenta como pagado.
             "Pago con tarjeta;Actual;24/09/2026 12:00;;PAGO PENDIENTE COSA;-15.00;0.00;EUR;PENDIENTE;");
 
         var createResult = await CreateController(UserId).Create(accountId, file, CancellationToken.None);
@@ -154,7 +154,8 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         //   - 50,00 (NAVAS EXPRESS)
         //   + 20,00 + 20,00 (los dos PAGO GENERICO, no colapsados)
         //   - 30,00 - 2,00 (reintegro + su comisión)
-        //   = 58,00. El PENDIENTE (-15,00) no entra: aún no está liquidado.
+        //   - 15,00 (el PENDIENTE: el banco ya apartó el dinero)
+        //   = 43,00.
         var account = await Db.Accounts.AsNoTracking().FirstAsync(a => a.Id == accountId);
         var entries = await Db.LedgerEntries
             .AsNoTracking()
@@ -164,7 +165,7 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         var balance = PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
             account, entries, new DateOnly(2026, 9, 30));
 
-        Assert.Equal(58.00m, balance);
+        Assert.Equal(43.00m, balance);
 
         // La comisión quedó como su propio asiento contra "Bank fees".
         var feeEntry = entries.Single(e => e.Description!.StartsWith("Comisión"));
@@ -172,11 +173,13 @@ public sealed class ImportReconciliationTests : LedgerTestBase
         Assert.False(feeEntry.IsTransfer);
         Assert.Equal(64, feeEntry.Fingerprint!.Length);
 
-        // El PENDIENTE se guardó como Pending, sin importe real, y no en la lista "Paid".
+        // La fila recuerda que el banco aún no lo había completado, pero el asiento ya cuenta como pagado.
         var pendingRow = (await Db.ImportRows.AsNoTracking().ToListAsync())
             .Single(r => r.RawDescription == "PAGO PENDIENTE COSA");
         Assert.Equal(EntryStatus.Pending, pendingRow.ClassifiedStatus);
-        Assert.DoesNotContain(entries, e => e.Description == "PAGO PENDIENTE COSA");
+        var pendingEntry = Assert.Single(entries, e => e.Description == "PAGO PENDIENTE COSA");
+        Assert.Equal(15.00m, pendingEntry.ActualAmount);
+        Assert.Equal(new DateOnly(2026, 9, 24), pendingEntry.ValueDate);
     }
 
     [Fact]
@@ -384,7 +387,7 @@ public sealed class ImportReconciliationTests : LedgerTestBase
     }
 
     [Fact]
-    public async Task Un_pago_importado_pendiente_pasa_a_pagado_cuando_el_extracto_lo_trae_completado()
+    public async Task Un_pago_pendiente_en_el_banco_entra_pagado_y_no_se_duplica_cuando_llega_completado()
     {
         await SeedChartOfAccountsAsync();
         var accountId = await SeedAccountAsync(0m, new DateOnly(2026, 9, 1), "Revolut");
@@ -403,10 +406,11 @@ public sealed class ImportReconciliationTests : LedgerTestBase
                     CancellationToken.None)).Result)
             .Value as ImportBatchDto)!;
         Assert.IsType<OkObjectResult>((await CreateController(UserId).Apply(first.Id, CancellationToken.None)).Result);
+        // El banco ya apartó el dinero: entran directamente como pagados.
         Assert.Equal(2, await Db.LedgerEntries.CountAsync(entry =>
-            entry.UserId == UserId && entry.Status == EntryStatus.Pending));
+            entry.UserId == UserId && entry.Status == EntryStatus.Paid));
 
-        // Nuevo extracto: el de 8 € ya está COMPLETADO y además llega un movimiento nuevo.
+        // Nuevo extracto: el de 8 € ya está COMPLETADO (no se duplica) y además llega un movimiento nuevo.
         var second = (Assert.IsType<OkObjectResult>(
                 (await CreateController(UserId).Create(
                     accountId,
@@ -417,24 +421,24 @@ public sealed class ImportReconciliationTests : LedgerTestBase
             .Value as ImportBatchDto)!;
         Assert.Equal(1, second.AcceptedRows);
         Assert.Equal(1, second.DuplicateRows);
-        Assert.Equal(1, second.ConfirmedPendingRows);
+        Assert.Equal(0, second.ConfirmedPendingRows);
 
-        // Sólo trae el de 6 €, ya completado: no hay nada nuevo que revisar, pero se confirma igual.
+        // Sólo trae el de 6 €, ya completado: ya estaba pagado en la app, así que no hay nada nuevo.
         var third = await CreateController(UserId).Create(
             accountId,
             BuildCsv("Pago con tarjeta;Actual;24/09/2026 12:05;25/09/2026 09:00;LAVALOTODO;-6.00;0.00;EUR;COMPLETADO;-14.00"),
             CancellationToken.None);
         var conflict = Assert.IsType<ConflictObjectResult>(third.Result);
-        Assert.Contains("1 movimiento que seguía pendiente", conflict.Value!.ToString());
+        Assert.DoesNotContain("seguía pendiente", conflict.Value!.ToString());
 
         var entries = await Db.LedgerEntries.AsNoTracking()
             .Where(entry => entry.UserId == UserId && entry.AccountId == accountId)
             .ToListAsync();
         Assert.Equal(2, entries.Count);
         Assert.All(entries, entry => Assert.Equal(EntryStatus.Paid, entry.Status));
-        // Se compraron el 24/09 (mes y día del gasto) y el banco los cobró el 25/09 (saldo).
+        // Se compraron el 24/09 y el dinero salió ese día, aunque el banco los completara el 25/09.
         Assert.All(entries, entry => Assert.Equal(new DateOnly(2026, 9, 24), entry.DueDate));
-        Assert.All(entries, entry => Assert.Equal(new DateOnly(2026, 9, 25), entry.ValueDate));
+        Assert.All(entries, entry => Assert.Equal(new DateOnly(2026, 9, 24), entry.ValueDate));
         var account = await Db.Accounts.AsNoTracking().SingleAsync(item => item.Id == accountId);
         Assert.Equal(-14.00m, PersonalFinance.Domain.Ledger.Calculations.AccountBalanceCalculator.ComputeBalance(
             account, entries, new DateOnly(2026, 9, 30)));

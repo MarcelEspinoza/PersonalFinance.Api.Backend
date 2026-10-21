@@ -72,6 +72,37 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             return (last.Balance!.Value, DateOnly.FromDateTime(lastAt));
         }
 
+        /// <summary>
+        /// Saldo con el que debe cuadrar la app: el de cierre del extracto más los pagos que el banco aún
+        /// tiene pendientes. La app ya los cuenta como pagados (el dinero está apartado), pero el «Saldo»
+        /// del extracto todavía no los incluye. La fecha llega hasta el último de esos pagos.
+        /// </summary>
+        public static (decimal Balance, DateOnly Date)? FindBankBalance(
+            IEnumerable<RevolutMovement> movements, string? currency)
+        {
+            ArgumentNullException.ThrowIfNull(movements);
+
+            var list = movements.ToList();
+            if (FindClosingBalance(list, currency) is not { } closing) return null;
+
+            var pending = list
+                .Where(movement =>
+                    string.IsNullOrWhiteSpace(currency) ||
+                    string.Equals(movement.Currency.Trim(), currency.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Where(movement => RevolutMovementClassifier.Classify(movement) is
+                {
+                    Disposition: MovementDisposition.Import,
+                    Status: EntryStatus.Pending
+                })
+                .ToList();
+            if (pending.Count == 0) return closing;
+
+            var lastPending = pending.Max(movement => DateOnly.FromDateTime(movement.StartedAt));
+            return (
+                closing.Balance + pending.Sum(movement => movement.Amount - movement.Fee),
+                lastPending > closing.Date ? lastPending : closing.Date);
+        }
+
         public static async Task<ImportAnalysisDto> AnalyzeAsync(
             IAppDbContext db,
             IImportBatchApplicationService application,
@@ -107,7 +138,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 // Lo que este extracto aún va a sumar al saldo cuando se aplique.
                 var pendingEffect = pendingRows
-                    .Where(row => row.ClassifiedStatus == EntryStatus.Paid)
+                    .Where(ImportBatchApplicationService.EntersAsPaid)
                     .Where(row => SettledOn(row) >= account.OpeningDate && SettledOn(row) <= bankDate)
                     .Sum(row => row.Amount - row.Fee);
                 var check = await CheckBalanceAsync(
@@ -272,8 +303,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     SeverityInfo,
                     "Pendientes en el banco",
                     $"{Plural(bankPending.Count, "movimiento sigue pendiente", "movimientos siguen pendientes")} en el banco. " +
-                    "Entrarán como «pendientes» y no cuentan en el saldo hasta que el banco los complete. " +
-                    "Cuando importes el siguiente extracto se marcarán como pagados solos.",
+                    "El dinero ya está apartado, así que entran como pagados y el saldo de arriba ya los tiene en cuenta. " +
+                    "Si el banco anula alguno, el saldo dejará de cuadrar y te avisaré.",
                     bankPending));
             }
 
@@ -378,7 +409,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .ToList();
             }
 
-            foreach (var row in rows.Where(row => row.ClassifiedStatus == EntryStatus.Paid && row.Allocations.Count == 0))
+            foreach (var row in rows.Where(row => ImportBatchApplicationService.EntersAsPaid(row) && row.Allocations.Count == 0))
             {
                 if (ConceptOf(row) is not { } conceptId || !concepts.TryGetValue(conceptId, out var concept))
                     continue;

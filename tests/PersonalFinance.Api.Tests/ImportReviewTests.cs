@@ -161,9 +161,10 @@ public sealed class ImportReviewTests : LedgerTestBase
             "Pago con tarjeta;Actual;08/10/2026 12:00;;NAVAS EXPRESS;-15.00;0.00;EUR;PENDIENTE;"));
 
         var before = await ReviewAsync(batchId);
-        Assert.Equal(18m, before.BankBalance);
-        Assert.Equal(new DateOnly(2026, 10, 7), before.BankBalanceDate);
-        Assert.Equal(18m, before.AppBalance);
+        // El banco cierra en 18, pero el pago PENDIENTE de 15 ya está apartado: la app debe tener 3.
+        Assert.Equal(3m, before.BankBalance);
+        Assert.Equal(new DateOnly(2026, 10, 8), before.BankBalanceDate);
+        Assert.Equal(3m, before.AppBalance);
         Assert.Equal(0m, before.Difference);
         Assert.Equal(ImportBatchAnalyzer.SeverityOk, before.Findings[0].Severity);
         Assert.Equal("El saldo cuadra con el banco", before.Findings[0].Title);
@@ -172,7 +173,7 @@ public sealed class ImportReviewTests : LedgerTestBase
         Assert.IsType<OkObjectResult>((await CreateController().Apply(batchId, CancellationToken.None)).Result);
 
         var after = await ReviewAsync(batchId);
-        Assert.Equal(18m, after.AppBalance);
+        Assert.Equal(3m, after.AppBalance);
         Assert.Equal("El saldo cuadra con el banco", after.Findings[0].Title);
         Assert.Single(after.Findings);
     }

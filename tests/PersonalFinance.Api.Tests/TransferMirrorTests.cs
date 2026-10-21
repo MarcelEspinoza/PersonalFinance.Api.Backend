@@ -193,7 +193,7 @@ public sealed class TransferMirrorTests : LedgerTestBase
     }
 
     [Fact]
-    public async Task Un_traspaso_pendiente_que_llega_completado_confirma_tambien_su_espejo()
+    public async Task Un_traspaso_pendiente_entra_pagado_con_su_espejo_y_no_se_duplica_al_completarse()
     {
         await Mediator.Send(new SeedChartOfAccountsCommand(UserId));
         var revolutId = await SeedAccountAsync(100m, new DateOnly(2026, 10, 1), "Revolut");
@@ -203,9 +203,10 @@ public sealed class TransferMirrorTests : LedgerTestBase
         await ImportAndApplyAsync(
             revolutId,
             "Transferencia;Actual;06/10/2026 09:00;;TO FLEXIBLE CASH FUNDS;-40.00;0.00;EUR;PENDIENTE;");
-        var pendingMirror = Assert.Single(await EntriesOfAsync(hucha.Id));
-        Assert.Equal(EntryStatus.Pending, pendingMirror.Status);
-        Assert.Null(pendingMirror.ValueDate);
+        // El banco ya apartó el dinero: el traspaso y su espejo en la hucha entran ya como pagados.
+        var paidMirror = Assert.Single(await EntriesOfAsync(hucha.Id));
+        Assert.Equal(EntryStatus.Paid, paidMirror.Status);
+        Assert.Equal(new DateOnly(2026, 10, 6), paidMirror.ValueDate);
 
         var again = await UploadAsync(
             revolutId,

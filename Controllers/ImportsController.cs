@@ -842,7 +842,7 @@ namespace PersonalFinance.Api.Controllers
                 FileName = file.FileName,
                 TotalRows = parsed.Movements.Count
             };
-            var closing = ImportBatchAnalyzer.FindClosingBalance(parsed.Movements, account.Currency);
+            var closing = ImportBatchAnalyzer.FindBankBalance(parsed.Movements, account.Currency);
             batch.BankBalance = closing?.Balance;
             batch.BankBalanceDate = closing?.Date;
 
