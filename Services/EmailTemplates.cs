@@ -120,6 +120,48 @@
               </p>");
         }
 
+        public static string RemindersDigestTemplate(
+            string? fullName,
+            IReadOnlyCollection<PersonalFinance.Api.Models.Entities.Reminder> reminders,
+            string? remindersUrl)
+        {
+            var name = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(fullName) ? "usuario" : fullName);
+            var intro = reminders.Count == 1
+                ? "Tienes 1 recordatorio pendiente:"
+                : $"Tienes {reminders.Count} recordatorios pendientes:";
+
+            var items = new System.Text.StringBuilder();
+            foreach (var reminder in reminders)
+            {
+                var details = "Fecha: " + PersonalFinance.Api.Features.Reminders.ReminderRules.FormatDate(reminder.DueDate);
+                if (reminder.Amount is { } amount)
+                    details += " · Importe: " + PersonalFinance.Api.Features.Reminders.ReminderRules.FormatAmount(amount);
+                var notes = string.IsNullOrWhiteSpace(reminder.Notes)
+                    ? string.Empty
+                    : $@"<br><span style=""color:#6b7280; font-size:13px;"">{System.Net.WebUtility.HtmlEncode(reminder.Notes.Trim()).Replace("\n", "<br>")}</span>";
+                items.Append($@"
+                <li style=""margin:0 0 14px;""><strong style=""color:#0f1724;"">{System.Net.WebUtility.HtmlEncode(reminder.Title)}</strong><br><span style=""color:#425466; font-size:14px;"">{System.Net.WebUtility.HtmlEncode(details)}</span>{notes}</li>");
+            }
+
+            var link = string.IsNullOrWhiteSpace(remindersUrl)
+                ? string.Empty
+                : $@"<p style=""text-align:center; margin:26px 0 0;"">
+                <a href=""{System.Net.WebUtility.HtmlEncode(remindersUrl)}"" style=""display:inline-block; background:#2563eb; color:white; text-decoration:none; padding:12px 22px; border-radius:8px; font-weight:600;"">
+                  Ver mis recordatorios
+                </a>
+              </p>";
+
+            return Layout("Tus recordatorios", $@"
+              <p style=""font-size:16px; color:#253047; margin:0 0 16px;"">Hola {name},</p>
+              <p style=""color:#425466; font-size:15px; line-height:1.5; margin:0 0 16px;"">{intro}</p>
+              <ul style=""padding-left:20px; margin:0; font-size:15px; line-height:1.5;"">{items}
+              </ul>
+              {link}
+              <p style=""color:#6b7280; font-size:13px; margin:24px 0 0;"">
+                Puedes marcarlos como hechos o posponerlos desde la app. Cada aviso se envía una sola vez por fecha.
+              </p>");
+        }
+
         private static string Layout(string title, string bodyHtml)
         {
             return $@"

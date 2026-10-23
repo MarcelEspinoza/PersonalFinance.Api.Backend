@@ -22,7 +22,45 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? SuggestedConceptId { get; set; }
         public Guid? ConfirmedConceptId { get; set; }
         public string? SuggestionSource { get; set; }
+        /// <summary>Planned entry this row will be deducted from when the batch is applied (always serialized, null if none).</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public Guid? PlannedEntryId { get; set; }
         public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
+    }
+
+    /// <summary>
+    /// Open planned entry («previsto») that rows of an import can be deducted from.
+    /// Nullable fields are always serialized so the client sees an explicit null.
+    /// </summary>
+    public sealed class ImportPlannedCandidateDto
+    {
+        public Guid Id { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public Guid? ConceptId { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public string? ConceptName { get; set; }
+        /// <summary>"in" or "out".</summary>
+        public string Direction { get; set; } = string.Empty;
+        public DateOnly DueDate { get; set; }
+        /// <summary>Always positive; the sign is given by <see cref="Direction"/>.</summary>
+        public decimal ForecastAmount { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public Guid? AccountId { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public string? AccountName { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
+        public string? Description { get; set; }
+        /// <summary>Sum of the absolute amounts of this batch's rows linked to the entry.</summary>
+        public decimal LinkedAmount { get; set; }
+        /// <summary>ForecastAmount minus LinkedAmount; negative when the rows exceed the forecast.</summary>
+        public decimal RemainingAfterLinks { get; set; }
+        public IReadOnlyList<Guid> LinkedRowIds { get; set; } = Array.Empty<Guid>();
+    }
+
+    public sealed class SetImportRowPlannedEntryDto
+    {
+        /// <summary>Planned entry to deduct the row from; null removes the link.</summary>
+        public Guid? PlannedEntryId { get; set; }
     }
 
     public sealed class ImportRowAllocationDto
@@ -126,7 +164,10 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     /// <summary>Cambio propuesto por el asistente; no se aplica hasta que el usuario lo confirma.</summary>
     public sealed class ImportChatProposedActionDto
     {
-        /// <summary>"set_row_concept" o "create_concept".</summary>
+        /// <summary>
+        /// "set_row_concept", "create_concept", "link_planned", "unlink_planned",
+        /// "skip_planned", "update_planned" o "create_reminder".
+        /// </summary>
         public string Type { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
         public IReadOnlyList<Guid> RowIds { get; set; } = Array.Empty<Guid>();
@@ -137,5 +178,18 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string? GroupName { get; set; }
         public PersonalFinance.Domain.Ledger.Enums.ConceptNature? Nature { get; set; }
         public bool SaveForFuture { get; set; }
+        /// <summary>Planned entry the action works on (link_planned, skip_planned, update_planned).</summary>
+        public Guid? PlannedEntryId { get; set; }
+        /// <summary>Concept name of that planned entry, for display.</summary>
+        public string? PlannedEntryName { get; set; }
+        /// <summary>New planned amount (update_planned) or reminder amount (create_reminder).</summary>
+        public decimal? Amount { get; set; }
+        /// <summary>New planned date (update_planned) or reminder date (create_reminder).</summary>
+        public DateOnly? DueDate { get; set; }
+        public string? Title { get; set; }
+        /// <summary>"none", "weekly", "monthly" or "yearly" (create_reminder).</summary>
+        public string? Repeat { get; set; }
+        public int? NotifyDaysBefore { get; set; }
+        public string? Notes { get; set; }
     }
 }

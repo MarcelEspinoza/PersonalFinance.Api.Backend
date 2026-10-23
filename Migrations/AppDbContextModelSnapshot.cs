@@ -812,6 +812,72 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Reconciliations");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Reminder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal?>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("AnchorDay")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateOnly>("DueDate")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("EmailEnabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool>("IsDone")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateOnly?>("LastEmailedForDueDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("varchar(2000)");
+
+                    b.Property<int>("NotifyDaysBefore")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Repeat")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly?>("SnoozedUntil")
+                        .HasColumnType("date");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "IsDone", "DueDate");
+
+                    b.ToTable("Reminders");
+                });
+
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.SavingAccount", b =>
                 {
                     b.Property<int>("Id")
@@ -1354,6 +1420,9 @@ namespace PersonalFinance.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)");
 
+                    b.Property<Guid?>("PlannedEntryId")
+                        .HasColumnType("char(36)");
+
                     b.Property<string>("RawDescription")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -1385,6 +1454,8 @@ namespace PersonalFinance.Api.Migrations
                         .HasColumnType("date");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("PlannedEntryId");
 
                     b.HasIndex("SuggestedConceptId");
 

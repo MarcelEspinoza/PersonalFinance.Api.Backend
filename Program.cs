@@ -173,6 +173,11 @@ builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IMonthAdvisorSe
     PersonalFinance.Api.Features.Chat.MonthAdvisorService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementService,
     PersonalFinance.Api.Features.Settlements.SettlementService>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.IReminderService,
+    PersonalFinance.Api.Features.Reminders.ReminderService>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.ReminderEmailDispatcher>();
+// Reminder emails; turn off with Reminders:EmailJobEnabled=false.
+builder.Services.AddHostedService<PersonalFinance.Api.Features.Reminders.ReminderEmailJob>();
 
 builder.Services.AddAuthorization(options =>
 {

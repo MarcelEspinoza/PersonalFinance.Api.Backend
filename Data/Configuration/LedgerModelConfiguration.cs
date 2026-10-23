@@ -324,6 +324,7 @@ namespace PersonalFinance.Api.Data.Configuration
 
                 e.HasIndex(x => new { x.UserId, x.Fingerprint });
                 e.HasIndex(x => new { x.BatchId, x.RowNumber }).IsUnique();
+                e.HasIndex(x => x.PlannedEntryId);
             });
 
             b.Entity<ImportRowAllocation>(e =>

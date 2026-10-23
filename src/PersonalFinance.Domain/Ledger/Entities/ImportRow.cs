@@ -62,6 +62,13 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// <summary>Asiento creado al aplicar el lote.</summary>
         public Guid? LedgerEntryId { get; set; }
 
+        /// <summary>
+        /// Planned ledger entry this row is deducted from when the batch is applied
+        /// (e.g. several travel payments against one travel budget). The row still books
+        /// its own paid entry; the planned entry is reduced, or closed when covered.
+        /// </summary>
+        public Guid? PlannedEntryId { get; set; }
+
         public ICollection<ImportRowAllocation> Allocations { get; set; } = new List<ImportRowAllocation>();
     }
 }

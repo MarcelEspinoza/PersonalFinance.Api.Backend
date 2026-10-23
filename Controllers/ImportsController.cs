@@ -249,6 +249,8 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = null;
             row.SuggestionSource = "split";
             row.SuggestionConfidence = 1m;
+            // A split row cannot be deducted from a planned entry.
+            row.PlannedEntryId = null;
 
             await _db.SaveChangesAsync(ct);
             var response = MapRow(row);
@@ -589,7 +591,11 @@ namespace PersonalFinance.Api.Controllers
                     r.RawDescription,
                     (r.ConfirmedConceptId ?? r.SuggestedConceptId) is { } cid && conceptNames.TryGetValue(cid, out var name)
                         ? name
-                        : null))
+                        : null)
+                {
+                    PlannedEntryId = r.PlannedEntryId,
+                    IsSplit = r.Allocations.Count > 0
+                })
                 .ToList();
 
             var history = dto.History
@@ -598,6 +604,26 @@ namespace PersonalFinance.Api.Controllers
                 .ToList();
 
             var extra = await LoadChatContextAsync(userId.Value, ct);
+            var planned = batch.Status == ImportBatchStatus.Applied
+                ? new List<ImportPlannedCandidateDto>()
+                : await LoadPlannedCandidatesAsync(userId.Value, batch, ct);
+            extra = extra with
+            {
+                PlannedEntries = planned
+                    .Select(p => new ImportChatPlannedContext(
+                        p.Id,
+                        p.ConceptName,
+                        p.Direction,
+                        p.DueDate,
+                        p.ForecastAmount,
+                        p.AccountName,
+                        p.Description,
+                        p.LinkedAmount,
+                        p.RemainingAfterLinks,
+                        p.LinkedRowIds))
+                    .ToList(),
+                Today = DateOnly.FromDateTime(DateTime.UtcNow)
+            };
             var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, analysis, extra, ct);
 
             // El asistente sólo propone: nada cambia hasta que el usuario confirma
@@ -619,10 +645,169 @@ namespace PersonalFinance.Api.Controllers
                         GroupId = p.GroupId,
                         GroupName = p.GroupName,
                         Nature = p.Nature,
-                        SaveForFuture = p.SaveForFuture
+                        SaveForFuture = p.SaveForFuture,
+                        PlannedEntryId = p.PlannedEntryId,
+                        PlannedEntryName = p.PlannedEntryName,
+                        Amount = p.Amount,
+                        DueDate = p.DueDate,
+                        Title = p.Title,
+                        Repeat = p.Repeat,
+                        NotifyDaysBefore = p.NotifyDaysBefore,
+                        Notes = p.Notes
                     })
                     .ToList()
             });
+        }
+
+        [HttpGet("{batchId:guid}/planned-candidates")]
+        public async Task<ActionResult<IReadOnlyList<ImportPlannedCandidateDto>>> GetPlannedCandidates(
+            Guid batchId, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var batch = await _db.ImportBatches
+                .AsNoTracking()
+                .Include(b => b.Rows)
+                    .ThenInclude(row => row.Allocations)
+                .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Applied)
+                return BadRequest(new { message = "El lote ya se ha aplicado." });
+
+            return Ok(await LoadPlannedCandidatesAsync(userId.Value, batch, ct));
+        }
+
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/planned-entry")]
+        public async Task<IActionResult> SetRowPlannedEntry(
+            Guid batchId, Guid rowId, [FromBody] SetImportRowPlannedEntryDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var batch = await _db.ImportBatches
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Applied)
+                return BadRequest(new { message = "El lote ya se ha aplicado." });
+
+            var row = await _db.ImportRows
+                .Include(item => item.Allocations)
+                .FirstOrDefaultAsync(
+                    item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
+            if (row is null)
+                return BadRequest(new { message = "El movimiento no pertenece a esta importación." });
+
+            if (dto?.PlannedEntryId is not { } plannedEntryId)
+            {
+                row.PlannedEntryId = null;
+                await _db.SaveChangesAsync(ct);
+                return NoContent();
+            }
+
+            if (row.Status != ImportRowStatus.Pending)
+                return BadRequest(new { message = "Este movimiento ya no está pendiente; no se puede descontar de un previsto." });
+
+            var planned = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.Id == plannedEntryId && entry.UserId == userId.Value)
+                .Select(entry => new
+                {
+                    entry.ConceptId,
+                    entry.Direction,
+                    entry.Status,
+                    entry.IsTransfer,
+                    entry.ImportRowId,
+                    ConceptIsActive = entry.Concept != null && entry.Concept.IsActive
+                })
+                .FirstOrDefaultAsync(ct);
+            if (planned is null ||
+                planned.Status is not (EntryStatus.Planned or EntryStatus.Pending) ||
+                planned.ImportRowId is not null)
+                return BadRequest(new { message = "El previsto no existe o ya no está pendiente." });
+            if (planned.IsTransfer)
+                return BadRequest(new { message = "Ese previsto es un traspaso; no se puede descontar de él." });
+
+            var error = ImportPlannedLinks.LinkError(row.Amount, row.Allocations.Count > 0, planned.Direction);
+            if (error is not null) return BadRequest(new { message = error });
+
+            row.PlannedEntryId = plannedEntryId;
+            if (row.ConfirmedConceptId is null && planned.ConceptIsActive)
+            {
+                row.ConfirmedConceptId = planned.ConceptId;
+                row.SuggestionSource = "manual";
+                row.SuggestionConfidence = 1m;
+            }
+
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        /// <summary>
+        /// Open planned entries of the user around the batch dates (plus any already linked by
+        /// this batch), with what this batch's linked rows will deduct from each one.
+        /// </summary>
+        private async Task<List<ImportPlannedCandidateDto>> LoadPlannedCandidatesAsync(
+            Guid userId, ImportBatch batch, CancellationToken ct)
+        {
+            if (batch.Rows.Count == 0) return new List<ImportPlannedCandidateDto>();
+
+            var from = batch.Rows.Min(row => row.ValueDate).AddDays(-ImportPlannedLinks.CandidateWindowDays);
+            var to = batch.Rows.Max(row => row.ValueDate).AddDays(ImportPlannedLinks.CandidateWindowDays);
+            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedIds = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+
+            var entries = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(ImportPlannedLinks.IsOpenExpression)
+                .Where(entry =>
+                    entry.UserId == userId &&
+                    ((entry.DueDate >= from && entry.DueDate <= to) || linkedIds.Contains(entry.Id)))
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.ConceptId,
+                    ConceptName = entry.Concept != null ? entry.Concept.Name : null,
+                    entry.Direction,
+                    entry.DueDate,
+                    entry.ForecastAmount,
+                    entry.AccountId,
+                    AccountName = entry.Account != null ? entry.Account.Name : null,
+                    entry.Description
+                })
+                .ToListAsync(ct);
+
+            return entries
+                .Select(entry =>
+                {
+                    var linked = linkedRows
+                        .Where(row =>
+                            row.PlannedEntryId == entry.Id &&
+                            ImportPlannedLinks.LinkError(row.Amount, false, entry.Direction) is null)
+                        .OrderBy(row => row.RowNumber)
+                        .ToList();
+                    var forecast = Math.Abs(entry.ForecastAmount);
+                    var linkedAmount = linked.Sum(row => Math.Abs(row.Amount));
+                    return new ImportPlannedCandidateDto
+                    {
+                        Id = entry.Id,
+                        ConceptId = entry.ConceptId,
+                        ConceptName = entry.ConceptName,
+                        Direction = ImportPlannedLinks.DirectionText(entry.Direction),
+                        DueDate = entry.DueDate,
+                        ForecastAmount = forecast,
+                        AccountId = entry.AccountId,
+                        AccountName = entry.AccountName,
+                        Description = entry.Description,
+                        LinkedAmount = linkedAmount,
+                        RemainingAfterLinks = forecast - linkedAmount,
+                        LinkedRowIds = linked.Select(row => row.Id).ToList()
+                    };
+                })
+                .OrderBy(candidate => candidate.DueDate)
+                .ThenBy(candidate => candidate.ConceptName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
         }
 
         /// <summary>
@@ -1170,6 +1355,7 @@ namespace PersonalFinance.Api.Controllers
             SuggestedConceptId = row.SuggestedConceptId,
             ConfirmedConceptId = row.ConfirmedConceptId,
             SuggestionSource = row.SuggestionSource,
+            PlannedEntryId = row.PlannedEntryId,
             Allocations = row.Allocations
                 .OrderBy(item => item.SortOrder)
                 .Select(item => new ImportRowAllocationDto

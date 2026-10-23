@@ -29,12 +29,15 @@ namespace PersonalFinance.Api.Services
             }
         }
 
-        public async Task SendEmailAsync(string toEmail, string subject, string htmlContent)
+        public Task SendEmailAsync(string toEmail, string subject, string htmlContent) =>
+            TrySendEmailAsync(toEmail, subject, htmlContent);
+
+        public async Task<bool> TrySendEmailAsync(string toEmail, string subject, string htmlContent)
         {
             if (string.IsNullOrWhiteSpace(_apiKey))
             {
                 _logger.LogWarning("Skipping email send to {Email} because SendGrid API key is not configured.", toEmail);
-                return;
+                return false;
             }
 
             try
@@ -58,15 +61,16 @@ namespace PersonalFinance.Api.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("SendGrid returned status {StatusCode} when sending email to {Email}", response.StatusCode, toEmail);
+                    return false;
                 }
-                else
-                {
-                    _logger.LogInformation("Email sent to {Email} via SendGrid (subject: {Subject})", toEmail, subject);
-                }
+
+                _logger.LogInformation("Email sent to {Email} via SendGrid (subject: {Subject})", toEmail, subject);
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending email to {Email}", toEmail);
+                return false;
             }
         }
     

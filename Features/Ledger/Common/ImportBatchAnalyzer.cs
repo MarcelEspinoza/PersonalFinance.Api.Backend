@@ -285,7 +285,28 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var findings = new List<ImportFindingDto>();
             var userId = batch.UserId;
 
-            var unassigned = rows.Where(row => row.Allocations.Count == 0 && ConceptOf(row) is null).ToList();
+            // Rows the user deducts from a planned entry («previsto»): they are booked apart and the
+            // planned entry is reduced, so the forecast warnings below don't apply to them.
+            var linkedRows = rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedIds = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+            var plannedById = linkedIds.Count == 0
+                ? new Dictionary<Guid, LedgerEntry>()
+                : await db.LedgerEntries
+                    .AsNoTracking()
+                    .Include(entry => entry.Concept)
+                    .Where(entry => entry.UserId == userId && linkedIds.Contains(entry.Id))
+                    .ToDictionaryAsync(entry => entry.Id, ct);
+            var deductedRows = linkedRows
+                .Where(row => ImportPlannedLinks.IsValidLink(row, plannedById.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .ToList();
+            var deductedRowIds = deductedRows.Select(row => row.Id).ToHashSet();
+
+            var unassigned = rows
+                .Where(row =>
+                    row.Allocations.Count == 0 &&
+                    ConceptOf(row) is null &&
+                    !(row.PlannedEntryId is { } plannedId && plannedById.ContainsKey(plannedId)))
+                .ToList();
             if (unassigned.Count > 0)
             {
                 findings.Add(Finding(
@@ -356,6 +377,37 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Select(preview => ForecastKey(preview.EntryId, preview.RuleId, preview.DueDate))
                 .ToHashSet(StringComparer.Ordinal);
             var flagged = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var deduction in deductedRows.GroupBy(row => row.PlannedEntryId!.Value))
+            {
+                var planned = plannedById[deduction.Key];
+                flagged.Add(ForecastKey(planned.Id, null, planned.DueDate));
+
+                var name = planned.Concept?.Name ?? planned.Description ?? "previsto";
+                var total = deduction.Sum(row => Math.Abs(row.Amount));
+                findings.Add(total < planned.ForecastAmount - ImportPlannedLinks.CoverTolerance
+                    ? Finding(
+                        SeverityInfo,
+                        "Se descuenta de un previsto",
+                        $"Se descontarán {Money(total)} de «{name}» (quedan {Money(planned.ForecastAmount - total)}).",
+                        deduction)
+                    : Finding(
+                        SeverityInfo,
+                        "Previsto cubierto",
+                        $"«{name}» quedará cubierto ({Money(total)} de {Money(planned.ForecastAmount)}).",
+                        deduction));
+            }
+
+            var staleLinks = linkedRows.Where(row => !deductedRowIds.Contains(row.Id)).ToList();
+            if (staleLinks.Count > 0)
+            {
+                findings.Add(Finding(
+                    SeverityInfo,
+                    "Previsto ya no disponible",
+                    $"{Plural(staleLinks.Count, "movimiento se iba a descontar", "movimientos se iban a descontar")} de un previsto " +
+                    "que ya no está pendiente o no es del mismo tipo. Se apuntarán como movimientos normales; si quieres, " +
+                    "descuéntalos de otro previsto.",
+                    staleLinks));
+            }
             // Quién te paga la nómina (u otro ingreso fijo): un ingreso suyo fuera de lo previsto
             // suele ser un adelanto o una paga extra.
             var fixedIncomePayers = entries
@@ -411,6 +463,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             foreach (var row in rows.Where(row => ImportBatchApplicationService.EntersAsPaid(row) && row.Allocations.Count == 0))
             {
+                if (deductedRowIds.Contains(row.Id)) continue;
                 if (ConceptOf(row) is not { } conceptId || !concepts.TryGetValue(conceptId, out var concept))
                     continue;
 
@@ -452,8 +505,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         "No casa con lo previsto",
                         $"{label}: tenías «{concept.Name}» previsto el {Day(sameAccount.DueDate)} por {Money(sameAccount.Amount)}, " +
                         "pero la fecha o el importe están demasiado lejos para emparejarlos solos. La app lo apuntará aparte " +
-                        "y el previsto seguirá pendiente, así que contaría dos veces. Si es el mismo pago, después de aplicar " +
-                        "pulsa «Descartar este mes» en el previsto.",
+                        "y el previsto seguirá pendiente, así que contaría dos veces. Si este movimiento es parte de ese " +
+                        "previsto (o el mismo pago), pulsa «Descontar de un previsto» en el movimiento o pídeselo al " +
+                        "asistente: se restará del previsto y, si lo cubre, lo cerrará. Si el previsto no va a ocurrir " +
+                        "este mes, después de aplicar pulsa «Descartar este mes» en el previsto.",
                         row));
                     continue;
                 }
@@ -469,9 +524,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         SeverityWarning,
                         "Previsto en otra cuenta",
                         $"{label}: «{concept.Name}» está previsto {where}, pero el banco lo cobró en «{account.Name}». " +
-                        "La app lo apuntará aparte y el previsto seguirá pendiente. Si es el mismo pago: después de aplicar " +
-                        $"pulsa «Descartar este mes» en el previsto y, en Planificación, cambia la cuenta de «{concept.Name}» " +
-                        $"a «{account.Name}» para que la próxima vez se emparejen solos.",
+                        "La app lo apuntará aparte y el previsto seguirá pendiente. Si es el mismo pago (o parte de ese " +
+                        "previsto), pulsa «Descontar de un previsto» en el movimiento o pídeselo al asistente; también " +
+                        "puedes, después de aplicar, pulsar «Descartar este mes» en el previsto. Y en Planificación, " +
+                        $"cambia la cuenta de «{concept.Name}» a «{account.Name}» para que la próxima vez se emparejen solos.",
                         row));
                     continue;
                 }
@@ -488,8 +544,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             "¿Pago adelantado?",
                             $"{label}: también tienes «{concept.Name}» previsto el {Day(advance.DueDate)} por {Money(advance.Amount)}. " +
                             $"La app lo contará como gasto de {MonthName(row.ValueDate)}. Si en realidad era el pago de " +
-                            $"{MonthName(advance.DueDate)}, ve a {MonthName(advance.DueDate)} y pulsa «Descartar este mes» en ese " +
-                            "previsto para no contarlo dos veces.",
+                            $"{MonthName(advance.DueDate)}, pulsa «Descontar de un previsto» en el movimiento (o pídeselo al " +
+                            $"asistente) y elige ese previsto, o ve a {MonthName(advance.DueDate)} y pulsa «Descartar este mes» " +
+                            "en él para no contarlo dos veces.",
                             row));
                         continue;
                     }

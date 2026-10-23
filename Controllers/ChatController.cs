@@ -5,6 +5,7 @@ using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Chat;
 using PersonalFinance.Api.Features.Ledger.Common;
+using PersonalFinance.Api.Features.Reminders;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Dtos.Income;
@@ -24,6 +25,7 @@ namespace PersonalFinance.Api.Controllers
         private readonly IPaymentService _payments;
         private readonly IPasanacoService _pasanacos;
         private readonly IImportBatchApplicationService _importApplication;
+        private readonly IReminderService _reminders;
         private readonly AppDbContext _db;
 
         public ChatController(
@@ -33,6 +35,7 @@ namespace PersonalFinance.Api.Controllers
             IPaymentService payments,
             IPasanacoService pasanacos,
             IImportBatchApplicationService importApplication,
+            IReminderService reminders,
             AppDbContext db)
         {
             _chat = chat;
@@ -41,6 +44,7 @@ namespace PersonalFinance.Api.Controllers
             _payments = payments;
             _pasanacos = pasanacos;
             _importApplication = importApplication;
+            _reminders = reminders;
             _db = db;
         }
 
@@ -139,6 +143,8 @@ namespace PersonalFinance.Api.Controllers
                     return await ClassifyImportGroup(action, userId.Value, ct);
                 case "apply_import":
                     return await ApplyImport(action, userId.Value, ct);
+                case "create_reminder":
+                    return await CreateReminder(action, userId.Value, ct);
                 default:
                     return BadRequest("La acción propuesta no está soportada.");
             }
@@ -465,6 +471,27 @@ namespace PersonalFinance.Api.Controllers
                 return BadRequest(new { message = result.Error, unassignedRows = result.UnassignedRows });
 
             return Ok(new { action.Type, result.Applied, result.BatchId });
+        }
+
+        /// <summary>
+        /// Re-validates the reminder with the same rules as api/reminders (date today
+        /// or later) and creates it with source "ai". Errors come back as 400 { message }.
+        /// </summary>
+        private async Task<IActionResult> CreateReminder(
+            ProposedActionDto action,
+            Guid userId,
+            CancellationToken ct)
+        {
+            var reminder = await _reminders.CreateFromAssistantAsync(userId, new SaveReminderDto
+            {
+                Title = action.Name,
+                DueDate = action.Date,
+                Amount = action.Amount,
+                Notes = action.Notes,
+                Repeat = action.Repeat,
+                NotifyDaysBefore = action.NotifyDaysBefore
+            }, ct);
+            return Ok(new { action.Type, reminder.Id });
         }
 
         private static bool TryGetActionDate(ProposedActionDto action, out DateTime date) =>

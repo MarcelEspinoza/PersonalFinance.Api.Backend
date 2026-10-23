@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using System.Text.Unicode;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Features.Reminders;
 using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Features.Chat
@@ -105,7 +107,8 @@ namespace PersonalFinance.Api.Features.Chat
             var system = $$"""
                 Eres el asistente financiero personal dentro de la app. El usuario te habla
                 en español y puede pedirte: explicaciones de sus datos, consejos de ahorro,
-                búsquedas dentro de la información que ves abajo, o crear un gasto/ingreso.
+                búsquedas dentro de la información que ves abajo, o crear un gasto/ingreso
+                o un recordatorio.
 
                 Si el resumen no contiene el detalle exacto que te piden, dilo con honestidad
                 en vez de inventar cifras.
@@ -134,6 +137,18 @@ namespace PersonalFinance.Api.Features.Chat
                 - classify_import_group: targetId del lote, conceptId y normalizedDescription
                   (cópiala exactamente como aparece en los datos, con los marcadores tapados incluidos).
                 - apply_import: targetId del lote, únicamente cuando ya no queden grupos pendientes.
+                - create_reminder: name (título corto), date (vencimiento YYYY-MM-DD, hoy o
+                  posterior), amount (0 si no hay importe), notes opcional, repeat ("none",
+                  "weekly", "monthly" o "yearly") y notifyDaysBefore (de 0 a 30; 1 si no lo dice).
+
+                RECORDATORIOS: "reminders" son los recordatorios activos del usuario (los 30
+                más próximos); úsalos para responder sobre ellos. Si te pide que le recuerdes
+                algo (por ejemplo "recuérdame pagar el seguro el 15"), propón create_reminder.
+                Si sólo indica el día, usa la próxima vez que llegue ese día (este mes si aún no
+                ha pasado; si no, el mes siguiente). Usa repeat "monthly" para "cada mes" o
+                "todos los meses", "weekly" para "cada semana", "yearly" para "cada año" y
+                "none" en cualquier otro caso. Nunca digas que el recordatorio ya está creado:
+                sólo se crea cuando el usuario pulsa "Confirmar" en la tarjeta.
 
                 Si falta un dato imprescindible, pregúntalo. Usa exclusivamente IDs presentes
                 en los datos. Nunca propongas borrar datos ni aplicar un lote completo.
@@ -167,7 +182,7 @@ namespace PersonalFinance.Api.Features.Chat
                 </datos>
 
                 Responde EXCLUSIVAMENTE JSON válido, sin markdown, con esta forma exacta:
-                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"normalizedDescription":null}]}
+                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"normalizedDescription":null,"repeat":null,"notifyDaysBefore":null}]}
 
                 Deja "proposedActions" como lista vacía si no corresponde ninguna acción.
                 Mantén "reply" por debajo de 1200 caracteres para que la respuesta no se corte.
@@ -223,18 +238,19 @@ namespace PersonalFinance.Api.Features.Chat
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (parsed is null) return new ChatResponseDto { Reply = ModelJson.PlainText(raw) };
 
+                var reminderToday = ReminderRules.LocalToday(DateTime.UtcNow);
                 var actions = (parsed.ProposedActions ?? new())
                     .Where(action => action is not null)
                     .Select(action => RestoreOriginals(action, data, importGroups))
-                    .Where(IsStructurallyValid)
+                    .Where(action => IsStructurallyValid(action, reminderToday))
                     .Select(a => new ProposedActionDto
                     {
                         Type = a.Type ?? "create_expense",
                         Summary = a.Summary ?? string.Empty,
-                        Amount = a.Amount,
+                        Amount = a.Amount ?? 0,
                         Description = a.Description ?? string.Empty,
                         Date = a.Date ?? DateTime.UtcNow.ToString("yyyy-MM-dd"),
-                        CategoryId = a.CategoryId,
+                        CategoryId = a.CategoryId ?? 0,
                         CategoryName = a.CategoryName ?? string.Empty,
                         ExpenseType = a.ExpenseType == "Fixed" ? "Fixed" : "Temporary",
                         TargetId = a.TargetId,
@@ -244,7 +260,9 @@ namespace PersonalFinance.Api.Features.Chat
                         Month = a.Month,
                         ConceptId = a.ConceptId,
                         AccountId = a.AccountId,
-                        NormalizedDescription = a.NormalizedDescription
+                        NormalizedDescription = a.NormalizedDescription,
+                        Repeat = a.Repeat,
+                        NotifyDaysBefore = a.NotifyDaysBefore
                     })
                     .ToList();
 
@@ -476,9 +494,26 @@ namespace PersonalFinance.Api.Features.Chat
             var projection = await _dashboard.GetFutureProjectionAsync(null, null, ct);
             var monthOutlook = MonthAdvisorService.BuildMonthContext(projection.Outlook, data.Mask);
 
+            var reminderRows = await _db.Reminders
+                .AsNoTracking()
+                .Where(r => r.UserId == userId && !r.IsDone)
+                .OrderBy(r => r.DueDate)
+                .Take(30)
+                .Select(r => new { r.Title, r.DueDate, r.Amount, r.Repeat })
+                .ToListAsync(ct);
+            var reminders = reminderRows
+                .Select(r => new
+                {
+                    title = data.Mask(r.Title),
+                    dueDate = r.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    amount = r.Amount,
+                    repeat = ReminderRules.ToApi(r.Repeat)
+                })
+                .ToList();
+
             return new
             {
-                today = now.ToString("yyyy-MM-dd"),
+                today = ReminderRules.LocalToday(now).ToString("yyyy-MM-dd"),
                 currentMonthOutlook = monthOutlook,
                 monthlyBreakdown,
                 budgets = budgetsSummary,
@@ -490,12 +525,19 @@ namespace PersonalFinance.Api.Features.Chat
                 ledgerConcepts,
                 recurringRules,
                 recentLedgerEntries = ledgerEntries,
-                pendingImports
+                pendingImports,
+                reminders
             };
         }
 
-        private static bool IsStructurallyValid(RawProposedAction action)
+        private static bool IsStructurallyValid(RawProposedAction action, DateOnly today)
         {
+            if (action.Type != "create_reminder")
+            {
+                action.Repeat = null;
+                action.NotifyDaysBefore = null;
+            }
+
             return action.Type switch
             {
                 "create_expense" or "create_income" =>
@@ -518,8 +560,40 @@ namespace PersonalFinance.Api.Features.Chat
                     !string.IsNullOrWhiteSpace(action.NormalizedDescription),
                 "apply_import" =>
                     Guid.TryParse(action.TargetId, out _),
+                "create_reminder" =>
+                    TryNormalizeReminder(action, today),
                 _ => false
             };
+        }
+
+        /// <summary>
+        /// Validates a create_reminder proposal with the same rules used when it is
+        /// confirmed, and rewrites it with the normalized values and a server-built summary.
+        /// </summary>
+        private static bool TryNormalizeReminder(RawProposedAction action, DateOnly today)
+        {
+            var proposal = new SaveReminderDto
+            {
+                Title = action.Name,
+                DueDate = action.Date,
+                Amount = action.Amount,
+                Notes = action.Notes,
+                Repeat = action.Repeat,
+                NotifyDaysBefore = action.NotifyDaysBefore
+            };
+            if (!ReminderRules.TryNormalizeFromAssistant(proposal, today, out var input, out _))
+                return false;
+
+            action.Name = input.Title;
+            action.Date = input.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            action.Amount = input.Amount ?? 0;
+            action.Notes = input.Notes;
+            action.Repeat = ReminderRules.ToApi(input.Repeat);
+            action.NotifyDaysBefore = input.NotifyDaysBefore;
+            action.Description = null;
+            action.CategoryId = 0;
+            action.Summary = ReminderRules.DescribeProposal(input);
+            return true;
         }
 
         /// <summary>
@@ -576,10 +650,11 @@ namespace PersonalFinance.Api.Features.Chat
         {
             public string? Type { get; set; }
             public string? Summary { get; set; }
-            public decimal Amount { get; set; }
+            // Nullable so a JSON null (e.g. a reminder without amount) doesn't break the whole reply.
+            public decimal? Amount { get; set; }
             public string? Description { get; set; }
             public string? Date { get; set; }
-            public int CategoryId { get; set; }
+            public int? CategoryId { get; set; }
             public string? CategoryName { get; set; }
             public string? ExpenseType { get; set; }
             public string? TargetId { get; set; }
@@ -590,6 +665,8 @@ namespace PersonalFinance.Api.Features.Chat
             public Guid? ConceptId { get; set; }
             public Guid? AccountId { get; set; }
             public string? NormalizedDescription { get; set; }
+            public string? Repeat { get; set; }
+            public int? NotifyDaysBefore { get; set; }
         }
     }
 }

@@ -26,6 +26,7 @@ namespace PersonalFinance.Api.Data
         public DbSet<Bank> Banks { get; set; }
         public DbSet<Reconciliation> Reconciliations { get; set; }
         public DbSet<FinancialCommitment> FinancialCommitments { get; set; }
+        public DbSet<Reminder> Reminders { get; set; }
         public DbSet<Budget> Budgets { get; set; }
 
         // Modelo de dominio nuevo (ledger). Convive con el anterior hasta que
@@ -186,6 +187,9 @@ namespace PersonalFinance.Api.Data
 
             modelBuilder.Entity<FinancialCommitment>()
                 .HasIndex(c => new { c.UserId, c.StartMonth });
+
+            modelBuilder.Entity<Reminder>()
+                .HasIndex(r => new { r.UserId, r.IsDone, r.DueDate });
 
             modelBuilder.Entity<Budget>()
                 .HasIndex(b => new { b.UserId, b.CategoryId });

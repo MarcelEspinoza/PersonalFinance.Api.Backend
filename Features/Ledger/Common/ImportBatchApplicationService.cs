@@ -89,11 +89,46 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (batch.Rows.Count == 0)
                 return new(false, 0, batchId, "El lote no contiene movimientos para aplicar.");
 
+            // Rows the user deducts from a planned entry: each one is booked as its own movement
+            // and the planned entry is reduced (or closed) instead of being auto-matched.
+            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedEntryIds = linkedRows.Select(row => row.PlannedEntryId!.Value).ToHashSet();
+            var plannedById = linkedEntryIds.Count == 0
+                ? new Dictionary<Guid, LedgerEntry>()
+                : await _db.LedgerEntries
+                    .Include(entry => entry.Period)
+                    .Where(entry => entry.UserId == userId && linkedEntryIds.Contains(entry.Id))
+                    .ToDictionaryAsync(entry => entry.Id, ct);
+            var deductedRows = linkedRows
+                .Where(row => ImportPlannedLinks.IsValidLink(row, plannedById.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .ToList();
+            var deductedRowIds = deductedRows.Select(row => row.Id).ToHashSet();
+            var deductedEntryIds = deductedRows.Select(row => row.PlannedEntryId!.Value).ToHashSet();
+            foreach (var plannedId in deductedEntryIds)
+            {
+                var plannedPeriod = plannedById[plannedId].Period;
+                if (plannedPeriod?.Status == PeriodStatus.Closed)
+                    return new(
+                        false,
+                        0,
+                        batchId,
+                        $"El periodo {plannedPeriod.Year}-{plannedPeriod.Month:D2} de un previsto del que descuentas movimientos está cerrado.",
+                        Conflict: true);
+            }
+
+            Guid? FallbackConcept(ImportRow row) =>
+                row.Allocations.Count == 0 &&
+                row.PlannedEntryId is { } plannedId &&
+                plannedById.TryGetValue(plannedId, out var planned)
+                    ? planned.ConceptId
+                    : null;
+
             var unassigned = batch.Rows.Count(row =>
                 row.Status == ImportRowStatus.Pending &&
                 row.Allocations.Count == 0 &&
                 row.ConfirmedConceptId is null &&
-                row.SuggestedConceptId is null);
+                row.SuggestedConceptId is null &&
+                FallbackConcept(row) is null);
             if (unassigned > 0)
                 return new(false, 0, batchId, "Hay filas sin concepto asignado.", unassigned);
 
@@ -130,7 +165,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Status == ImportRowStatus.Pending &&
                     EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
+                    !deductedRowIds.Contains(row.Id) &&
                     !existingFingerprints.Contains(row.Fingerprint)),
+                deductedEntryIds,
                 ct);
             var matchByRowId = plannedMatches.ToDictionary(match => match.Row.Id);
             var periods = new Dictionary<(int Year, int Month), MonthlyPeriod>();
@@ -186,7 +223,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         entry.DueDate >= matchMonth &&
                         entry.DueDate < afterMatchMonth &&
                         entry.Status != EntryStatus.Paid &&
-                        entry.Status != EntryStatus.Skipped,
+                        entry.Status != EntryStatus.Skipped &&
+                        !deductedEntryIds.Contains(entry.Id),
                         ct);
                 if (ruleEntry is not null)
                 {
@@ -212,10 +250,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             var applied = 0;
             var matchedForecasts = 0;
+            var bookedDeductions = new List<(Guid PlannedEntryId, decimal Amount)>();
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
                 var isSplit = row.Allocations.Count > 0;
-                var conceptId = isSplit ? null : row.ConfirmedConceptId ?? row.SuggestedConceptId;
+                var conceptId = isSplit ? null : row.ConfirmedConceptId ?? row.SuggestedConceptId ?? FallbackConcept(row);
                 if (!isSplit && (conceptId is null || !concepts.TryGetValue(conceptId.Value, out _)))
                     continue;
                 if (!existingFingerprints.Add(row.Fingerprint))
@@ -382,6 +421,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         ImportRowId = row.Id,
                         Fingerprint = row.Fingerprint
                     };
+                    if (isPaid && deductedRowIds.Contains(row.Id))
+                    {
+                        var planned = plannedById[row.PlannedEntryId!.Value];
+                        importedEntry.Notes = $"Descontado del previsto «{PlannedName(planned, concepts)}».";
+                        bookedDeductions.Add((planned.Id, amount));
+                    }
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
                     AddTransferMirror(importedEntry, mirrorAccountByConcept);
@@ -416,6 +461,35 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 applied++;
             }
 
+            // A covered planned entry is skipped (not paid): the rows already carry the real
+            // amounts, so the month counts them once and nothing stays pending.
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            foreach (var deduction in bookedDeductions.GroupBy(item => item.PlannedEntryId))
+            {
+                var planned = plannedById[deduction.Key];
+                var total = deduction.Sum(item => item.Amount);
+                var count = deduction.Count();
+                if (total < planned.ForecastAmount - ImportPlannedLinks.CoverTolerance)
+                {
+                    planned.ForecastAmount -= total;
+                    planned.Notes = ImportPlannedLinks.AppendNote(
+                        planned.Notes,
+                        $"Descontados {ImportPlannedLinks.Money(total)} de {ImportPlannedLinks.Movements(count)} " +
+                        $"el {today.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)}.");
+                }
+                else
+                {
+                    planned.Status = EntryStatus.Skipped;
+                    planned.ActualAmount = null;
+                    planned.ValueDate = null;
+                    planned.Notes = ImportPlannedLinks.AppendNote(
+                        planned.Notes,
+                        $"Cubierto por {ImportPlannedLinks.Movements(count)} ({ImportPlannedLinks.Money(total)}).");
+                }
+
+                planned.UpdatedAt = DateTime.UtcNow;
+            }
+
             batch.AcceptedRows = batch.Rows.Count(row => row.Status == ImportRowStatus.Accepted);
             batch.DuplicateRows = batch.Rows.Count(row => row.Status == ImportRowStatus.Duplicate);
             batch.Status = ImportBatchStatus.Applied;
@@ -443,6 +517,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .Select(entry => entry.Fingerprint!)
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
+            var (deductedRowIds, deductedEntryIds) = await FindValidLinksAsync(userId, batch, ct);
             var matches = await FindForecastMatchesAsync(
                 userId,
                 batch.AccountId.Value,
@@ -450,7 +525,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Status == ImportRowStatus.Pending &&
                     EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
+                    !deductedRowIds.Contains(row.Id) &&
                     !existingFingerprints.Contains(row.Fingerprint)),
+                deductedEntryIds,
                 ct);
 
             return matches
@@ -462,6 +539,31 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     match.Rule?.Id))
                 .ToList();
         }
+
+        /// <summary>Rows with a still-valid planned link and the planned entries they deduct from.</summary>
+        private async Task<(HashSet<Guid> RowIds, HashSet<Guid> EntryIds)> FindValidLinksAsync(
+            Guid userId, ImportBatch batch, CancellationToken ct)
+        {
+            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            if (linkedRows.Count == 0) return (new HashSet<Guid>(), new HashSet<Guid>());
+
+            var ids = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+            var entries = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.UserId == userId && ids.Contains(entry.Id))
+                .ToDictionaryAsync(entry => entry.Id, ct);
+            var valid = linkedRows
+                .Where(row => ImportPlannedLinks.IsValidLink(row, entries.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .ToList();
+            return (
+                valid.Select(row => row.Id).ToHashSet(),
+                valid.Select(row => row.PlannedEntryId!.Value).ToHashSet());
+        }
+
+        private static string PlannedName(LedgerEntry planned, IReadOnlyDictionary<Guid, Concept> concepts) =>
+            concepts.TryGetValue(planned.ConceptId, out var concept)
+                ? concept.Name
+                : string.IsNullOrWhiteSpace(planned.Description) ? "previsto" : planned.Description.Trim();
 
         /// <summary>
         /// Un traspaso hacia una cuenta sin extracto propio (la hucha) también
@@ -482,6 +584,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Guid userId,
             Guid accountId,
             IEnumerable<ImportRow> rows,
+            IReadOnlySet<Guid> excludedEntryIds,
             CancellationToken ct)
         {
             var candidates = rows
@@ -507,7 +610,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     entry.DueDate <= lastDate)
                 .ToListAsync(ct);
             var availableEntries = existingEntries
-                .Where(entry => entry.Status is not (EntryStatus.Paid or EntryStatus.Skipped))
+                .Where(entry =>
+                    entry.Status is not (EntryStatus.Paid or EntryStatus.Skipped) &&
+                    !excludedEntryIds.Contains(entry.Id))
                 .ToList();
             var rules = await _db.RecurringRules
                 .Where(rule =>
@@ -581,6 +686,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 row, conceptId, direction, dueDate, rule.ForecastAmount, null, rule));
                         }
                         else if (occurrence.Status is not (EntryStatus.Paid or EntryStatus.Skipped) &&
+                                 !excludedEntryIds.Contains(occurrence.Id) &&
                                  occurrence.ConceptId == conceptId &&
                                  occurrence.Direction == direction &&
                                  IsPlausibleAmount(amount, occurrence.ForecastAmount) &&
