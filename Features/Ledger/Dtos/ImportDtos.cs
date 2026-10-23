@@ -117,7 +117,25 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     public sealed class ImportChatResponseDto
     {
         public string Reply { get; set; } = string.Empty;
+        /// <summary>Siempre 0: el asistente sólo propone y el usuario confirma cada cambio.</summary>
         public int AppliedChanges { get; set; }
         public IReadOnlyList<string> Unrecognized { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<ImportChatProposedActionDto> ProposedActions { get; set; } = Array.Empty<ImportChatProposedActionDto>();
+    }
+
+    /// <summary>Cambio propuesto por el asistente; no se aplica hasta que el usuario lo confirma.</summary>
+    public sealed class ImportChatProposedActionDto
+    {
+        /// <summary>"set_row_concept" o "create_concept".</summary>
+        public string Type { get; set; } = string.Empty;
+        public string Summary { get; set; } = string.Empty;
+        public IReadOnlyList<Guid> RowIds { get; set; } = Array.Empty<Guid>();
+        public Guid? ConceptId { get; set; }
+        public string? ConceptName { get; set; }
+        public string? Name { get; set; }
+        public Guid? GroupId { get; set; }
+        public string? GroupName { get; set; }
+        public PersonalFinance.Domain.Ledger.Enums.ConceptNature? Nature { get; set; }
+        public bool SaveForFuture { get; set; }
     }
 }

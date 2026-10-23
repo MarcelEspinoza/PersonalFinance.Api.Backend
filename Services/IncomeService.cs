@@ -2,6 +2,7 @@
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Income;
 using PersonalFinance.Api.Models.Entities;
@@ -28,6 +29,15 @@ namespace PersonalFinance.Api.Services
         }
 
         private static DateTime? NormalizeNullable(DateTime? d) => d.HasValue ? NormalizeToUtc(d.Value) : (DateTime?)null;
+
+        // Banco y préstamo deben ser del usuario; un id ajeno se trata igual que uno inexistente.
+        private async Task EnsureBankAndLoanAsync(Guid userId, Guid? bankId, Guid? loanId, CancellationToken ct)
+        {
+            if (!await _context.IsBankOwnedOrNullAsync(userId, bankId, ct))
+                throw new ArgumentException($"BankId {bankId} no existe en la base de datos");
+            if (!await _context.IsLoanOwnedOrNullAsync(userId, loanId, ct))
+                throw new ArgumentException($"LoanId {loanId} no existe en la base de datos");
+        }
 
         public async Task<IEnumerable<IncomeDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
@@ -75,8 +85,8 @@ namespace PersonalFinance.Api.Services
             var endUtc = NormalizeNullable(dto.End_Date);
 
             // Validar categoría
-            var categoryExists = await _context.Categories.AnyAsync(c => c.Id == dto.CategoryId, ct);
-            if (!categoryExists) throw new ArgumentException($"CategoryId {dto.CategoryId} no existe en la base de datos");
+            if (!await _context.IsCategoryVisibleAsync(userId, dto.CategoryId, ct)) throw new ArgumentException($"CategoryId {dto.CategoryId} no existe en la base de datos");
+            await EnsureBankAndLoanAsync(userId, dto.BankId, dto.LoanId, ct);
 
             var income = new Income
             {
@@ -153,6 +163,10 @@ namespace PersonalFinance.Api.Services
         {
             var income = await _context.Incomes.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
             if (income == null) return false;
+
+            if (dto.CategoryId.HasValue && !await _context.IsCategoryVisibleAsync(userId, dto.CategoryId.Value, ct))
+                throw new ArgumentException($"CategoryId {dto.CategoryId} no existe en la base de datos");
+            await EnsureBankAndLoanAsync(userId, dto.BankId, dto.LoanId, ct);
 
             var oldAmount = income.Amount;
             var oldLoanId = income.LoanId;

@@ -1,9 +1,11 @@
 ﻿// Controllers/AnalyticsController.cs
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Services.Contracts;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class AnalyticsController : ControllerBase
 {
     private readonly IAnalyticsService _analytics;

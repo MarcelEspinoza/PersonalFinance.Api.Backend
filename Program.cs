@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -176,6 +177,14 @@ builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementS
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+
+    // Solo cuentas aprobadas (Admin o User). Las pendientes ("Invited") no pueden usar la API aunque tengan token.
+    var approvedUserPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireRole("Admin", "User")
+        .Build();
+    options.DefaultPolicy = approvedUserPolicy;
+    options.FallbackPolicy = approvedUserPolicy;
 });
 
 // Register your application services here
@@ -256,6 +265,30 @@ using (var scope = app.Services.CreateScope())
         {
             logger.LogWarning("No se encontró IRoleSeeder en DI; no se creó ningún role/usuario inicial.");
         }
+
+        try
+        {
+            await StartupSecurityTasks.BackfillPasanacoOwnersAsync(db, logger);
+        }
+        catch (Exception backfillEx)
+        {
+            logger.LogError(backfillEx, "Error asignando propietario a los pasanacos existentes.");
+        }
+
+        try
+        {
+            var pendingApproval = await StartupSecurityTasks.CountUsersPendingApprovalAsync(db);
+            if (pendingApproval > 0)
+            {
+                logger.LogWarning(
+                    "{Count} usuarios no tienen rol Admin ni User: no podrán usar la API hasta que el administrador apruebe su cuenta.",
+                    pendingApproval);
+            }
+        }
+        catch (Exception pendingEx)
+        {
+            logger.LogError(pendingEx, "Error contando usuarios pendientes de aprobación.");
+        }
     }
     catch (Exception ex)
     {
@@ -284,12 +317,12 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Map minimal helpful endpoints (keeps your previous "/" and config/cors)
-app.MapGet("/", () => Results.Ok("Personal Finance API is running"));
+app.MapGet("/", () => Results.Ok("Personal Finance API is running")).AllowAnonymous();
 app.MapGet("/config/cors", (IConfiguration config) =>
 {
     var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>();
     return Results.Json(origins ?? new[] { "No origins found" });
-});
+}).AllowAnonymous();
 
 // Map controllers (your API endpoints)
 app.MapControllers();

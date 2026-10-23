@@ -51,12 +51,21 @@ namespace PersonalFinance.Api.Services
                 }
             }
 
-            // If there are no users, optionally create an admin from config
-            var anyUser = await _db.Users.AnyAsync();
+            // If there are no users, optionally create an admin from config.
+            // Se consultan las cuentas de Identity: _db.Users es la tabla heredada User y con ella
+            // el admin por defecto se intentaba crear (o recrear) en cada arranque.
+            var anyUser = await _userManager.Users.AnyAsync();
             if (!anyUser)
             {
-                var adminEmail = _config["Seed:AdminEmail"] ?? "admin@example.com";
-                var adminPassword = _config["Seed:AdminPassword"] ?? "ChangeMe123!";
+                var adminEmail = _config["Seed:AdminEmail"];
+                var adminPassword = _config["Seed:AdminPassword"];
+
+                // Never fall back to a well-known password: it would give anyone full admin access.
+                if (string.IsNullOrWhiteSpace(adminEmail) || string.IsNullOrWhiteSpace(adminPassword))
+                {
+                    _logger.LogWarning("No users exist and Seed:AdminEmail/Seed:AdminPassword are not set; skipping initial admin creation.");
+                    return;
+                }
 
                 var admin = new ApplicationUser
                 {

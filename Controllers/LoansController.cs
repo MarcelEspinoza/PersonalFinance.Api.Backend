@@ -23,17 +23,24 @@ namespace PersonalFinance.Api.Controllers
         }
 
 
+        // userId en la query se mantiene por compatibilidad, pero se ignora: siempre se usa el del token.
         [HttpGet]
-        public async Task<IActionResult> GetLoans([FromQuery] Guid userId)
+        public async Task<IActionResult> GetLoans([FromQuery] Guid? userId)
         {
-            var loans = await _loanService.GetLoansAsync(userId);
+            var currentUserId = GetCurrentUserId();
+            if (currentUserId == null) return Unauthorized();
+
+            var loans = await _loanService.GetLoansAsync(currentUserId.Value);
             return Ok(loans);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetLoan(Guid id)
         {
-            var loan = await _loanService.GetLoanAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            var loan = await _loanService.GetLoanAsync(id, userId.Value);
             if (loan == null) return NotFound();
             return Ok(loan);
         }
@@ -41,6 +48,10 @@ namespace PersonalFinance.Api.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateLoan([FromBody] LoanDto loan)
         {
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            loan.UserId = userId.Value;
             var created = await _loanService.CreateLoanAsync(loan);
             return Ok(created);
         }
@@ -48,12 +59,15 @@ namespace PersonalFinance.Api.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateLoan(Guid id, [FromBody] LoanDto loan)
         {
-            await _loanService.UpdateLoanAsync(id,loan);
+            var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            await _loanService.UpdateLoanAsync(id, userId.Value, loan);
             return NoContent();
         }
 
         /// <summary>
-        /// Delete loan endpoint:
+        /// Delete loan endpoint (the loan must belong to the caller, otherwise 404 for everyone, admins included):
         /// - If loan is associated to a PasanacoPayment:
         ///     - If payment belongs to current round => allow deletion by undoing the payment (delegates to PasanacoService.UndoPaymentAsync)
         ///     - If payment belongs to previous round => forbid deletion (400)
@@ -65,12 +79,15 @@ namespace PersonalFinance.Api.Controllers
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
+            var loan = await _loanService.GetLoanAsync(id, userId.Value);
+            if (loan == null) return NotFound();
+
             // buscar si existe payment vinculado que use este loan id
-            var payment = await pasanacoService.GetPaymentByLoanIdAsync(id);
+            var payment = await pasanacoService.GetPaymentByLoanIdAsync(id, userId.Value);
             if (payment != null)
             {
                 // obtener pasanaco y calcular mes/año actual
-                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId, userId.Value);
                 if (pasanaco == null) return BadRequest("Pasanaco asociado no encontrado");
 
                 var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
@@ -91,7 +108,7 @@ namespace PersonalFinance.Api.Controllers
                 return Forbid();
             }
 
-            await _loanService.DeleteLoanAsync(id);
+            await _loanService.DeleteLoanAsync(id, userId.Value);
             return NoContent();
         }
 

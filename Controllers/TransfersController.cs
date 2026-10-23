@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Controllers
@@ -46,7 +47,11 @@ namespace PersonalFinance.Api.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetByTransferId(string id, CancellationToken ct)
         {
-            var result = await _transferService.GetByTransferIdAsync(id, ct);
+            var userId = User.GetUserId();
+            if (userId == null) return Unauthorized();
+
+            var result = await _transferService.GetByTransferIdAsync(userId.Value, id, ct);
+            if (result == null) return NotFound();
             return Ok(result);
         }
     }

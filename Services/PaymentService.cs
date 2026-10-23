@@ -16,7 +16,28 @@ namespace PersonalFinance.Api.Services
             var loan = await _context.Loans.FindAsync(loanId);
             if (loan == null) throw new Exception("Loan not found");
 
-            payment.LoanId = loanId;
+            return await RegisterPaymentAsync(loan, payment);
+        }
+
+        public async Task<LoanPayment?> CreatePaymentAsync(Guid userId, Guid loanId, LoanPayment payment)
+        {
+            var loan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == loanId && l.UserId == userId);
+            if (loan == null) return null;
+
+            // Solo se aceptan los datos del pago: FKs/navegaciones del cuerpo (Loan, Expense, Income) se ignoran.
+            var sanitized = new LoanPayment
+            {
+                Amount = payment.Amount,
+                PaymentDate = payment.PaymentDate,
+                Notes = payment.Notes
+            };
+
+            return await RegisterPaymentAsync(loan, sanitized);
+        }
+
+        private async Task<LoanPayment> RegisterPaymentAsync(Loan loan, LoanPayment payment)
+        {
+            payment.LoanId = loan.Id;
             _context.LoanPayments.Add(payment);
 
             // Actualizar saldo
@@ -26,10 +47,6 @@ namespace PersonalFinance.Api.Services
                 loan.OutstandingAmount = 0;
                 loan.Status = "paid";
             }
-
-            // Buscar categorías
-            var catPersonal = _context.Categories.FirstOrDefault(c => c.Name == "Préstamo personal");
-            var catBank = _context.Categories.FirstOrDefault(c => c.Name == "Préstamo bancario");
 
             if (loan.Type == LoanType.Bank || loan.Type == LoanType.Received)
             {
@@ -67,8 +84,13 @@ namespace PersonalFinance.Api.Services
             return payment;
         }
 
-        public async Task<IEnumerable<LoanPayment>> GetPaymentsAsync(Guid loanId) =>
-            await _context.LoanPayments.Where(p => p.LoanId == loanId).ToListAsync();
+        public async Task<IEnumerable<LoanPayment>?> GetPaymentsAsync(Guid userId, Guid loanId)
+        {
+            var ownsLoan = await _context.Loans.AnyAsync(l => l.Id == loanId && l.UserId == userId);
+            if (!ownsLoan) return null;
+
+            return await _context.LoanPayments.Where(p => p.LoanId == loanId).ToListAsync();
+        }
     }
 
 }

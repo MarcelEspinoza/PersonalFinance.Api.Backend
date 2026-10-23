@@ -147,12 +147,16 @@
         public async Task<IActionResult> DeleteIncome(int id)
         {
             var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
 
-            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id);
+            var income = await _incomeService.GetByIdAsync(id, userId.Value);
+            if (income == null) return NotFound();
+
+            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id, userId.Value);
             if (payment != null)
             {
                 // recuperar pasanaco para calcular ronda actual
-                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId, userId.Value);
                 if (pasanaco == null) return BadRequest("Pasanaco no encontrado");
 
                 var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
@@ -161,12 +165,12 @@
                     return BadRequest("No se puede borrar: el ingreso está vinculado a un pasanaco de ronda anterior.");
                 }
 
-                await pasanacoService.UndoPaymentAsync(payment.Id, userId!.Value);
+                await pasanacoService.UndoPaymentAsync(payment.Id, userId.Value);
 
                 return NoContent();
             }
 
-            await _incomeService.DeleteAsync(id, userId!.Value);
+            await _incomeService.DeleteAsync(id, userId.Value);
             return NoContent();
         }
 

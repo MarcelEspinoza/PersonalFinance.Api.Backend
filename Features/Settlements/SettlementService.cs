@@ -282,6 +282,7 @@ namespace PersonalFinance.Api.Features.Settlements
             Guid userId, Guid id, SaveLineDto dto, CancellationToken ct)
         {
             var settlement = await LoadEditableAsync(userId, id, ct);
+            await EnsureOwnEntryAsync(userId, dto.LedgerEntryId, ct);
             var line = BuildLine(settlement, dto);
             settlement.Lines.Add(line);
             _db.SettlementLines.Add(line);
@@ -297,6 +298,8 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadEditableAsync(userId, id, ct);
             var line = settlement.Lines.FirstOrDefault(l => l.Id == lineId)
                 ?? throw new NotFoundException("No encuentro esa línea.");
+            if (dto.LedgerEntryId != line.LedgerEntryId)
+                await EnsureOwnEntryAsync(userId, dto.LedgerEntryId, ct);
 
             line.Kind = ParseKind(dto.Kind);
             line.Description = CleanDescription(dto.Description);
@@ -552,6 +555,12 @@ namespace PersonalFinance.Api.Features.Settlements
                     "La liquidación ya se envió. Reábrela si quieres cambiarla.");
 
             return settlement;
+        }
+
+        private async Task EnsureOwnEntryAsync(Guid userId, Guid? entryId, CancellationToken ct)
+        {
+            if (entryId is { } value && !await _db.LedgerEntries.AnyAsync(e => e.Id == value && e.UserId == userId, ct))
+                throw new NotFoundException("No encuentro ese movimiento.");
         }
 
         private async Task<Dictionary<Guid, string>> PersonNamesAsync(Guid userId, CancellationToken ct) =>

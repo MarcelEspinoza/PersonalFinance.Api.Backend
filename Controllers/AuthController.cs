@@ -70,8 +70,10 @@ namespace PersonalFinance.Api.Controllers
             var html = EmailTemplates.ConfirmEmailTemplate(user!.FullName, callbackUrl);
             await _emailSender.SendEmailAsync(user.Email, "Confirma tu correo en Personal Finance", html);
 
+            await NotifyAdminsOfRegistrationAsync(user);
+
             // Return minimal response (token not returned now because we sent it by email)
-            return Ok(new { user.Id, user.Email, message = "Usuario creado. Se ha enviado un correo de confirmación." });
+            return Ok(new { user.Id, user.Email, message = "Usuario creado. Revisa tu correo para confirmarlo. Después, el administrador debe aprobar tu cuenta." });
         }
 
         // Existing POST confirm-email kept for API callers (frontend)
@@ -84,13 +86,6 @@ namespace PersonalFinance.Api.Controllers
 
             var res = await _userManager.ConfirmEmailAsync(user, dto.Token);
             if (!res.Succeeded) return BadRequest(res.Errors);
-
-            // Promote Invited -> User
-            if (await _userManager.IsInRoleAsync(user, "Invited"))
-            {
-                await _userManager.AddToRoleAsync(user, "User");
-                await _userManager.RemoveFromRoleAsync(user, "Invited");
-            }
 
             return Ok("Email confirmado");
         }
@@ -112,13 +107,6 @@ namespace PersonalFinance.Api.Controllers
                 // You may want to redirect to a frontend page that informs of failure
                 var failUrl = _config["Frontend:EmailConfirmationFailedUrl"] ?? _config["Frontend:Url"] ?? "/";
                 return Redirect($"{failUrl}?email={Uri.EscapeDataString(email)}&status=failed");
-            }
-
-            // Promote Invited -> User
-            if (await _userManager.IsInRoleAsync(user, "Invited"))
-            {
-                await _userManager.AddToRoleAsync(user, "User");
-                await _userManager.RemoveFromRoleAsync(user, "Invited");
             }
 
             var successUrl = _config["Frontend:EmailConfirmedUrl"] ?? _config["Frontend:Url"] ?? "/";
@@ -151,6 +139,15 @@ namespace PersonalFinance.Api.Controllers
             }
 
             var roles = await _userManager.GetRolesAsync(user);
+            if (!roles.Contains("Admin") && !roles.Contains("User"))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = "account_pending_approval",
+                    message = "Tu cuenta está pendiente de aprobación por el administrador."
+                });
+            }
+
             var token = GenerateJwtToken(user, roles);
 
             return Ok(new
@@ -172,10 +169,22 @@ namespace PersonalFinance.Api.Controllers
         public async Task<IActionResult> RequestPasswordReset([FromBody] RequestPasswordResetDto dto)
         {
             var user = await _userManager.FindByEmailAsync(dto.Email);
-            if (user == null) return NotFound("User not found");
-            var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-            if (token == null) return BadRequest("Could not generate reset token");
-            return Ok(new { email = dto.Email, token });
+            if (user?.Email != null)
+            {
+                try
+                {
+                    var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+                    var html = EmailTemplates.PasswordResetTemplate(user.FullName, user.Email, token, _config["Frontend:ResetPasswordUrl"]);
+                    await _emailSender.SendEmailAsync(user.Email, "Restablece tu contraseña en Personal Finance", html);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Could not send password reset email to user {UserId}", user.Id);
+                }
+            }
+
+            // El token solo viaja por correo: devolverlo aquí permitiría a cualquiera cambiar la contraseña de otra cuenta.
+            return Ok(new { email = dto.Email, message = "Si el correo existe, recibirás instrucciones para restablecer tu contraseña." });
         }
 
         [HttpPost("reset-password")]
@@ -189,6 +198,30 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        private async Task NotifyAdminsOfRegistrationAsync(ApplicationUser user)
+        {
+            try
+            {
+                var admins = await _userManager.GetUsersInRoleAsync("Admin");
+                var html = EmailTemplates.NewRegistrationAdminTemplate(user.FullName, user.Email);
+
+                foreach (var admin in admins.Where(a => !string.IsNullOrWhiteSpace(a.Email)))
+                {
+                    try
+                    {
+                        await _emailSender.SendEmailAsync(admin.Email!, "Nueva solicitud de registro en Personal Finance", html);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Could not notify admin {AdminId} about new registration {UserId}", admin.Id, user.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Could not notify admins about new registration {UserId}", user.Id);
+            }
+        }
 
         private string GenerateJwtToken(ApplicationUser user, IList<string> roles)
         {

@@ -49,5 +49,26 @@ public class MigrationDiscoveryTests
         Assert.Contains(
             "20260927231000_ForceHouseholdPlanningValues",
             context.Database.GetMigrations());
+        Assert.Contains(
+            "20261023191241_AddPasanacoOwner",
+            context.Database.GetMigrations());
+    }
+
+    /// <summary>
+    /// EF Core 9 aborta Migrate() si el snapshot no coincide con el modelo.
+    /// </summary>
+    [Fact]
+    public void ModelSnapshot_MatchesCurrentModel()
+    {
+        // No abre conexión: basta con el proveedor y la versión fija de DesignTimeDbContextFactory.
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseMySql(
+                "Server=localhost;Database=test;User=root;",
+                new MySqlServerVersion(new Version(8, 0, 0)))
+            .Options;
+
+        using var context = new AppDbContext(options);
+
+        Assert.False(context.Database.HasPendingModelChanges());
     }
 }

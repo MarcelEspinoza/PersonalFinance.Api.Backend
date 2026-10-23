@@ -8,14 +8,14 @@
         {
             /// <summary>
             /// Crea una transferencia atómica: una Expense en el banco origen y una Income en el banco destino,
-            /// ambas marcadas con el mismo transferId.
+            /// ambas marcadas con el mismo transferId. Ambos bancos deben pertenecer al usuario (ArgumentException si no).
             /// </summary>
             Task<string> CreateTransferAsync(Guid userId, CreateTransferRequest dto, CancellationToken cancellationToken = default);
 
             /// <summary>
-            /// Obtiene los movimientos (income/expense) asociados a un transferId.
+            /// Obtiene los movimientos (income/expense) del usuario asociados a un transferId; null si no hay ninguno.
             /// </summary>
-            Task<object> GetByTransferIdAsync(string transferId, CancellationToken cancellationToken = default);
+            Task<object?> GetByTransferIdAsync(Guid userId, string transferId, CancellationToken cancellationToken = default);
         }
 
         public class CreateTransferRequest

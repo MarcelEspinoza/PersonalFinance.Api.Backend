@@ -35,8 +35,9 @@ public sealed class NullChatService : IImportChatService
         IReadOnlyList<ImportChatRowContext> rows,
         IReadOnlyList<ImportAiCandidate> concepts,
         IReadOnlyList<string> analysis,
+        ImportChatExtraContext extra,
         CancellationToken ct) =>
-        Task.FromResult(new ImportChatResult(string.Empty, Array.Empty<ImportChatChange>(), Array.Empty<string>()));
+        Task.FromResult(new ImportChatResult(string.Empty, Array.Empty<ImportChatProposal>(), Array.Empty<string>()));
 }
 
 /// <summary>

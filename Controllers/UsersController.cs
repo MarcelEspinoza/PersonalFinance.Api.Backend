@@ -31,7 +31,7 @@ namespace PersonalFinance.Api.Controllers
         // GET: api/users
         // Requiere autorización (Admin normalmente) — aquí mantiene [Authorize]
         [HttpGet]
-        [Authorize]
+        [Authorize(Policy = "AdminOnly")]
         public IActionResult GetAll()
         {
             // UserManager.Users es IQueryable<ApplicationUser>
@@ -50,6 +50,10 @@ namespace PersonalFinance.Api.Controllers
         [Authorize]
         public async Task<IActionResult> GetById(Guid id)
         {
+            var currentUserId = GetCurrentUserId();
+            if (currentUserId == null) return Unauthorized();
+            if (currentUserId.Value != id && !User.IsInRole("Admin")) return NotFound();
+
             var user = await _userManager.FindByIdAsync(id.ToString());
             if (user == null) return NotFound();
             return Ok(new
@@ -63,7 +67,7 @@ namespace PersonalFinance.Api.Controllers
         // POST: api/users
         // Nota: normalmente el registro se maneja en AuthController. Dejamos Create para compatibilidad.
         [HttpPost]
-        [AllowAnonymous]
+        [Authorize(Policy = "AdminOnly")]
         public async Task<IActionResult> Create([FromBody] CreateUserDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -108,7 +112,7 @@ namespace PersonalFinance.Api.Controllers
 
             var currentUserId = GetCurrentUserId();
             if (currentUserId == null) return Unauthorized();
-            if (currentUserId.Value != id) return Forbid();
+            if (currentUserId.Value != id) return NotFound();
 
             var user = await _userManager.FindByIdAsync(id.ToString());
             if (user == null) return NotFound();
@@ -165,7 +169,7 @@ namespace PersonalFinance.Api.Controllers
         {
             var currentUserId = GetCurrentUserId();
             if (currentUserId == null) return Unauthorized();
-            if (currentUserId.Value != id) return Forbid();
+            if (currentUserId.Value != id) return NotFound();
 
             var user = await _userManager.FindByIdAsync(id.ToString());
             if (user == null) return NotFound();

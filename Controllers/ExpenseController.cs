@@ -142,21 +142,26 @@
         public async Task<IActionResult> DeleteExpense(int id)
         {
             var userId = GetCurrentUserId();
+            if (userId == null) return Unauthorized();
+
+            var expense = await _expenseService.GetByIdAsync(id, userId.Value);
+            if (expense == null) return NotFound();
+
             // Si Expense tiene relation directa a PasanacoPayment via TransactionId, reutilizar la misma comprobación:
-            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id);
+            var payment = await pasanacoService.GetPaymentByTransactionIdAsync(id, userId.Value);
             if (payment != null)
             {
-                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId);
+                var pasanaco = await pasanacoService.GetByIdAsync(payment.PasanacoId, userId.Value);
                 var current = pasanacoService.GetCurrentMonthYearForPasanaco(pasanaco);
                 if (payment.Month != current.month || payment.Year != current.year)
                 {
                     return BadRequest("No se puede borrar: el gasto está vinculado a un pasanaco de ronda anterior.");
                 }
-                await pasanacoService.UndoPaymentAsync(payment.Id, userId!.Value);
+                await pasanacoService.UndoPaymentAsync(payment.Id, userId.Value);
                 return NoContent();
             }
 
-            await _expenseService.DeleteAsync(id, userId!.Value);
+            await _expenseService.DeleteAsync(id, userId.Value);
             return NoContent();
         }
     }

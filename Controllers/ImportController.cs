@@ -1,10 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Controllers
 {
     [ApiController]
     [Route("api/template")]
+    [Authorize]
     public class ImportController : ControllerBase
     {
         private readonly IImportExcelService _excelService;
@@ -17,16 +20,23 @@ namespace PersonalFinance.Api.Controllers
         [HttpGet("export")]
         public IActionResult ExportTemplate()
         {
+            var userId = User.GetUserId();
+            if (userId == null) return Unauthorized();
+
             // mode es opcional, solo para generar un ejemplo inicial distinto
-            var file = _excelService.GenerateTemplate();
+            var file = _excelService.GenerateTemplate(userId.Value);
             return File(file,
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "template.xlsx");
         }
 
+        // El userId de la query se mantiene por compatibilidad, pero se ignora: siempre se usa el del token.
         [HttpPost("import")]
-        public async Task<IActionResult> ImportTemplate(IFormFile file, [FromQuery] Guid userId)
+        public async Task<IActionResult> ImportTemplate(IFormFile file, [FromQuery] Guid? userId)
         {
+            var currentUserId = User.GetUserId();
+            if (currentUserId == null) return Unauthorized();
+
             if (file == null || file.Length == 0)
                 return BadRequest("Archivo no válido");
 
@@ -36,7 +46,7 @@ namespace PersonalFinance.Api.Controllers
 
             try
             {
-                var result = await _excelService.ImportTemplateAsync(file, userId);
+                var result = await _excelService.ImportTemplateAsync(file, currentUserId.Value);
                 return Ok(result);
             }
             catch (InvalidDataException exception)

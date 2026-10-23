@@ -91,6 +91,9 @@ namespace PersonalFinance.Api.Services
             // Build claims including roles
             var roles = await _userManager.GetRolesAsync(user);
 
+            // Cuentas pendientes de aprobación (sin rol Admin ni User) no reciben token.
+            if (!roles.Contains("Admin") && !roles.Contains("User")) return null;
+
             var claims = new List<Claim>
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),

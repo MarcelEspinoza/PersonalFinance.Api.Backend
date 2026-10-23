@@ -38,7 +38,7 @@ namespace PersonalFinance.Api.Services
             return sb.ToString().Trim();
         }
 
-        public byte[] GenerateTemplate()
+        public byte[] GenerateTemplate(Guid userId)
         {
             using var workbook = new XLWorkbook();
             var ws = workbook.Worksheets.Add("Template");
@@ -70,7 +70,9 @@ namespace PersonalFinance.Api.Services
             wsCategories.Row(1).Style.Font.Bold = true;
             wsCategories.Row(1).Style.Fill.BackgroundColor = XLColor.LightGray;
 
-            var categories = _context.Categories.AsNoTracking().ToList();
+            var categories = _context.Categories.AsNoTracking()
+                .Where(c => c.IsSystem || c.UserId == userId)
+                .ToList();
             for (int i = 0; i < categories.Count; i++)
             {
                 wsCategories.Cell(i + 2, 1).Value = categories[i].Id;
@@ -101,7 +103,9 @@ namespace PersonalFinance.Api.Services
             wsBanks.Row(1).Style.Font.Bold = true;
             wsBanks.Row(1).Style.Fill.BackgroundColor = XLColor.LightGray;
 
-            var banks = _context.Banks.AsNoTracking().ToList();
+            var banks = _context.Banks.AsNoTracking()
+                .Where(b => b.UserId == userId)
+                .ToList();
             for (int i = 0; i < banks.Count; i++)
             {
                 wsBanks.Cell(i + 2, 1).Value = banks[i].Id.ToString();
@@ -116,7 +120,9 @@ namespace PersonalFinance.Api.Services
             wsLoans.Row(1).Style.Font.Bold = true;
             wsLoans.Row(1).Style.Fill.BackgroundColor = XLColor.LightGray;
 
-            var loans = _context.Set<Loan>().AsNoTracking().ToList();
+            var loans = _context.Set<Loan>().AsNoTracking()
+                .Where(l => l.UserId == userId)
+                .ToList();
             for (int i = 0; i < loans.Count; i++)
             {
                 wsLoans.Cell(i + 2, 1).Value = loans[i].Id.ToString();
@@ -162,7 +168,9 @@ namespace PersonalFinance.Api.Services
                 .GroupBy(c => CleanString(c.Name), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
 
-            var banksList = await _context.Banks.ToListAsync();
+            var banksList = await _context.Banks
+                .Where(b => b.UserId == userId)
+                .ToListAsync();
             var banksDict = banksList
                 .GroupBy(b => CleanString(b.Name + (string.IsNullOrEmpty(b.Entity) ? "" : $" | {b.Entity}")), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);

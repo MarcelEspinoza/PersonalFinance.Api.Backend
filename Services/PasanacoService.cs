@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos;
@@ -25,9 +26,10 @@ namespace PersonalFinance.Api.Services
             this.incomeService = incomeService;
         }
 
-        public async Task<IEnumerable<PasanacoDto>> GetAllAsync()
+        public async Task<IEnumerable<PasanacoDto>> GetAllAsync(Guid userId)
         {
             return await _context.Pasanacos
+                .Where(p => p.UserId == userId)
                 .Select(p => new PasanacoDto
                 {
                     Id = p.Id,
@@ -46,10 +48,9 @@ namespace PersonalFinance.Api.Services
                 .ToListAsync();
         }
 
-        public async Task<PasanacoDto> GetByIdAsync(string id)
+        public async Task<PasanacoDto> GetByIdAsync(string id, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(id);
-            if (pasanaco == null) throw new Exception("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(id, userId);
 
             return new PasanacoDto
             {
@@ -65,7 +66,7 @@ namespace PersonalFinance.Api.Services
             };
         }
 
-        public async Task<PasanacoDto> CreateAsync(CreatePasanacoDto dto)
+        public async Task<PasanacoDto> CreateAsync(Guid userId, CreatePasanacoDto dto)
         {
             if (string.IsNullOrWhiteSpace(dto.Name))
                 throw new ValidationException("El nombre es obligatorio");
@@ -84,6 +85,7 @@ namespace PersonalFinance.Api.Services
 
             var entity = new Pasanaco
             {
+                UserId = userId,
                 Name = dto.Name,
                 MonthlyAmount = dto.MonthlyAmount,
                 TotalParticipants = dto.TotalParticipants,
@@ -95,13 +97,12 @@ namespace PersonalFinance.Api.Services
             _context.Pasanacos.Add(entity);
             await _context.SaveChangesAsync();
 
-            return await GetByIdAsync(entity.Id);
+            return await GetByIdAsync(entity.Id, userId);
         }
 
-        public async Task UpdateAsync(string id, UpdatePasanacoDto dto)
+        public async Task UpdateAsync(string id, Guid userId, UpdatePasanacoDto dto)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(id);
-            if (pasanaco == null) throw new Exception("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(id, userId);
             EnsureActive(pasanaco);
 
             pasanaco.Name = dto.Name;
@@ -114,10 +115,9 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
         }
 
-        public async Task CompleteAsync(string id)
+        public async Task CompleteAsync(string id, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(id);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(id, userId);
             if (pasanaco.IsCompleted) return;
 
             pasanaco.IsCompleted = true;
@@ -125,10 +125,9 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
         }
 
-        public async Task ReopenAsync(string id)
+        public async Task ReopenAsync(string id, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(id);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(id, userId);
             if (!pasanaco.IsCompleted) return;
 
             pasanaco.IsCompleted = false;
@@ -136,17 +135,18 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
         }
 
-        public async Task DeleteAsync(string id)
+        public async Task DeleteAsync(string id, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(id);
-            if (pasanaco == null) return;
+            var pasanaco = await GetOwnedPasanacoAsync(id, userId);
 
             _context.Pasanacos.Remove(pasanaco);
             await _context.SaveChangesAsync();
         }
 
-        public async Task<IEnumerable<ParticipantDto>> GetParticipantsAsync(string pasanacoId)
+        public async Task<IEnumerable<ParticipantDto>> GetParticipantsAsync(string pasanacoId, Guid userId)
         {
+            await GetOwnedPasanacoAsync(pasanacoId, userId);
+
             return await _context.Participants
                 .Where(p => p.PasanacoId == pasanacoId)
                 .Select(p => new ParticipantDto
@@ -159,7 +159,7 @@ namespace PersonalFinance.Api.Services
                 .ToListAsync();
         }
 
-        public async Task AddParticipantAsync(string pasanacoId, CreateParticipantDto dto)
+        public async Task AddParticipantAsync(string pasanacoId, Guid userId, CreateParticipantDto dto)
         {
             if (string.IsNullOrWhiteSpace(dto.Name))
                 throw new ValidationException("El nombre es obligatorio");
@@ -167,8 +167,7 @@ namespace PersonalFinance.Api.Services
             if (dto.AssignedNumber < 1)
                 throw new ValidationException("El número asignado debe ser mayor o igual a 1");
 
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             if (dto.AssignedNumber > pasanaco.TotalParticipants)
@@ -203,10 +202,9 @@ namespace PersonalFinance.Api.Services
             }
         }
 
-        public async Task DeleteParticipantAsync(string pasanacoId, string participantId)
+        public async Task DeleteParticipantAsync(string pasanacoId, string participantId, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             var participant = await _context.Participants
@@ -219,8 +217,10 @@ namespace PersonalFinance.Api.Services
             }
         }
 
-        public async Task<IEnumerable<PasanacoPaymentDto>> GetPaymentsAsync(string pasanacoId, int month, int year)
+        public async Task<IEnumerable<PasanacoPaymentDto>> GetPaymentsAsync(string pasanacoId, Guid userId, int month, int year)
         {
+            await GetOwnedPasanacoAsync(pasanacoId, userId);
+
             return await _context.PasanacoPayments
                 .Where(p => p.PasanacoId == pasanacoId && p.Month == month && p.Year == year)
                 .Select(p => new PasanacoPaymentDto
@@ -237,10 +237,9 @@ namespace PersonalFinance.Api.Services
                 .ToListAsync();
         }
 
-        public async Task GeneratePaymentsAsync(string pasanacoId, int month, int year)
+        public async Task GeneratePaymentsAsync(string pasanacoId, Guid userId, int month, int year)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             var participants = await _context.Participants
@@ -273,10 +272,9 @@ namespace PersonalFinance.Api.Services
             await _context.SaveChangesAsync();
         }
 
-        public async Task MarkPaymentAsPaidAsync(string paymentId, int? transactionId)
+        public async Task MarkPaymentAsPaidAsync(string paymentId, Guid userId, int? transactionId)
         {
-            var payment = await _context.PasanacoPayments.FindAsync(paymentId);
-            if (payment == null) throw new Exception("Pago no encontrado");
+            var payment = await GetOwnedPaymentAsync(paymentId, userId);
 
             payment.Paid = true;
             payment.PaymentDate = DateTime.UtcNow;
@@ -287,12 +285,11 @@ namespace PersonalFinance.Api.Services
 
         public async Task<bool> MarkPaymentAsPaidAsync(Guid paymentId, Guid userId)
         {
-            var payment = await _context.PasanacoPayments.FindAsync(paymentId.ToString());
-            if (payment == null || payment.Paid) return false;
+            var payment = await GetOwnedPaymentAsync(paymentId.ToString(), userId);
+            if (payment.Paid) return false;
 
-            var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
+            var pasanaco = await GetOwnedPasanacoAsync(payment.PasanacoId, userId);
             var participant = await _context.Participants.FindAsync(payment.ParticipantId);
-            if (pasanaco == null) return false;
             EnsureActive(pasanaco);
 
             payment.Paid = true;
@@ -318,8 +315,7 @@ namespace PersonalFinance.Api.Services
 
         public async Task<Loan> CreateLoanForParticipantAsync(string pasanacoId, string participantId, decimal amount, Guid userId, string? note = null)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             var participant = await _context.Participants.FindAsync(participantId);
@@ -380,8 +376,7 @@ namespace PersonalFinance.Api.Services
 
         public async Task<int> DisbursePasanacoRoundAsync(string pasanacoId, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             var date = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
@@ -435,8 +430,7 @@ namespace PersonalFinance.Api.Services
         // AdvanceRoundAsync con opción createLoans (ya existente en tu repo)
         public async Task<bool> AdvanceRoundAsync(string pasanacoId, Guid userId, bool createLoans = false)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
             if (pasanaco.CurrentRound >= pasanaco.TotalParticipants) return false;
 
@@ -515,10 +509,9 @@ namespace PersonalFinance.Api.Services
             return true;
         }
 
-        public async Task<bool> RetreatRoundAsync(string pasanacoId)
+        public async Task<bool> RetreatRoundAsync(string pasanacoId, Guid userId)
         {
-            var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
             if (pasanaco.CurrentRound <= 1) return false;
@@ -528,10 +521,10 @@ namespace PersonalFinance.Api.Services
             return true;
         }
 
-        public async Task<PasanacoPayment?> GetPaymentByTransactionIdAsync(int transactionId)
+        public async Task<PasanacoPayment?> GetPaymentByTransactionIdAsync(int transactionId, Guid userId)
         {
             return await _context.PasanacoPayments
-                .FirstOrDefaultAsync(p => p.TransactionId == transactionId);
+                .FirstOrDefaultAsync(p => p.TransactionId == transactionId && p.Pasanaco.UserId == userId);
         }
 
         public (int month, int year) GetCurrentMonthYearForPasanaco(PasanacoDto pasanaco)
@@ -540,20 +533,18 @@ namespace PersonalFinance.Api.Services
             return (d.Month, d.Year);
         }
 
-        public async Task<PasanacoPayment?> GetPaymentByLoanIdAsync(Guid loanId)
+        public async Task<PasanacoPayment?> GetPaymentByLoanIdAsync(Guid loanId, Guid userId)
         {
             var loanIdVal = loanId;
             return await _context.PasanacoPayments
-                .FirstOrDefaultAsync(p => p.PaidByLoanId != Guid.Empty && p.PaidByLoanId == loanIdVal);
+                .FirstOrDefaultAsync(p => p.PaidByLoanId != Guid.Empty && p.PaidByLoanId == loanIdVal && p.Pasanaco.UserId == userId);
         }
 
         public async Task<bool> UndoPaymentAsync(string paymentId, Guid userId)
         {
-            var payment = await _context.PasanacoPayments.FirstOrDefaultAsync(p => p.Id == paymentId);
-            if (payment == null) throw new ValidationException("Pago no encontrado");
+            var payment = await GetOwnedPaymentAsync(paymentId, userId);
 
-            var pasanaco = await _context.Pasanacos.FindAsync(payment.PasanacoId);
-            if (pasanaco == null) throw new ValidationException("Pasanaco no encontrado");
+            var pasanaco = await GetOwnedPasanacoAsync(payment.PasanacoId, userId);
             EnsureActive(pasanaco);
 
             var currentDate = new DateTime(pasanaco.StartYear, pasanaco.StartMonth, 1).AddMonths(pasanaco.CurrentRound - 1);
@@ -586,7 +577,7 @@ namespace PersonalFinance.Api.Services
                 {
                     try
                     {
-                        await loanService.DeleteLoanAsync(payment.PaidByLoanId);
+                        await loanService.DeleteLoanAsync(payment.PaidByLoanId, userId);
                     }
                     catch (Exception ex)
                     {
@@ -616,8 +607,10 @@ namespace PersonalFinance.Api.Services
 
         // --- NUEVOS MÉTODOS: resumen de relaciones y borrado en cascada controlado ---
 
-        public async Task<Services.Contracts.RelatedSummaryDto> GetRelatedSummaryAsync(string pasanacoId)
+        public async Task<Services.Contracts.RelatedSummaryDto> GetRelatedSummaryAsync(string pasanacoId, Guid userId)
         {
+            await GetOwnedPasanacoAsync(pasanacoId, userId);
+
             // Count PasanacoPayments
             var paymentsCount = await _context.PasanacoPayments.CountAsync(p => p.PasanacoId == pasanacoId);
 
@@ -625,18 +618,18 @@ namespace PersonalFinance.Api.Services
             var loansCount = 0;
             try
             {
-                loansCount = await _context.Loans.CountAsync(l => l.PasanacoId != null && l.PasanacoId == pasanacoId);
+                loansCount = await _context.Loans.CountAsync(l => l.UserId == userId && l.PasanacoId != null && l.PasanacoId == pasanacoId);
             }
             catch
             {
                 // CORRECCIÓN: Cambiar ILike a Like para SQL Server
-                loansCount = await _context.Loans.CountAsync(l => EF.Functions.Like(l.Name ?? "", $"%{pasanacoId}%"));
+                loansCount = await _context.Loans.CountAsync(l => l.UserId == userId && EF.Functions.Like(l.Name ?? "", $"%{pasanacoId}%"));
             }
 
             // Expenses & Incomes: try PasanacoId or Notes containing pasanacoId (best-effort)
             // CORRECCIÓN: Cambiar ILike a Like para SQL Server
-            var expensesCount = await _context.Expenses.CountAsync(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%"));
-            var incomesCount = await _context.Incomes.CountAsync(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%"));
+            var expensesCount = await _context.Expenses.CountAsync(e => e.UserId == userId && ((e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%")));
+            var incomesCount = await _context.Incomes.CountAsync(i => i.UserId == userId && ((i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%")));
 
             return new Services.Contracts.RelatedSummaryDto
             {
@@ -647,8 +640,10 @@ namespace PersonalFinance.Api.Services
             };
         }
 
-        public async Task DeletePasanacoCascadeAsync(string pasanacoId, Guid performedByUserId)
+        public async Task DeletePasanacoCascadeAsync(string pasanacoId, Guid userId)
         {
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
+
             using var tx = await _context.Database.BeginTransactionAsync();
             try
             {
@@ -659,18 +654,17 @@ namespace PersonalFinance.Api.Services
                 // 2) Remove loans that reference pasanaco (prefer service delete to keep invariants)
                 // ... (código para eliminar préstamos, sin cambios directos aquí)
 
-                // 3) Remove expenses/incomes referencing pasanaco (best-effort by PasanacoId or Notes)
+                // 3) Remove expenses/incomes referencing pasanaco (best-effort by PasanacoId or Notes), only the owner's own records
                 // CORRECCIÓN: Cambiar ILike a Like para SQL Server
-                var expenses = _context.Expenses.Where(e => (e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%"));
+                var expenses = _context.Expenses.Where(e => e.UserId == userId && ((e.PasanacoId != null && e.PasanacoId == pasanacoId) || EF.Functions.Like(e.Notes ?? "", $"%{pasanacoId}%")));
                 _context.Expenses.RemoveRange(expenses);
 
                 // CORRECCIÓN: Cambiar ILike a Like para SQL Server
-                var incomes = _context.Incomes.Where(i => (i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%"));
+                var incomes = _context.Incomes.Where(i => i.UserId == userId && ((i.PasanacoId != null && i.PasanacoId == pasanacoId) || EF.Functions.Like(i.Notes ?? "", $"%{pasanacoId}%")));
                 _context.Incomes.RemoveRange(incomes);
 
                 // 4) Finally remove pasanaco itself
-                var pasanaco = await _context.Pasanacos.FindAsync(pasanacoId);
-                if (pasanaco != null) _context.Pasanacos.Remove(pasanaco);
+                _context.Pasanacos.Remove(pasanaco);
 
                 await _context.SaveChangesAsync();
                 await tx.CommitAsync();
@@ -680,6 +674,18 @@ namespace PersonalFinance.Api.Services
                 await tx.RollbackAsync();
                 throw;
             }
+        }
+
+        private async Task<Pasanaco> GetOwnedPasanacoAsync(string pasanacoId, Guid userId)
+        {
+            return await _context.Pasanacos.FirstOrDefaultAsync(p => p.Id == pasanacoId && p.UserId == userId)
+                ?? throw new NotFoundException("Pasanaco no encontrado");
+        }
+
+        private async Task<PasanacoPayment> GetOwnedPaymentAsync(string paymentId, Guid userId)
+        {
+            return await _context.PasanacoPayments.FirstOrDefaultAsync(p => p.Id == paymentId && p.Pasanaco.UserId == userId)
+                ?? throw new NotFoundException("Pago no encontrado");
         }
 
         private static void EnsureActive(Pasanaco pasanaco)

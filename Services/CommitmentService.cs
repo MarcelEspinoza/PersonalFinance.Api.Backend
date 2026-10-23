@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
@@ -51,8 +53,11 @@ namespace PersonalFinance.Api.Services
             FinancialCommitment commitment,
             CancellationToken ct = default)
         {
+            var userId = CurrentUserId();
+            await EnsureReferencesAsync(userId, commitment.CategoryId, commitment.BankId, ct);
+
             commitment.Id = Guid.NewGuid();
-            commitment.UserId = CurrentUserId();
+            commitment.UserId = userId;
 
             _db.FinancialCommitments.Add(commitment);
             await _db.SaveChangesAsync(ct);
@@ -71,7 +76,9 @@ namespace PersonalFinance.Api.Services
                 .FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId, ct);
 
             if (entity == null)
-                throw new KeyNotFoundException();
+                throw new NotFoundException("Compromiso no encontrado");
+
+            await EnsureReferencesAsync(userId, updated.CategoryId, updated.BankId, ct);
 
             entity.Name = updated.Name;
             entity.Type = updated.Type;
@@ -95,10 +102,18 @@ namespace PersonalFinance.Api.Services
                 .FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId, ct);
 
             if (entity == null)
-                throw new KeyNotFoundException();
+                throw new NotFoundException("Compromiso no encontrado");
 
             entity.IsActive = false;
             await _db.SaveChangesAsync(ct);
+        }
+
+        private async Task EnsureReferencesAsync(Guid userId, int? categoryId, Guid? bankId, CancellationToken ct)
+        {
+            if (categoryId.HasValue && !await _db.IsCategoryVisibleAsync(userId, categoryId.Value, ct))
+                throw new BusinessRuleException("La categoría no existe.");
+            if (!await _db.IsBankOwnedOrNullAsync(userId, bankId, ct))
+                throw new BusinessRuleException("El banco no existe.");
         }
     }
 }

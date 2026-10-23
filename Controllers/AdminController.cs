@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Models.Entities;
+using PersonalFinance.Api.Services;
+using PersonalFinance.Api.Services.Contracts;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -17,11 +19,19 @@ namespace PersonalFinance.Api.Controllers
     {
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole<Guid>> _roleManager;
+        private readonly IEmailSender _emailSender;
+        private readonly ILogger<AdminController> _logger;
 
-        public AdminController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager)
+        public AdminController(
+            UserManager<ApplicationUser> userManager,
+            RoleManager<IdentityRole<Guid>> roleManager,
+            IEmailSender emailSender,
+            ILogger<AdminController> logger)
         {
             _userManager = userManager;
             _roleManager = roleManager;
+            _emailSender = emailSender;
+            _logger = logger;
         }
 
         // GET: api/admin/users
@@ -34,7 +44,8 @@ namespace PersonalFinance.Api.Controllers
                 {
                     id = u.Id,
                     email = u.Email,
-                    fullName = u.FullName
+                    fullName = u.FullName,
+                    emailConfirmed = u.EmailConfirmed
                 })
                 .ToListAsync();
 
@@ -48,7 +59,9 @@ namespace PersonalFinance.Api.Controllers
                     id = u.id,
                     email = u.email,
                     fullName = u.fullName,
-                    roles = roles.ToArray()
+                    roles = roles.ToArray(),
+                    emailConfirmed = u.emailConfirmed,
+                    pendingApproval = IsPendingApproval(roles)
                 });
             }
 
@@ -70,8 +83,52 @@ namespace PersonalFinance.Api.Controllers
                 userName = user.UserName,
                 email = user.Email,
                 fullName = user.FullName,
-                roles = roles.ToArray()
+                roles = roles.ToArray(),
+                emailConfirmed = user.EmailConfirmed,
+                pendingApproval = IsPendingApproval(roles)
             });
+        }
+
+        // POST: api/admin/users/{id}/approve
+        // Aprueba una cuenta pendiente: añade "User", quita "Invited" y devuelve el array actualizado de roles.
+        [HttpPost("users/{id:guid}/approve")]
+        public async Task<IActionResult> ApproveUser(Guid id)
+        {
+            var user = await _userManager.FindByIdAsync(id.ToString());
+            if (user == null) return NotFound();
+
+            var wasPending = IsPendingApproval(await _userManager.GetRolesAsync(user));
+
+            if (!await _userManager.IsInRoleAsync(user, "User"))
+            {
+                var addRes = await _userManager.AddToRoleAsync(user, "User");
+                if (!addRes.Succeeded) return BadRequest(addRes.Errors);
+            }
+
+            if (await _userManager.IsInRoleAsync(user, "Invited"))
+            {
+                var removeRes = await _userManager.RemoveFromRoleAsync(user, "Invited");
+                if (!removeRes.Succeeded) return BadRequest(removeRes.Errors);
+            }
+
+            var roles = await _userManager.GetRolesAsync(user);
+
+            if (wasPending && !string.IsNullOrWhiteSpace(user.Email))
+            {
+                try
+                {
+                    await _emailSender.SendEmailAsync(
+                        user.Email,
+                        "Tu cuenta en Personal Finance ha sido aprobada",
+                        EmailTemplates.AccountApprovedTemplate(user.FullName));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Could not send approval email to user {UserId}", user.Id);
+                }
+            }
+
+            return Ok(roles);
         }
 
         // GET: api/admin/users/{id}/roles
@@ -154,6 +211,9 @@ namespace PersonalFinance.Api.Controllers
 
             return NoContent();
         }
+
+        private static bool IsPendingApproval(IEnumerable<string> roles) =>
+            !roles.Contains("Admin") && !roles.Contains("User");
 
         public record AddRoleRequest(string Role);
     }

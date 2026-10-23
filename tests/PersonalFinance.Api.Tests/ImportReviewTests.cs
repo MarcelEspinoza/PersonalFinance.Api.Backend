@@ -25,6 +25,10 @@ public sealed class ImportReviewTests : LedgerTestBase
     private sealed class RecordingChatService : IImportChatService
     {
         public IReadOnlyList<string> Analysis { get; private set; } = Array.Empty<string>();
+        public IReadOnlyList<ImportChatRowContext> Rows { get; private set; } = Array.Empty<ImportChatRowContext>();
+        public ImportChatExtraContext Extra { get; private set; } = ImportChatExtraContext.Empty;
+        public ImportChatResult Result { get; set; } =
+            new("ok", Array.Empty<ImportChatProposal>(), Array.Empty<string>());
 
         public Task<ImportChatResult> AskAsync(
             string userMessage,
@@ -32,10 +36,13 @@ public sealed class ImportReviewTests : LedgerTestBase
             IReadOnlyList<ImportChatRowContext> rows,
             IReadOnlyList<ImportAiCandidate> concepts,
             IReadOnlyList<string> analysis,
+            ImportChatExtraContext extra,
             CancellationToken ct)
         {
             Analysis = analysis;
-            return Task.FromResult(new ImportChatResult("ok", Array.Empty<ImportChatChange>(), Array.Empty<string>()));
+            Rows = rows;
+            Extra = extra;
+            return Task.FromResult(Result);
         }
     }
 
@@ -355,5 +362,59 @@ public sealed class ImportReviewTests : LedgerTestBase
 
         Assert.IsType<OkObjectResult>(result.Result);
         Assert.Contains(chat.Analysis, line => line.StartsWith("[ok] El saldo cuadra con el banco", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task El_asistente_solo_propone_y_no_cambia_ninguna_fila()
+    {
+        var accountId = await SeedAccountAsync(100m, new DateOnly(2026, 10, 1), "Revolut");
+        await SeedChartAndMapAsync(accountId, ("NAVAS EXPRESS", "Compras personales"));
+        var batchId = await CreateBatchAsync(accountId, BuildCsv(
+            "extracto.csv",
+            "Pago con tarjeta;Actual;05/10/2026 10:00;05/10/2026 10:00;NAVAS EXPRESS;-50.00;0.00;EUR;COMPLETADO;50.00"));
+        var row = await Db.ImportRows.AsNoTracking().SingleAsync(r => r.BatchId == batchId);
+        var otherConcept = await Db.Concepts.AsNoTracking()
+            .FirstAsync(c => c.UserId == UserId && c.IsActive && c.Id != row.ConfirmedConceptId && c.Id != row.SuggestedConceptId);
+        Db.ConceptGroups.Add(new ConceptGroup { UserId = Guid.NewGuid(), Name = "Grupo de otra persona", Kind = ConceptKind.Expense });
+        await Db.SaveChangesAsync();
+
+        var chat = new RecordingChatService
+        {
+            Result = new ImportChatResult(
+                "Te propongo un cambio.",
+                new[]
+                {
+                    new ImportChatProposal(
+                        ImportChatActionTypes.SetRowConcept,
+                        $"Poner «{otherConcept.Name}» en 1 movimiento",
+                        new[] { row.Id },
+                        otherConcept.Id,
+                        otherConcept.Name,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false)
+                },
+                Array.Empty<string>())
+        };
+
+        var result = await CreateController(chat).Chat(
+            batchId, new ImportChatRequestDto { Message = "Cámbialo" }, CancellationToken.None);
+
+        var body = Assert.IsType<ImportChatResponseDto>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal(0, body.AppliedChanges);
+        var proposal = Assert.Single(body.ProposedActions);
+        Assert.Equal(ImportChatActionTypes.SetRowConcept, proposal.Type);
+        Assert.Equal(new[] { row.Id }, proposal.RowIds);
+        Assert.Equal(otherConcept.Id, proposal.ConceptId);
+
+        var after = await Db.ImportRows.AsNoTracking().SingleAsync(r => r.Id == row.Id);
+        Assert.Equal(row.ConfirmedConceptId, after.ConfirmedConceptId);
+        Assert.Equal(row.SuggestionSource, after.SuggestionSource);
+        Assert.Equal(row.Status, after.Status);
+
+        Assert.NotEmpty(chat.Extra.Groups);
+        Assert.DoesNotContain(chat.Extra.Groups, g => g.Name == "Grupo de otra persona");
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos;
 using PersonalFinance.Api.Models.Entities;
@@ -24,9 +25,11 @@ namespace PersonalFinance.Api.Services
         public async Task<IEnumerable<Loan>> GetLoansAsync(Guid userId) =>
             await _context.Loans.Where(l => l.UserId == userId).ToListAsync();
 
-        public async Task<Loan?> GetLoanAsync(Guid id) =>
-            await _context.Loans.Include(l => l.Payments).FirstOrDefaultAsync(l => l.Id == id);
+        public async Task<Loan?> GetLoanAsync(Guid id, Guid userId) =>
+            await _context.Loans.Include(l => l.Payments).FirstOrDefaultAsync(l => l.Id == id && l.UserId == userId);
 
+        // El propietario es dto.UserId: el controlador lo fija desde el token y PasanacoService
+        // con el propietario ya verificado del pasanaco.
         public async Task<Loan> CreateLoanAsync(LoanDto dto)
         {
             if (dto == null) throw new ArgumentNullException(nameof(dto));
@@ -42,15 +45,13 @@ namespace PersonalFinance.Api.Services
             // Nota: LoanDto.CategoryId es int en tu DTO actual.
             if (dto.CategoryId > 0)
             {
-                var category = await _context.Categories.FindAsync(dto.CategoryId);
-                if (category != null) loan.Category = category;
+                loan.Category = await GetVisibleCategoryAsync(dto.CategoryId, dto.UserId);
             }
 
             // Resolver Pasanaco por Id si el DTO incluye uno (PasanacoId es string? en tu DTO actual)
             if (!string.IsNullOrWhiteSpace(dto.PasanacoId))
             {
-                var pasanaco = await _context.Pasanacos.FindAsync(dto.PasanacoId);
-                if (pasanaco != null) loan.Pasanaco = pasanaco;
+                loan.Pasanaco = await GetOwnedPasanacoAsync(dto.PasanacoId, dto.UserId);
             }
 
             _context.Loans.Add(loan);
@@ -58,9 +59,9 @@ namespace PersonalFinance.Api.Services
             return loan;
         }
 
-        public async Task DeleteLoanAsync(Guid id)
+        public async Task DeleteLoanAsync(Guid id, Guid userId)
         {
-            var loan = await _context.Loans.FindAsync(id);
+            var loan = await _context.Loans.FirstOrDefaultAsync(l => l.Id == id && l.UserId == userId);
             if (loan != null)
             {
                 _context.Loans.Remove(loan);
@@ -69,17 +70,17 @@ namespace PersonalFinance.Api.Services
         }
 
         // Nota: actualicé la firma para aceptar el id de la ruta más explícitamente
-        public async Task UpdateLoanAsync(Guid id, LoanDto dto)
+        public async Task UpdateLoanAsync(Guid id, Guid userId, LoanDto dto)
         {
             if (dto == null) throw new ArgumentNullException(nameof(dto));
 
             // Recuperar el préstamo existente con colecciones relevantes
             var loan = await _context.Loans
                 .Include(l => l.Payments)
-                .FirstOrDefaultAsync(l => l.Id == id);
+                .FirstOrDefaultAsync(l => l.Id == id && l.UserId == userId);
 
             if (loan == null)
-                throw new KeyNotFoundException($"Loan with Id '{id}' not found.");
+                throw new NotFoundException("Préstamo no encontrado");
 
             // Mapear propiedades escalares del DTO sobre la entidad existente.
             // Asumimos que el MappingProfile actualiza sólo propiedades escalares y no navegaciones complejas.
@@ -87,12 +88,13 @@ namespace PersonalFinance.Api.Services
 
             // Reafirmar el Id desde la ruta (no confiar en que el cliente pase el id en el body)
             loan.Id = id;
+            // El propietario nunca cambia desde el body
+            loan.UserId = userId;
 
             // CategoryId: si el DTO contiene un id > 0 lo resolvemos; si viene 0 (o falta), lo limpiamos.
             if (dto.CategoryId > 0)
             {
-                var category = await _context.Categories.FindAsync(dto.CategoryId);
-                loan.Category = category; // puede quedar null si no existe la categoría
+                loan.Category = await GetVisibleCategoryAsync(dto.CategoryId, userId);
             }
             else
             {
@@ -103,8 +105,7 @@ namespace PersonalFinance.Api.Services
             // PasanacoId: si el DTO contiene cadena no vacía la resolvemos, si viene null/empty limpiamos.
             if (!string.IsNullOrWhiteSpace(dto.PasanacoId))
             {
-                var pasanaco = await _context.Pasanacos.FindAsync(dto.PasanacoId);
-                loan.Pasanaco = pasanaco; // puede quedar null si no existe el pasanaco
+                loan.Pasanaco = await GetOwnedPasanacoAsync(dto.PasanacoId, userId);
             }
             else
             {
@@ -117,5 +118,13 @@ namespace PersonalFinance.Api.Services
             // Guardar cambios
             await _context.SaveChangesAsync();
         }
+
+        private async Task<Category> GetVisibleCategoryAsync(int categoryId, Guid userId) =>
+            await _context.Categories.FirstOrDefaultAsync(c => c.Id == categoryId && (c.IsSystem || c.UserId == userId))
+                ?? throw new NotFoundException("Categoría no encontrada");
+
+        private async Task<Pasanaco> GetOwnedPasanacoAsync(string pasanacoId, Guid userId) =>
+            await _context.Pasanacos.FirstOrDefaultAsync(p => p.Id == pasanacoId && p.UserId == userId)
+                ?? throw new NotFoundException("Pasanaco no encontrado");
     }
 }

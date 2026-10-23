@@ -129,11 +129,11 @@ namespace PersonalFinance.Api.Controllers
                     return await RecordLoanPayment(action, userId.Value);
                 case "complete_pasanaco":
                     if (string.IsNullOrWhiteSpace(action.TargetId)) return BadRequest("Falta el pasanaco.");
-                    await _pasanacos.CompleteAsync(action.TargetId);
+                    await _pasanacos.CompleteAsync(action.TargetId, userId.Value);
                     return Ok(new { action.Type, action.TargetId });
                 case "reopen_pasanaco":
                     if (string.IsNullOrWhiteSpace(action.TargetId)) return BadRequest("Falta el pasanaco.");
-                    await _pasanacos.ReopenAsync(action.TargetId);
+                    await _pasanacos.ReopenAsync(action.TargetId, userId.Value);
                     return Ok(new { action.Type, action.TargetId });
                 case "classify_import_group":
                     return await ClassifyImportGroup(action, userId.Value, ct);

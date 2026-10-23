@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
@@ -51,13 +53,24 @@ namespace PersonalFinance.Api.Services
             Budget budget,
             CancellationToken ct = default)
         {
-            budget.Id = Guid.NewGuid();
-            budget.UserId = CurrentUserId();
+            var userId = CurrentUserId();
+            await EnsureCategoryAsync(userId, budget.CategoryId, ct);
 
-            _db.Budgets.Add(budget);
+            var entity = new Budget
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                CategoryId = budget.CategoryId,
+                MonthlyLimit = budget.MonthlyLimit,
+                StartMonth = budget.StartMonth,
+                EndMonth = budget.EndMonth,
+                IsActive = budget.IsActive
+            };
+
+            _db.Budgets.Add(entity);
             await _db.SaveChangesAsync(ct);
 
-            return budget;
+            return entity;
         }
 
         public async Task UpdateAsync(
@@ -71,7 +84,9 @@ namespace PersonalFinance.Api.Services
                 .FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId, ct);
 
             if (entity == null)
-                throw new KeyNotFoundException("Presupuesto no encontrado");
+                throw new NotFoundException("Presupuesto no encontrado");
+
+            await EnsureCategoryAsync(userId, updated.CategoryId, ct);
 
             entity.CategoryId = updated.CategoryId;
             entity.MonthlyLimit = updated.MonthlyLimit;
@@ -93,10 +108,16 @@ namespace PersonalFinance.Api.Services
                 .FirstOrDefaultAsync(b => b.Id == id && b.UserId == userId, ct);
 
             if (entity == null)
-                throw new KeyNotFoundException();
+                throw new NotFoundException("Presupuesto no encontrado");
 
             entity.IsActive = false;
             await _db.SaveChangesAsync(ct);
+        }
+
+        private async Task EnsureCategoryAsync(Guid userId, int categoryId, CancellationToken ct)
+        {
+            if (!await _db.IsCategoryVisibleAsync(userId, categoryId, ct))
+                throw new BusinessRuleException("La categoría no existe.");
         }
     }
 }

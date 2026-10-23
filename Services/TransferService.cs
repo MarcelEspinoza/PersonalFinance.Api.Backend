@@ -32,6 +32,10 @@ namespace PersonalFinance.Api.Services
         {
             if (dto.FromBankId == dto.ToBankId) throw new ArgumentException("FromBankId and ToBankId must be different.");
 
+            var ownedBanks = await _db.Banks
+                .CountAsync(b => b.UserId == userId && (b.Id == dto.FromBankId || b.Id == dto.ToBankId), cancellationToken);
+            if (ownedBanks != 2) throw new ArgumentException("FromBankId and ToBankId must be banks of the current user.");
+
             // Aseguramos una categoría "Transferencia" para el usuario (puedes cambiar el nombre)
             const string transferCategoryName = "Transferencia";
             int categoryId;
@@ -151,10 +155,11 @@ namespace PersonalFinance.Api.Services
             }
         }
 
-        public async Task<object> GetByTransferIdAsync(string transferId, CancellationToken cancellationToken = default)
+        public async Task<object?> GetByTransferIdAsync(Guid userId, string transferId, CancellationToken cancellationToken = default)
         {
-            var incomes = await _db.Incomes.AsNoTracking().Where(i => i.TransferId == transferId).ToListAsync(cancellationToken);
-            var expenses = await _db.Expenses.AsNoTracking().Where(e => e.TransferId == transferId).ToListAsync(cancellationToken);
+            var incomes = await _db.Incomes.AsNoTracking().Where(i => i.TransferId == transferId && i.UserId == userId).ToListAsync(cancellationToken);
+            var expenses = await _db.Expenses.AsNoTracking().Where(e => e.TransferId == transferId && e.UserId == userId).ToListAsync(cancellationToken);
+            if (incomes.Count == 0 && expenses.Count == 0) return null;
             return new { incomes, expenses };
         }
     }

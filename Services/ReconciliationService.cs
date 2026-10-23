@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos.Bank;
 using PersonalFinance.Api.Models.Entities;
@@ -46,6 +47,9 @@ namespace PersonalFinance.Api.Services
 
             if (dto.BankId == Guid.Empty)
                 throw new ArgumentException("BankId is required and must be a valid GUID.", nameof(dto.BankId));
+
+            if (!await _db.Banks.AnyAsync(b => b.Id == dto.BankId && b.UserId == userId, ct))
+                throw new NotFoundException("Banco no encontrado");
 
             var existing = await _db.Set<Reconciliation>()
                 .FirstOrDefaultAsync(r => r.UserId == userId && r.BankId == dto.BankId && r.Year == dto.Year && r.Month == dto.Month, ct);
@@ -189,8 +193,9 @@ namespace PersonalFinance.Api.Services
         // =====================================================
         public async Task<bool> MarkReconciledAsync(Guid id, DateTime? reconciledAt = null, CancellationToken ct = default)
         {
-            var recon = await _db.Reconciliations.FindAsync(new object[] { id }, ct);
-            if (recon == null) return false;
+            var userId = CurrentUserId();
+            var recon = await _db.Reconciliations.FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId, ct)
+                ?? throw new NotFoundException("Conciliación no encontrada");
 
             var suggestion = await SuggestAsync(recon.Year, recon.Month, recon.BankId, ct);
             var difference = suggestion.Difference;

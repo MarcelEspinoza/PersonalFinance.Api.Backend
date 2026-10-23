@@ -2,6 +2,7 @@
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Entities;
@@ -31,6 +32,19 @@ namespace PersonalFinance.Api.Services
         }
 
         private static DateTime? NormalizeNullable(DateTime? d) => d.HasValue ? NormalizeToUtc(d.Value) : (DateTime?)null;
+
+        // Las referencias deben ser del usuario (o categorías de sistema); un id ajeno se trata igual que uno inexistente.
+        private async Task EnsureReferencesAsync(Guid userId, int? categoryId, Guid? bankId, Guid? counterpartyBankId, Guid? loanId, CancellationToken ct)
+        {
+            if (categoryId.HasValue && !await _context.IsCategoryVisibleAsync(userId, categoryId.Value, ct))
+                throw new ArgumentException($"CategoryId {categoryId} no existe en la base de datos");
+            if (!await _context.IsBankOwnedOrNullAsync(userId, bankId, ct))
+                throw new ArgumentException($"BankId {bankId} no existe en la base de datos");
+            if (!await _context.IsBankOwnedOrNullAsync(userId, counterpartyBankId, ct))
+                throw new ArgumentException($"TransferCounterpartyBankId {counterpartyBankId} no existe en la base de datos");
+            if (!await _context.IsLoanOwnedOrNullAsync(userId, loanId, ct))
+                throw new ArgumentException($"LoanId {loanId} no existe en la base de datos");
+        }
 
         public async Task<IEnumerable<ExpenseDto>> GetAllAsync(Guid userId, CancellationToken cancellationToken = default)
         {
@@ -71,6 +85,8 @@ namespace PersonalFinance.Api.Services
         {
             if (dto.Amount <= 0) throw new ArgumentException("Amount must be > 0");
             if (dto.Date == default) throw new ArgumentException("Date is required");
+
+            await EnsureReferencesAsync(userId, dto.CategoryId, dto.BankId, dto.TransferCounterpartyBankId, dto.LoanId, ct);
 
             // Normalize incoming dates to UTC
             var dateUtc = NormalizeToUtc(dto.Date);
@@ -156,6 +172,8 @@ namespace PersonalFinance.Api.Services
         {
             var expense = await _context.Expenses.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId, ct);
             if (expense == null) return false;
+
+            await EnsureReferencesAsync(userId, dto.CategoryId, dto.BankId, dto.TransferCounterpartyBankId, dto.LoanId, ct);
 
             var oldAmount = expense.Amount;
             var oldLoanId = expense.LoanId;

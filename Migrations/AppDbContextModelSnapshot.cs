@@ -724,7 +724,12 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<int>("TotalParticipants")
                         .HasColumnType("int");
 
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("char(36)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId");
 
                     b.ToTable("Pasanacos");
                 });

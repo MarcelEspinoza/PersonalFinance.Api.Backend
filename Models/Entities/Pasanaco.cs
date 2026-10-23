@@ -5,6 +5,10 @@
     public class Pasanaco
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        // Propietario. Los pasanacos antiguos sin propietario (null) no son visibles para nadie.
+        public Guid? UserId { get; set; }
+
         [Required]
         public string Name
         {

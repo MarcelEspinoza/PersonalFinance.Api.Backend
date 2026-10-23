@@ -597,32 +597,124 @@ namespace PersonalFinance.Api.Controllers
                 .Select(h => new ImportChatMessage(h.Role, h.Content))
                 .ToList();
 
-            var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, analysis, ct);
+            var extra = await LoadChatContextAsync(userId.Value, ct);
+            var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, analysis, extra, ct);
 
-            var applied = 0;
-            foreach (var change in result.Changes)
-            {
-                var row = batch.Rows.FirstOrDefault(r => r.Id == change.RowId);
-                if (row is null || row.Status != ImportRowStatus.Pending) continue;
-
-                row.ConfirmedConceptId = change.ConceptId;
-                row.SuggestionSource = "chat";
-                row.SuggestionConfidence = change.ConceptId is null ? null : 1m;
-                var allocations = await _db.ImportRowAllocations
-                    .Where(item => item.ImportRowId == row.Id)
-                    .ToListAsync(ct);
-                _db.ImportRowAllocations.RemoveRange(allocations);
-                applied++;
-            }
-
-            if (applied > 0) await _db.SaveChangesAsync(ct);
-
+            // El asistente sólo propone: nada cambia hasta que el usuario confirma
+            // cada propuesta con los mismos endpoints que usa la revisión manual.
             return Ok(new ImportChatResponseDto
             {
                 Reply = result.Reply,
-                AppliedChanges = applied,
-                Unrecognized = result.Unrecognized
+                AppliedChanges = 0,
+                Unrecognized = result.Unrecognized,
+                ProposedActions = result.Proposals
+                    .Select(p => new ImportChatProposedActionDto
+                    {
+                        Type = p.Type,
+                        Summary = p.Summary,
+                        RowIds = p.RowIds,
+                        ConceptId = p.ConceptId,
+                        ConceptName = p.ConceptName,
+                        Name = p.Name,
+                        GroupId = p.GroupId,
+                        GroupName = p.GroupName,
+                        Nature = p.Nature,
+                        SaveForFuture = p.SaveForFuture
+                    })
+                    .ToList()
             });
+        }
+
+        /// <summary>
+        /// Contexto extra para el chat, siempre del propio usuario: grupos donde
+        /// crear categorías, préstamos abiertos y apuntes recientes. Nunca se
+        /// envía el teléfono de las contrapartes.
+        /// </summary>
+        private async Task<ImportChatExtraContext> LoadChatContextAsync(Guid userId, CancellationToken ct)
+        {
+            var groups = await _db.ConceptGroups
+                .AsNoTracking()
+                .Where(g => g.UserId == userId && g.IsActive)
+                .OrderBy(g => g.SortOrder)
+                .Select(g => new ImportChatGroupContext(g.Id, g.Name, g.Kind.ToString()))
+                .ToListAsync(ct);
+
+            var bankLoans = await _db.Loans
+                .AsNoTracking()
+                .Where(l => l.UserId == userId && l.Status.ToLower() != "paid")
+                .OrderBy(l => l.Name)
+                .Take(50)
+                .Select(l => new { l.Type, l.Name, l.OutstandingAmount, l.DueDate })
+                .ToListAsync(ct);
+            var personalLoans = await _db.PersonalLoans
+                .AsNoTracking()
+                .Where(p => p.UserId == userId && !p.IsSettled)
+                .OrderBy(p => p.Id)
+                .Take(50)
+                .Select(p => new
+                {
+                    Counterparty = p.Counterparty != null ? p.Counterparty.Name : null,
+                    p.Direction,
+                    p.PrincipalAmount,
+                    p.Description
+                })
+                .ToListAsync(ct);
+
+            // SQLite no sabe ordenar DateTimeOffset, así que se ordena en memoria.
+            var loans = bankLoans
+                .OrderBy(l => l.DueDate ?? DateTimeOffset.MaxValue)
+                .Select(l => new ImportChatLoanContext(
+                    $"préstamo ({l.Type})",
+                    l.Name,
+                    l.OutstandingAmount,
+                    l.DueDate is { } due ? "vence " + due.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null))
+                .Concat(personalLoans.Select(p => new ImportChatLoanContext(
+                    p.Direction == PersonalLoanDirection.Given ? "dinero que prestó" : "dinero que le prestaron",
+                    p.Counterparty ?? "(sin nombre)",
+                    p.PrincipalAmount,
+                    p.Description)))
+                .ToList();
+
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var from = today.AddDays(-90);
+            var to = today.AddDays(31);
+            var recent = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(e => e.UserId == userId &&
+                            e.DueDate >= from &&
+                            e.DueDate <= to &&
+                            e.Status != EntryStatus.Skipped)
+                .OrderByDescending(e => e.DueDate)
+                .Take(80)
+                .Select(e => new
+                {
+                    e.DueDate,
+                    e.Direction,
+                    e.IsTransfer,
+                    e.Status,
+                    Amount = e.ActualAmount ?? e.ForecastAmount,
+                    Concept = e.Concept != null ? e.Concept.Name : null,
+                    e.Description
+                })
+                .ToListAsync(ct);
+
+            return new ImportChatExtraContext(
+                groups,
+                loans,
+                recent
+                    .Select(e => new ImportChatLedgerContext(
+                        e.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                        e.IsTransfer ? "traspaso" : e.Direction == EntryDirection.In ? "ingreso" : "gasto",
+                        e.Status switch
+                        {
+                            EntryStatus.Paid => "pagado",
+                            EntryStatus.Pending => "pendiente",
+                            _ => "previsto"
+                        },
+                        e.Amount,
+                        e.Concept,
+                        e.Description))
+                    .ToList());
         }
 
         [HttpPost("{batchId:guid}/apply")]

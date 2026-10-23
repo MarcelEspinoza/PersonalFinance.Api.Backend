@@ -136,6 +136,9 @@ namespace PersonalFinance.Api.Data
                 .OnDelete(DeleteBehavior.Restrict); // 👈 evita cascadas múltiples
 
             modelBuilder.Entity<Pasanaco>()
+                .HasIndex(p => p.UserId);
+
+            modelBuilder.Entity<Pasanaco>()
                 .HasMany(p => p.Participants)
                 .WithOne(p => p.Pasanaco)
                 .HasForeignKey(p => p.PasanacoId);

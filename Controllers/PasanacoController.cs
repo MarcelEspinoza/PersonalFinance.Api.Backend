@@ -21,42 +21,60 @@ namespace PersonalFinance.Api.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            var result = await _service.GetAllAsync();
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var result = await _service.GetAllAsync(userId.Value);
             return Ok(result);
         }
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(string id)
         {
-            var result = await _service.GetByIdAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var result = await _service.GetByIdAsync(id, userId.Value);
             return Ok(result);
         }
 
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreatePasanacoDto dto)
         {
-            var created = await _service.CreateAsync(dto);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var created = await _service.CreateAsync(userId.Value, dto);
             return Ok(created);
         }
 
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(string id, [FromBody] UpdatePasanacoDto dto)
         {
-            await _service.UpdateAsync(id, dto);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.UpdateAsync(id, userId.Value, dto);
             return NoContent();
         }
 
         [HttpPost("{id}/complete")]
         public async Task<IActionResult> Complete(string id)
         {
-            await _service.CompleteAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.CompleteAsync(id, userId.Value);
             return NoContent();
         }
 
         [HttpPost("{id}/reopen")]
         public async Task<IActionResult> Reopen(string id)
         {
-            await _service.ReopenAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.ReopenAsync(id, userId.Value);
             return NoContent();
         }
 
@@ -67,8 +85,8 @@ namespace PersonalFinance.Api.Controllers
             var userId = GetCurrentUserId();
             if (userId == null) return Unauthorized();
 
-            // Check related summary
-            var summary = await _service.GetRelatedSummaryAsync(id);
+            // Check related summary (also verifies the pasanaco belongs to the caller)
+            var summary = await _service.GetRelatedSummaryAsync(id, userId.Value);
 
             if (!force && summary.HasAnyRelated)
             {
@@ -81,7 +99,7 @@ namespace PersonalFinance.Api.Controllers
 
             if (force && !User.IsInRole("Admin"))
             {
-                return Forbid("No tienes permisos para forzar el borrado.");
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "No tienes permisos para forzar el borrado." });
             }
 
             if (force)
@@ -91,42 +109,57 @@ namespace PersonalFinance.Api.Controllers
             }
 
             // normal delete
-            await _service.DeleteAsync(id);
+            await _service.DeleteAsync(id, userId.Value);
             return NoContent();
         }
 
         [HttpGet("{id}/participants")]
         public async Task<IActionResult> GetParticipants(string id)
         {
-            var result = await _service.GetParticipantsAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var result = await _service.GetParticipantsAsync(id, userId.Value);
             return Ok(result);
         }
 
         [HttpPost("{id}/participants")]
         public async Task<IActionResult> AddParticipant(string id, [FromBody] CreateParticipantDto dto)
         {
-            await _service.AddParticipantAsync(id, dto);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.AddParticipantAsync(id, userId.Value, dto);
             return Ok();
         }
 
         [HttpDelete("{id}/participants/{participantId}")]
         public async Task<IActionResult> DeleteParticipant(string id, string participantId)
         {
-            await _service.DeleteParticipantAsync(id, participantId);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.DeleteParticipantAsync(id, participantId, userId.Value);
             return NoContent();
         }
 
         [HttpGet("{id}/payments")]
         public async Task<IActionResult> GetPayments(string id, [FromQuery] int month, [FromQuery] int year)
         {
-            var result = await _service.GetPaymentsAsync(id, month, year);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var result = await _service.GetPaymentsAsync(id, userId.Value, month, year);
             return Ok(result);
         }
 
         [HttpPost("{id}/generate-payments")]
         public async Task<IActionResult> GeneratePayments(string id, [FromBody] GeneratePaymentsDto dto)
         {
-            await _service.GeneratePaymentsAsync(id, dto.Month, dto.Year);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.GeneratePaymentsAsync(id, userId.Value, dto.Month, dto.Year);
             return Ok();
         }
 
@@ -146,7 +179,10 @@ namespace PersonalFinance.Api.Controllers
         [HttpPost("{id}/retreat")]
         public async Task<IActionResult> RetreatRound(string id)
         {
-            var success = await _service.RetreatRoundAsync(id);
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var success = await _service.RetreatRoundAsync(id, userId.Value);
             if (!success) return BadRequest("No se puede retroceder desde la primera ronda.");
             return Ok("Ronda retrocedida correctamente");
         }
