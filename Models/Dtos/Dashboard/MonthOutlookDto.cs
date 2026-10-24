@@ -108,6 +108,9 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
 
         /// <summary>Concepto de la línea; es la única referencia de una reserva variable.</summary>
         public Guid? ConceptId { get; set; }
+
+        /// <summary>Recordatorio con importe del que sale la línea (no tiene concepto ni asiento).</summary>
+        public Guid? ReminderId { get; set; }
     }
 
     public class TransferSuggestionDto

@@ -20,6 +20,12 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public List<MonthlyGroupDto> ExpenseGroups { get; set; } = new();
 
         public MonthlyTotalsDto Totals { get; set; } = new();
+
+        /// <summary>
+        /// The month as the forecast sees it (same numbers as the dashboard boxes).
+        /// Null for months before the current one.
+        /// </summary>
+        public MonthForecastSummaryDto? Forecast { get; set; }
     }
 
     public class MonthlyGroupDto

@@ -12,8 +12,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public class MonthlySummaryLoader
     {
         private readonly IAppDbContext _db;
+        private readonly IClock _clock;
 
-        public MonthlySummaryLoader(IAppDbContext db) => _db = db;
+        public MonthlySummaryLoader(IAppDbContext db, IClock clock)
+        {
+            _db = db;
+            _clock = clock;
+        }
 
         public async Task<MonthlySummaryDto> LoadAsync(Guid userId, MonthlyPeriod period, CancellationToken ct)
         {
@@ -56,7 +61,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             foreach (var budget in monthlyBudgets)
                 budgets[budget.ConceptId] = budget.LimitAmount;
 
-            return MonthlySummaryBuilder.Build(period, chart, entries, budgets);
+            var summary = MonthlySummaryBuilder.Build(period, chart, entries, budgets);
+
+            // Same numbers as the dashboard boxes and the expense plan. Past months have no forecast.
+            var today = _clock.Today;
+            var periodMonth = new DateOnly(period.Year, period.Month, 1);
+            if (periodMonth >= new DateOnly(today.Year, today.Month, 1))
+            {
+                var forecasts = await MonthForecastLoader.LoadAsync(_db, userId, periodMonth, 1, today, ct);
+                summary.Forecast = MonthForecastSummaryDto.From(forecasts[0]);
+            }
+
+            return summary;
         }
     }
 }

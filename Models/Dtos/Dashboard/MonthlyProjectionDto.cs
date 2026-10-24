@@ -37,6 +37,12 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         public decimal PendingIncome { get; set; }
         public decimal PendingExpense { get; set; }
 
+        /// <summary>Part of Expense kept for what is left of the variable expense limits.</summary>
+        public decimal VariableExpenseReserve { get; set; }
+
+        /// <summary>Part of Expense that comes from pending reminders with an amount.</summary>
+        public decimal Reminders { get; set; }
+
         public CommitmentSummaryDto? Commitments { get; set; }
     }
 

@@ -34,6 +34,7 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<PersonalFinance.Domain.Advice.Entities.ServiceNote> ServiceNotes { get; }
         DbSet<PersonalFinance.Domain.Settlements.Entities.Settlement> Settlements { get; }
         DbSet<PersonalFinance.Domain.Settlements.Entities.SettlementLine> SettlementLines { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.Reminder> Reminders { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

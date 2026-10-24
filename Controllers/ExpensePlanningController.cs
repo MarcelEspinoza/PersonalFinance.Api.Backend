@@ -167,9 +167,11 @@ namespace PersonalFinance.Api.Controllers
                     .ToListAsync(ct))
                 .Select(period => new DateOnly(period.Year, period.Month, 1))
                 .ToHashSet();
+            var reminders = await PersonalFinance.Api.Features.Ledger.Common.MonthForecastLoader
+                .LoadRemindersAsync(_db, userId.Value, ct);
 
             return Ok(PersonalFinance.Api.Features.Ledger.Common.ExpensePlanCalculator.Build(
-                months, currentMonth, entries, rules, concepts, groups, budgets, closedMonths));
+                months, currentMonth, entries, rules, concepts, groups, budgets, closedMonths, reminders, _clock.Today));
         }
 
         /// <summary>Usual monthly limit of a variable expense. Null removes it.</summary>

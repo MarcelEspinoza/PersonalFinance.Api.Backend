@@ -8,6 +8,7 @@ using PersonalFinance.Api.Features.Chat;
 using PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.SetMonthlyBudget;
+using PersonalFinance.Api.Features.Ledger.Commands.SkipLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
@@ -155,6 +156,14 @@ namespace PersonalFinance.Api.Controllers
                     return await ApplyImport(action, userId.Value, ct);
                 case "create_reminder":
                     return await CreateReminder(action, userId.Value, ct);
+                case "update_reminder":
+                    return await UpdateReminder(action, userId.Value, ct);
+                case "complete_reminder":
+                    return await CompleteReminder(action, userId.Value, ct);
+                case "delete_reminder":
+                    return await DeleteReminder(action, userId.Value, ct);
+                case "skip_ledger_entry":
+                    return await SkipLedgerEntry(action, userId.Value, ct);
                 case "api_call":
                     // The frontend calls the endpoint itself with the user's token.
                     return BadRequest("Esta acción la ejecuta la app directamente con tus permisos; no se confirma por aquí.");
@@ -307,10 +316,25 @@ namespace PersonalFinance.Api.Controllers
             Guid userId,
             CancellationToken ct)
         {
-            if (!Guid.TryParse(action.TargetId, out var entryId))
-                return BadRequest(new { message = "Falta el movimiento." });
-
             var hasDate = TryGetActionDate(action, out var date);
+            Guid entryId;
+            if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var ruleYear, out var ruleMonth))
+            {
+                var resolved = await ResolveRuleEntryAsync(userId, ruleId, ruleYear, ruleMonth, ct);
+                if (resolved.Error is not null) return resolved.Error;
+                entryId = resolved.EntryId;
+            }
+            else if (ForecastIds.TryParseReserve(action.TargetId, out var reserveConceptId, out var reserveYear, out var reserveMonth))
+            {
+                entryId = reserveConceptId;
+                date = new DateTime(reserveYear, reserveMonth, 1);
+                hasDate = true;
+            }
+            else if (!Guid.TryParse(action.TargetId, out entryId))
+            {
+                return BadRequest(new { message = "Falta el movimiento." });
+            }
+
             var entryExists = await _db.LedgerEntries.AnyAsync(
                 item => item.Id == entryId && item.UserId == userId,
                 ct);
@@ -375,6 +399,77 @@ namespace PersonalFinance.Api.Controllers
             await tx.CommitAsync(ct);
 
             return Ok(new { action.Type, entry.Id });
+        }
+
+        /// <summary>
+        /// Quita un pago o cobro pendiente sólo de su mes (queda descartado en «Mes», no se
+        /// borra). Lo ya pagado no se toca: descartarlo borraría lo que se pagó.
+        /// </summary>
+        private async Task<IActionResult> SkipLedgerEntry(
+            ProposedActionDto action,
+            Guid userId,
+            CancellationToken ct)
+        {
+            Guid entryId;
+            if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var year, out var month))
+            {
+                var resolved = await ResolveRuleEntryAsync(userId, ruleId, year, month, ct);
+                if (resolved.Error is not null) return resolved.Error;
+                entryId = resolved.EntryId;
+            }
+            else if (!Guid.TryParse(action.TargetId, out entryId))
+            {
+                return BadRequest(new { message = "Falta el movimiento." });
+            }
+
+            var status = await _db.LedgerEntries
+                .Where(item => item.Id == entryId && item.UserId == userId)
+                .Select(item => (EntryStatus?)item.Status)
+                .FirstOrDefaultAsync(ct);
+            if (status is null) return NotFound(new { message = "El movimiento ya no existe." });
+            if (status == EntryStatus.Paid)
+                return BadRequest(new { message = "Ese movimiento ya está pagado: no se puede quitar." });
+
+            await Mediator.Send(new SkipLedgerEntryCommand(userId, entryId, true), ct);
+            return Ok(new { action.Type, Id = entryId });
+        }
+
+        /// <summary>
+        /// Un pago fijo de un mes que aún no se ha abierto no es todavía un asiento: se abre ese
+        /// mes (igual que al entrar en «Mes», que anota sus pagos fijos) y se devuelve el asiento
+        /// de esa regla, mejor uno sin pagar.
+        /// </summary>
+        private async Task<(Guid EntryId, IActionResult? Error)> ResolveRuleEntryAsync(
+            Guid userId,
+            Guid ruleId,
+            int year,
+            int month,
+            CancellationToken ct)
+        {
+            var ruleExists = await _db.RecurringRules.AnyAsync(
+                rule => rule.Id == ruleId && rule.UserId == userId,
+                ct);
+            if (!ruleExists) return (Guid.Empty, NotFound(new { message = "Ese pago fijo ya no existe." }));
+
+            var period = await HttpContext.RequestServices
+                .GetRequiredService<PeriodProvisioner>()
+                .GetOrOpenAsync(userId, year, month, ct);
+            if (period.Status != PeriodStatus.Open)
+                return (Guid.Empty, BadRequest(new { message = $"El mes {month:D2}/{year} está cerrado." }));
+
+            var entryId = await _db.LedgerEntries
+                .Where(item =>
+                    item.UserId == userId &&
+                    item.PeriodId == period.Id &&
+                    item.RecurringRuleId == ruleId &&
+                    item.Status != EntryStatus.Skipped)
+                .OrderBy(item => item.Status == EntryStatus.Paid ? 1 : 0)
+                .Select(item => (Guid?)item.Id)
+                .FirstOrDefaultAsync(ct);
+            if (entryId is null)
+                return (Guid.Empty, BadRequest(new { message = $"No encuentro ese pago en {month:D2}/{year}." }));
+
+            return (entryId.Value, null);
         }
 
         private async Task<IActionResult> CreateOrUpdateBudget(
@@ -555,6 +650,57 @@ namespace PersonalFinance.Api.Controllers
             }, ct);
             return Ok(new { action.Type, reminder.Id });
         }
+
+        /// <summary>
+        /// The chat sends every value of the reminder (not only the changed ones), already
+        /// merged with the current reminder, and api/reminders validates it again.
+        /// </summary>
+        private async Task<IActionResult> UpdateReminder(
+            ProposedActionDto action,
+            Guid userId,
+            CancellationToken ct)
+        {
+            if (!TryGetReminderId(action.TargetId, out var reminderId))
+                return BadRequest(new { message = "Falta el recordatorio." });
+
+            var reminder = await _reminders.UpdateAsync(userId, reminderId, new SaveReminderDto
+            {
+                Title = action.Name,
+                DueDate = action.Date,
+                Amount = action.Amount,
+                Notes = action.Notes,
+                Repeat = action.Repeat,
+                NotifyDaysBefore = action.NotifyDaysBefore
+            }, ct);
+            return Ok(new { action.Type, reminder.Id });
+        }
+
+        private async Task<IActionResult> CompleteReminder(
+            ProposedActionDto action,
+            Guid userId,
+            CancellationToken ct)
+        {
+            if (!TryGetReminderId(action.TargetId, out var reminderId))
+                return BadRequest(new { message = "Falta el recordatorio." });
+
+            var reminder = await _reminders.CompleteAsync(userId, reminderId, ct);
+            return Ok(new { action.Type, reminder.Id });
+        }
+
+        private async Task<IActionResult> DeleteReminder(
+            ProposedActionDto action,
+            Guid userId,
+            CancellationToken ct)
+        {
+            if (!TryGetReminderId(action.TargetId, out var reminderId))
+                return BadRequest(new { message = "Falta el recordatorio." });
+
+            await _reminders.DeleteAsync(userId, reminderId, ct);
+            return Ok(new { action.Type, Id = reminderId });
+        }
+
+        private static bool TryGetReminderId(string? targetId, out Guid reminderId) =>
+            ForecastIds.TryParseReminder(targetId, out reminderId) || Guid.TryParse(targetId, out reminderId);
 
         private static bool TryGetActionDate(ProposedActionDto action, out DateTime date) =>
             DateTime.TryParse(action.Date, out date);

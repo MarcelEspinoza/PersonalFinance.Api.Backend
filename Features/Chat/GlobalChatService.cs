@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -8,9 +9,11 @@ using System.Text.Unicode;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Reminders;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
+using EntryDirection = PersonalFinance.Domain.Ledger.Enums.EntryDirection;
 
 namespace PersonalFinance.Api.Features.Chat
 {
@@ -42,6 +45,8 @@ namespace PersonalFinance.Api.Features.Chat
         private const int MaxAdminRows = 40;
         private const int MaxAdminLookupRows = 200;
         private const int MaxApiCallSummaryLength = 300;
+        // This calendar month and the next 6, as the dashboard month boxes.
+        private const int UpcomingMonthCount = 7;
 
         private static readonly JsonSerializerOptions PromptJson = new()
         {
@@ -132,7 +137,12 @@ namespace PersonalFinance.Api.Features.Chat
                 foreach (var concept in conceptRows) adminTargets.Add(concept.Id, concept.Name);
             }
 
-            var snapshot = await BuildSnapshotAsync(userId, ledgerConcepts, data, importGroups, adminTargets, ct);
+            // The same forecast as the dashboard boxes, «Mes» and the expense plan, with an id per item.
+            var forecastToday = DateOnly.FromDateTime(DateTime.UtcNow);
+            var forecasts = await MonthForecastLoader.LoadAsync(
+                _db, userId, new DateOnly(forecastToday.Year, forecastToday.Month, 1), UpcomingMonthCount, forecastToday, ct);
+
+            var snapshot = await BuildSnapshotAsync(userId, ledgerConcepts, forecasts, data, importGroups, adminTargets, ct);
             var snapshotJson = JsonSerializer.Serialize(snapshot, PromptJson);
             var categoriesJson = JsonSerializer.Serialize(categories, PromptJson);
             var conceptsJson = JsonSerializer.Serialize(ledgerConcepts, PromptJson);
@@ -143,8 +153,9 @@ namespace PersonalFinance.Api.Features.Chat
             var system = $$"""
                 Eres el asistente financiero personal dentro de la app. El usuario te habla
                 en español y puede pedirte: explicaciones de sus datos, consejos de ahorro,
-                búsquedas dentro de la información que ves abajo, o anotar un gasto/ingreso
-                en «Mes» o crear un recordatorio.
+                búsquedas dentro de la información que ves abajo, anotar un gasto/ingreso en
+                «Mes», cambiar o quitar lo previsto de los próximos meses, o crear y cambiar
+                recordatorios.
 
                 Si el resumen no contiene el detalle exacto que te piden, dilo con honestidad
                 en vez de inventar cifras.
@@ -161,12 +172,27 @@ namespace PersonalFinance.Api.Features.Chat
                 en otra cantidad, amount = "spent" + la reserva que quiera dejar. Sólo di
                 que no puedes cambiar algo cuando no tenga ningún id.
 
-                El "calendario" del usuario se compone de "recurringRules" (los cobros y pagos
-                que se repiten cada mes, con su día y su importe previsto), de
-                "recentLedgerEntries" (los movimientos ya anotados) y de "currentMonthOutlook".
-                Antes de decir que algo no está en el calendario, búscalo en las tres listas,
-                incluidas las reglas recurrentes: la nómina y los recibos fijos suelen vivir
-                ahí y no como movimientos sueltos.
+                "upcomingMonths" son el mes actual y los 6 siguientes, con la MISMA cuenta que el
+                panel, «Mes» y «Plan de gastos»: "income" (lo que entra), "expense" (lo que sale)
+                y "balance" (lo que queda, sin contar el arrastre). "expense" ya incluye lo pagado
+                ("paidExpense"), lo pendiente de "pending", lo que queda por gastar en los gastos
+                variables ("variableExpenseReserve", detalle en "variables") y los recordatorios
+                con importe ("reminders"). Para decir cuánto entra, sale o queda en un mes usa
+                SIEMPRE estas cifras; no sumes por tu cuenta. Cada línea de "pending" trae su "id":
+                un GUID es un movimiento ya anotado en «Mes»; "rule:…" es un pago o cobro fijo que
+                aún no está anotado; "reminder:…" es un recordatorio con importe. Cada línea de
+                "variables" trae su "id" ("reserve:…"). Si un recordatorio con importe y un pago
+                de «Mes» son lo mismo, ese mes se cuenta dos veces: explícaselo y propón dejar el
+                recordatorio sin importe (update_reminder con amount 0) o quitar el pago
+                (skip_ledger_entry), según prefiera.
+
+                El "calendario" del usuario se compone de "upcomingMonths" (todo lo previsto mes a
+                mes, con ids), "recurringRules" (los cobros y pagos que se repiten cada mes, con
+                su día y su importe previsto), "recentLedgerEntries" (los movimientos ya
+                anotados), "reminders" y "currentMonthOutlook". Antes de decir que algo no está
+                en el calendario, búscalo en todas esas listas, también en los meses futuros de
+                "upcomingMonths": la nómina y los recibos fijos suelen vivir en las reglas
+                recurrentes y no como movimientos sueltos.
 
                 Puedes preparar estas acciones, pero nunca ejecutarlas directamente:
                 - create_expense / create_income: anotan un gasto/ingreso en «Mes» con amount,
@@ -180,10 +206,16 @@ namespace PersonalFinance.Api.Features.Chat
                   explícita; lo que está en «Mes» se cambia con update_ledger_entry. Los gastos e
                   ingresos de "monthlyBreakdown" son anotaciones antiguas: no cuentan en «Mes» ni
                   en los saldos.
-                - update_ledger_entry: targetId (un "entryId", el "id" de "recentLedgerEntries" o
-                  el "conceptId" de una reserva) y sólo los campos que cambian entre amount,
+                - update_ledger_entry: targetId (un "id" de "pending" o de "variables" en
+                  "upcomingMonths", un "entryId", el "id" de "recentLedgerEntries" o el
+                  "conceptId" de una reserva) y sólo los campos que cambian entre amount,
                   description, date, conceptId y accountId. En un pago o cobro pendiente, amount
-                  cambia lo previsto sin marcarlo como pagado.
+                  cambia lo previsto sin marcarlo como pagado. Con un "rule:…" sólo cambia ese mes
+                  (la regla sigue igual los demás). Con un "reserve:…", amount es el nuevo límite
+                  de ese gasto variable ese mes: amount = "used" deja la reserva en 0.
+                - skip_ledger_entry: targetId (un "id" de "pending" que sea un GUID o un "rule:…").
+                  Quita ese pago o cobro sólo de ese mes; no se borra (queda descartado en «Mes» y
+                  se puede recuperar). No sirve para lo ya pagado ni para recordatorios.
                 - create_category: name y description.
                 - create_budget: amount como límite mensual, categoryId, year y month.
                 - record_loan_payment: targetId del préstamo, amount, date y notes.
@@ -194,9 +226,16 @@ namespace PersonalFinance.Api.Features.Chat
                 - create_reminder: name (título corto), date (vencimiento YYYY-MM-DD, hoy o
                   posterior), amount (0 si no hay importe), notes opcional, repeat ("none",
                   "weekly", "monthly" o "yearly") y notifyDaysBefore (de 0 a 30; 1 si no lo dice).
+                - update_reminder: targetId (el "id" del recordatorio, "reminder:…") y sólo lo que
+                  cambia entre name, date (hoy o posterior), amount, notes, repeat y
+                  notifyDaysBefore; lo demás va a null. OJO: amount null = no cambia y amount 0 =
+                  quitarle el importe (deja de contar como gasto).
+                - complete_reminder: targetId del recordatorio; lo marca como hecho (si se repite,
+                  pasa a la siguiente fecha).
+                - delete_reminder: targetId del recordatorio; sólo si el usuario pide borrarlo.
 
                 RECORDATORIOS: "reminders" son los recordatorios activos del usuario (los 30
-                más próximos); úsalos para responder sobre ellos. Si te pide que le recuerdes
+                más próximos), cada uno con su "id"; úsalos para responder sobre ellos. Si te pide que le recuerdes
                 algo (por ejemplo "recuérdame pagar el seguro el 15"), propón create_reminder.
                 Si sólo indica el día, usa la próxima vez que llegue ese día (este mes si aún no
                 ha pasado; si no, el mes siguiente). Usa repeat "monthly" para "cada mes" o
@@ -204,8 +243,16 @@ namespace PersonalFinance.Api.Features.Chat
                 "none" en cualquier otro caso. Nunca digas que el recordatorio ya está creado:
                 sólo se crea cuando el usuario pulsa "Confirmar" en la tarjeta.
 
+                PAGOS GRANDES: si el usuario no llega a un pago grande (por ejemplo una deuda), mira
+                el "balance" de cada mes en "upcomingMonths" y propón repartirlo en los meses con
+                margen: baja el importe del pago de este mes (update_ledger_entry o
+                update_reminder) y anota el resto con fecha futura (create_expense o
+                create_reminder), diciendo cuánto le quedaría cada mes. Si no sabes de qué es un
+                pago o cómo lo quiere repartir, pregúntalo antes de proponer nada.
+
                 Si falta un dato imprescindible, pregúntalo. Usa exclusivamente IDs presentes
-                en los datos. Nunca propongas borrar datos ni aplicar un lote completo.
+                en los datos. Nunca propongas borrar datos ni aplicar un lote completo; la única
+                excepción es delete_reminder cuando el usuario pida borrar un recordatorio.
                 Si una acción repite un texto de los datos (una descripción o un nombre),
                 cópialo tal cual, con los marcadores tapados incluidos.
 
@@ -303,7 +350,15 @@ namespace PersonalFinance.Api.Features.Chat
                     await _db.Accounts
                         .Where(a => a.UserId == userId && a.IsActive)
                         .Select(a => new { a.Id, a.Name })
-                        .ToDictionaryAsync(a => a.Id, a => a.Name, ct));
+                        .ToDictionaryAsync(a => a.Id, a => a.Name, ct),
+                    forecasts
+                        .SelectMany(forecast => forecast.Items)
+                        .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase),
+                    await _db.Reminders
+                        .AsNoTracking()
+                        .Where(r => r.UserId == userId && !r.IsDone)
+                        .ToDictionaryAsync(r => r.Id, ct));
                 var actions = new List<ProposedActionDto>();
                 foreach (var action in parsed.ProposedActions ?? new())
                 {
@@ -348,6 +403,7 @@ namespace PersonalFinance.Api.Features.Chat
         private async Task<object> BuildSnapshotAsync(
             Guid userId,
             object ledgerConcepts,
+            IReadOnlyList<MonthForecast> forecasts,
             PromptValues data,
             PromptValues importGroups,
             AdminTargets? targets,
@@ -569,11 +625,12 @@ namespace PersonalFinance.Api.Features.Chat
                 .Where(r => r.UserId == userId && !r.IsDone)
                 .OrderBy(r => r.DueDate)
                 .Take(30)
-                .Select(r => new { r.Title, r.DueDate, r.Amount, r.Repeat })
+                .Select(r => new { r.Id, r.Title, r.DueDate, r.Amount, r.Repeat })
                 .ToListAsync(ct);
             var reminders = reminderRows
                 .Select(r => new
                 {
+                    id = ForecastIds.ReminderPrefix + r.Id,
                     title = data.Mask(r.Title),
                     dueDate = r.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     amount = r.Amount,
@@ -584,6 +641,7 @@ namespace PersonalFinance.Api.Features.Chat
             var snapshot = new
             {
                 today = ReminderRules.LocalToday(now).ToString("yyyy-MM-dd"),
+                upcomingMonths = BuildUpcomingMonths(forecasts, data),
                 currentMonthOutlook = monthOutlook,
                 monthlyBreakdown,
                 budgets = budgetsSummary,
@@ -619,6 +677,56 @@ namespace PersonalFinance.Api.Features.Chat
             withAdmin["admin"] = await BuildAdminSnapshotAsync(userId, data, targets, ct);
             return withAdmin;
         }
+
+        /// <summary>
+        /// El mes actual y los siguientes con la misma cuenta que el panel, «Mes» y «Plan de gastos».
+        /// Lo ya pagado sólo se suma; lo pendiente se lista con un id que las acciones aceptan
+        /// (GUID = asiento de «Mes», rule:… = pago fijo aún sin anotar, reminder:… = recordatorio).
+        /// </summary>
+        private static List<object> BuildUpcomingMonths(IReadOnlyList<MonthForecast> forecasts, PromptValues data) =>
+            forecasts
+                .Select(forecast => (object)new
+                {
+                    month = forecast.MonthStart.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                    income = forecast.Income,
+                    expense = forecast.Expense,
+                    balance = forecast.Balance,
+                    paidIncome = forecast.Items
+                        .Where(item => item.IsPaid && item.Direction == EntryDirection.In)
+                        .Sum(item => item.Amount),
+                    paidExpense = forecast.Items
+                        .Where(item => item.IsPaid && item.Direction == EntryDirection.Out)
+                        .Sum(item => item.Amount),
+                    variableExpenseReserve = forecast.VariableExpenseReserve,
+                    variableIncomeExpected = forecast.VariableIncomeExpected,
+                    reminders = forecast.Reminders,
+                    pending = forecast.Items
+                        .Where(item => !item.IsPaid && item.Kind != ForecastItemKind.VariableReserve)
+                        .OrderBy(item => item.Date)
+                        .Select(item => new
+                        {
+                            id = item.Id,
+                            date = item.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                            direction = item.Direction == EntryDirection.In ? "in" : "out",
+                            amount = item.Amount,
+                            what = data.Mask(DescribeForecastItem(item)) ?? string.Empty,
+                            status = item.IsOverdue ? "vencido" : "previsto"
+                        })
+                        .ToList(),
+                    variables = forecast.Variables
+                        .Where(line => line.Direction == EntryDirection.Out)
+                        .Select(line => new
+                        {
+                            id = ForecastIds.Reserve(line.ConceptId, forecast.Year, forecast.Month),
+                            concept = data.Mask(line.ConceptName) ?? string.Empty,
+                            limit = line.Limit ?? 0m,
+                            used = line.Used,
+                            spent = line.Spent,
+                            reserve = line.Reserve
+                        })
+                        .ToList()
+                })
+                .ToList();
 
         /// <summary>
         /// Admin mode only: the app users (emails masked) and the admin's own records that the
@@ -1127,7 +1235,7 @@ namespace PersonalFinance.Api.Features.Chat
         private static bool IsStructurallyValid(
             RawProposedAction action, DateOnly today, LedgerMovementTargets movementTargets)
         {
-            if (action.Type != "create_reminder")
+            if (action.Type is not ("create_reminder" or "update_reminder"))
             {
                 action.Repeat = null;
                 action.NotifyDaysBefore = null;
@@ -1143,7 +1251,9 @@ namespace PersonalFinance.Api.Features.Chat
                 "update_expense" or "update_income" =>
                     int.TryParse(action.TargetId, out _),
                 "update_ledger_entry" =>
-                    TryNormalizeLedgerUpdate(action, movementTargets),
+                    TryNormalizeLedgerUpdate(action, today, movementTargets),
+                "skip_ledger_entry" =>
+                    TryNormalizeLedgerSkip(action, movementTargets),
                 "create_category" =>
                     !string.IsNullOrWhiteSpace(action.Name),
                 "create_budget" =>
@@ -1160,6 +1270,10 @@ namespace PersonalFinance.Api.Features.Chat
                     Guid.TryParse(action.TargetId, out _),
                 "create_reminder" =>
                     TryNormalizeReminder(action, today),
+                "update_reminder" =>
+                    TryNormalizeReminderUpdate(action, today, movementTargets),
+                "complete_reminder" or "delete_reminder" =>
+                    TryNormalizeReminderTarget(action, movementTargets),
                 _ => false
             };
         }
@@ -1203,12 +1317,33 @@ namespace PersonalFinance.Api.Features.Chat
         }
 
         /// <summary>
-        /// Si targetId es un concepto, se ajusta la reserva de un gasto variable: amount es el
-        /// nuevo límite de ese mes y la fecha dice qué mes. Ambos son obligatorios (sin ellos el
-        /// presupuesto quedaría en 0 o caería en otro mes) y el resumen lo escribe el servidor.
+        /// update_ledger_entry acepta el id de cualquier línea de upcomingMonths:
+        /// - reminder:… (o el id de un recordatorio): se trata como update_reminder;
+        /// - rule:{regla}:{yyyy-MM}: un pago fijo aún sin anotar; sólo cambia ese mes;
+        /// - reserve:{concepto}:{yyyy-MM} o un concepto: se ajusta la reserva de un gasto variable.
+        ///   amount es el nuevo límite de ese mes y la fecha dice qué mes. Ambos son obligatorios
+        ///   (sin ellos el presupuesto quedaría en 0 o caería en otro mes);
+        /// - cualquier otro GUID es un asiento de «Mes» y se deja el resumen del modelo.
+        /// Salvo en el último caso, el resumen lo escribe el servidor.
         /// </summary>
-        private static bool TryNormalizeLedgerUpdate(RawProposedAction action, LedgerMovementTargets targets)
+        private static bool TryNormalizeLedgerUpdate(RawProposedAction action, DateOnly today, LedgerMovementTargets targets)
         {
+            if (TryFindReminder(action.TargetId, targets, out _))
+            {
+                action.Type = "update_reminder";
+                return TryNormalizeReminderUpdate(action, today, targets);
+            }
+
+            if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var ruleYear, out var ruleMonth))
+                return TryNormalizeRuleUpdate(action, ForecastIds.Rule(ruleId, ruleYear, ruleMonth), targets);
+
+            if (ForecastIds.TryParseReserve(action.TargetId, out var reserveConceptId, out var reserveYear, out var reserveMonth))
+            {
+                if (!targets.Concepts.ContainsKey(reserveConceptId)) return false;
+                action.TargetId = reserveConceptId.ToString("D");
+                action.Date = new DateOnly(reserveYear, reserveMonth, 1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            }
+
             if (!Guid.TryParse(action.TargetId, out var targetId)) return false;
             if (!targets.Concepts.TryGetValue(targetId, out var concept)) return true;
 
@@ -1226,10 +1361,214 @@ namespace PersonalFinance.Api.Features.Chat
             return true;
         }
 
-        /// <summary>Conceptos y cuentas activos del usuario, con su nombre real.</summary>
+        /// <summary>
+        /// Un pago o cobro fijo de un mes que aún no está anotado en «Mes». Al confirmar se abre
+        /// ese mes (se anotan sus pagos fijos, como al entrar en «Mes») y se cambia sólo ese
+        /// asiento; la regla sigue igual los demás meses.
+        /// </summary>
+        private static bool TryNormalizeRuleUpdate(RawProposedAction action, string ruleItemId, LedgerMovementTargets targets)
+        {
+            if (!targets.ForecastItems.TryGetValue(ruleItemId, out var item) ||
+                item.Kind != ForecastItemKind.RuleOccurrence)
+                return false;
+
+            var changes = new List<string>();
+            if (action.Amount is > 0m && action.Amount.Value != item.Amount)
+                changes.Add($"importe {ReminderRules.FormatAmount(item.Amount)} → {ReminderRules.FormatAmount(action.Amount.Value)}");
+
+            if (!string.IsNullOrWhiteSpace(action.Date))
+            {
+                if (!DateTime.TryParse(action.Date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                    return false;
+                var date = DateOnly.FromDateTime(parsed);
+                action.Date = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (date != item.Date)
+                    changes.Add($"fecha {ReminderRules.FormatDate(item.Date)} → {ReminderRules.FormatDate(date)}");
+            }
+
+            if (action.ConceptId is Guid conceptId)
+            {
+                if (!targets.Concepts.TryGetValue(conceptId, out var concept)) return false;
+                if (conceptId != item.ConceptId) changes.Add($"concepto {concept.Name}");
+            }
+
+            if (action.AccountId is Guid accountId)
+            {
+                if (!targets.Accounts.TryGetValue(accountId, out var accountName)) return false;
+                changes.Add($"cuenta {accountName}");
+            }
+
+            var description = action.Description?.Trim();
+            if (!string.IsNullOrEmpty(description) && description != item.Description.Trim())
+                changes.Add($"descripción «{description}»");
+
+            if (changes.Count == 0) return false;
+
+            action.TargetId = ruleItemId;
+            action.Summary = $"Cambiar «{DescribeForecastItem(item)}» de " +
+                $"{item.Date.ToString("MM/yyyy", CultureInfo.InvariantCulture)} (sólo ese mes): {string.Join(", ", changes)}";
+            return true;
+        }
+
+        /// <summary>
+        /// skip_ledger_entry quita un pago o cobro pendiente sólo de su mes: un asiento de «Mes»
+        /// (GUID) o un pago fijo aún sin anotar (rule:…). No se borra: queda descartado en «Mes»
+        /// y se puede recuperar. Lo ya pagado no se descarta.
+        /// </summary>
+        private static bool TryNormalizeLedgerSkip(RawProposedAction action, LedgerMovementTargets targets)
+        {
+            string itemId;
+            if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var year, out var month))
+                itemId = ForecastIds.Rule(ruleId, year, month);
+            else if (Guid.TryParse(action.TargetId, out var entryId))
+                itemId = entryId.ToString("D");
+            else
+                return false;
+
+            if (!targets.ForecastItems.TryGetValue(itemId, out var item) ||
+                item.Kind is not (ForecastItemKind.Entry or ForecastItemKind.RuleOccurrence) ||
+                item.IsPaid)
+                return false;
+
+            action.TargetId = itemId;
+            action.Amount = item.Amount;
+            action.Date = item.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            action.Description = null;
+            action.ConceptId = null;
+            action.AccountId = null;
+            action.Summary = $"Quitar de {item.Date.ToString("MM/yyyy", CultureInfo.InvariantCulture)} (sólo ese mes): " +
+                $"{DescribeForecastItem(item)}, {ReminderRules.FormatAmount(item.Amount)}";
+            return true;
+        }
+
+        /// <summary>
+        /// update_reminder: lo que manda el modelo se mezcla con el recordatorio actual (null = no
+        /// cambia; amount 0 = sin importe) y se valida con las mismas reglas que al guardarlo. La
+        /// acción lleva todos los valores, porque al confirmar se guardan tal cual.
+        /// </summary>
+        private static bool TryNormalizeReminderUpdate(RawProposedAction action, DateOnly today, LedgerMovementTargets targets)
+        {
+            if (!TryFindReminder(action.TargetId, targets, out var reminder)) return false;
+
+            var dueDate = reminder.DueDate;
+            if (!string.IsNullOrWhiteSpace(action.Date))
+            {
+                if (!DateOnly.TryParseExact(action.Date.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out dueDate))
+                    return false;
+                if (dueDate != reminder.DueDate && dueDate < today) return false;
+            }
+
+            var proposal = new SaveReminderDto
+            {
+                Title = string.IsNullOrWhiteSpace(action.Name) ? reminder.Title : action.Name,
+                DueDate = dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                Amount = action.Amount ?? reminder.Amount,
+                Notes = action.Notes ?? reminder.Notes,
+                Repeat = string.IsNullOrWhiteSpace(action.Repeat) ? ReminderRules.ToApi(reminder.Repeat) : action.Repeat,
+                NotifyDaysBefore = action.NotifyDaysBefore ?? reminder.NotifyDaysBefore
+            };
+            if (!ReminderRules.TryNormalize(proposal, reminder, out var input, out _)) return false;
+
+            var currentNotes = string.IsNullOrWhiteSpace(reminder.Notes) ? null : reminder.Notes.Trim();
+            var changes = new List<string>();
+            if (input.Title != reminder.Title.Trim()) changes.Add($"título «{input.Title}»");
+            if (input.DueDate != reminder.DueDate)
+                changes.Add($"fecha {ReminderRules.FormatDate(reminder.DueDate)} → {ReminderRules.FormatDate(input.DueDate)}");
+            if (input.Amount != reminder.Amount)
+                changes.Add($"importe {DescribeReminderAmount(reminder.Amount)} → {DescribeReminderAmount(input.Amount)}");
+            if (input.Notes != currentNotes) changes.Add(input.Notes is null ? "sin notas" : "notas nuevas");
+            if (input.Repeat != reminder.Repeat)
+                changes.Add($"repetición: {ReminderRules.DescribeRepeat(input.Repeat).ToLowerInvariant()}");
+            if (input.NotifyDaysBefore != reminder.NotifyDaysBefore)
+            {
+                changes.Add(input.NotifyDaysBefore switch
+                {
+                    0 => "aviso el mismo día",
+                    1 => "aviso 1 día antes",
+                    var days => $"aviso {days} días antes"
+                });
+            }
+            if (changes.Count == 0) return false;
+
+            action.Type = "update_reminder";
+            action.TargetId = reminder.Id.ToString("D");
+            action.Name = input.Title;
+            action.Date = input.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            action.Amount = input.Amount ?? 0m;
+            action.Notes = input.Notes;
+            action.Repeat = ReminderRules.ToApi(input.Repeat);
+            action.NotifyDaysBefore = input.NotifyDaysBefore;
+            action.Description = null;
+            action.CategoryId = 0;
+            action.ConceptId = null;
+            action.AccountId = null;
+            action.Summary = $"Cambiar el recordatorio «{reminder.Title}»: {string.Join(", ", changes)}";
+            return true;
+        }
+
+        /// <summary>complete_reminder / delete_reminder: basta con que el recordatorio sea del usuario y siga activo.</summary>
+        private static bool TryNormalizeReminderTarget(RawProposedAction action, LedgerMovementTargets targets)
+        {
+            if (!TryFindReminder(action.TargetId, targets, out var reminder)) return false;
+
+            action.TargetId = reminder.Id.ToString("D");
+            action.Name = reminder.Title;
+            action.Date = reminder.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            action.Amount = reminder.Amount ?? 0m;
+            action.Notes = null;
+            action.Description = null;
+            action.CategoryId = 0;
+            action.ConceptId = null;
+            action.AccountId = null;
+
+            var amount = reminder.Amount is { } value ? $" · {ReminderRules.FormatAmount(value)}" : string.Empty;
+            if (action.Type == "delete_reminder")
+            {
+                action.Summary = $"Borrar el recordatorio «{reminder.Title}»{amount}";
+            }
+            else
+            {
+                action.Summary = reminder.Repeat == PersonalFinance.Api.Models.Enums.ReminderRepeat.None
+                    ? $"Marcar como hecho «{reminder.Title}»{amount}"
+                    : $"Marcar como hecho «{reminder.Title}»{amount} (pasa al {ReminderRules.FormatDate(ReminderRules.NextDueDate(reminder))})";
+            }
+
+            return true;
+        }
+
+        /// <summary>Acepta «reminder:{id}», «reminder:{id}:{fecha}» o el id a secas.</summary>
+        private static bool TryFindReminder(
+            string? targetId, LedgerMovementTargets targets, [NotNullWhen(true)] out Reminder? reminder)
+        {
+            reminder = null;
+            return (ForecastIds.TryParseReminder(targetId, out var reminderId) || Guid.TryParse(targetId, out reminderId)) &&
+                targets.Reminders.TryGetValue(reminderId, out reminder);
+        }
+
+        private static string DescribeReminderAmount(decimal? amount) =>
+            amount is { } value ? ReminderRules.FormatAmount(value) : "sin importe";
+
+        /// <summary>Concepto y, si dice algo más, la descripción: «Viajes · Hotel Lisboa».</summary>
+        private static string DescribeForecastItem(ForecastItem item)
+        {
+            var concept = item.ConceptName?.Trim();
+            var description = item.Description.Trim();
+            if (string.IsNullOrEmpty(concept)) return description;
+            return description.Length == 0 || string.Equals(concept, description, StringComparison.OrdinalIgnoreCase)
+                ? concept
+                : $"{concept} · {description}";
+        }
+
+        /// <summary>
+        /// Conceptos y cuentas activos del usuario con su nombre real, las líneas de la previsión
+        /// (por id) y sus recordatorios activos: lo que las acciones pueden tocar.
+        /// </summary>
         private sealed record LedgerMovementTargets(
             IReadOnlyDictionary<Guid, (string Name, PersonalFinance.Domain.Ledger.Enums.ConceptKind Kind, PersonalFinance.Domain.Ledger.Enums.ConceptNature Nature)> Concepts,
-            IReadOnlyDictionary<Guid, string> Accounts);
+            IReadOnlyDictionary<Guid, string> Accounts,
+            IReadOnlyDictionary<string, ForecastItem> ForecastItems,
+            IReadOnlyDictionary<Guid, Reminder> Reminders);
 
         /// <summary>
         /// Validates a create_reminder proposal with the same rules used when it is

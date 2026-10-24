@@ -15,7 +15,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         IReadOnlyList<RecurringRule> Rules,
         IReadOnlyList<Concept> Concepts,
         IReadOnlyList<MonthlyBudget> Budgets,
-        IReadOnlyDictionary<Guid, decimal> ReconciledBalances);
+        IReadOnlyDictionary<Guid, decimal> ReconciledBalances,
+        IReadOnlyList<PersonalFinance.Api.Models.Entities.Reminder>? Reminders = null);
 
     /// <summary>
     /// Proyecta cada cuenta hasta fin del mes seleccionado a partir de su saldo
@@ -38,7 +39,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             bool IsTransfer,
             bool FromRule = false,
             bool IsVariableReserve = false,
-            Guid? EntryId = null)
+            Guid? EntryId = null,
+            Guid? ReminderId = null)
         {
             public decimal Signed => Direction == EntryDirection.In ? Amount : -Amount;
         }
@@ -315,6 +317,33 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
             }
 
+            // Pending reminders with an amount are expenses too. They have no concept
+            // (Guid.Empty) and no account, so they count against the unassigned money.
+            var calendarStart = new DateOnly(input.Today.Year, input.Today.Month, 1);
+            foreach (var reminder in input.Reminders ?? Array.Empty<PersonalFinance.Api.Models.Entities.Reminder>())
+            {
+                var carriedOver = reminder.DueDate < calendarStart;
+                foreach (var (date, _) in ReminderForecast.Occurrences(reminder, input.Today, to))
+                {
+                    var description = carriedOver
+                        ? $"{reminder.Title} (vencía el {PersonalFinance.Api.Features.Reminders.ReminderRules.FormatDate(reminder.DueDate)})"
+                        : reminder.Title;
+                    carriedOver = false;
+                    if (date < from || date > to) continue;
+
+                    items.Add(new PendingItem(
+                        date,
+                        description,
+                        Guid.Empty,
+                        "Recordatorio",
+                        null,
+                        EntryDirection.Out,
+                        reminder.Amount ?? 0m,
+                        false,
+                        ReminderId: reminder.Id));
+                }
+            }
+
             return items.Where(item => item.Amount > 0m).ToList();
         }
 
@@ -482,7 +511,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IsTransfer = item.IsTransfer,
             IsVariableReserve = item.IsVariableReserve,
             EntryId = item.EntryId,
-            ConceptId = item.ConceptId
+            ConceptId = item.ConceptId == Guid.Empty ? (Guid?)null : item.ConceptId,
+            ReminderId = item.ReminderId
         };
 
         private static string ConceptName(IReadOnlyDictionary<Guid, Concept> conceptById, Guid conceptId) =>
