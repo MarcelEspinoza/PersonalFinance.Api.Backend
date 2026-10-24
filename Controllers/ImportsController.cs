@@ -1085,16 +1085,21 @@ namespace PersonalFinance.Api.Controllers
                 })
                 .ToListAsync(ct);
             var existingMovements = existingImportedRows
-                .Select(row => new
+                .Select(row =>
                 {
-                    row.Id,
-                    row.ClassifiedStatus,
-                    Key = CreateMovementKey(
-                        row.ValueDate,
-                        row.Amount,
-                        row.Fee,
-                        row.Currency,
-                        row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription))
+                    // A fee refund saved before it was moved to the amount must still count as already imported.
+                    var (amount, fee) = RevolutCsvParser.MoveFeeRefundToAmount(row.Amount, row.Fee);
+                    return new
+                    {
+                        row.Id,
+                        row.ClassifiedStatus,
+                        Key = CreateMovementKey(
+                            row.ValueDate,
+                            amount,
+                            fee,
+                            row.Currency,
+                            row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription))
+                    };
                 })
                 .ToList();
             var existingMovementCounts = existingMovements

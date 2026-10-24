@@ -159,6 +159,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 : null;
 
             TryParseDecimal(Field(ColFee), out var fee);
+            (amount, fee) = MoveFeeRefundToAmount(amount, fee);
 
             movement = new RevolutMovement(
                 RowNumber: rowNumber,
@@ -175,6 +176,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             return true;
         }
+
+        /// <summary>
+        /// Revolut exports some refunds with all the money in «Comisión» and «Importe» 0, such as the
+        /// plan fee refund (Importe 0.00, Comisión -1.03). The balance moves by Importe − Comisión, so
+        /// the refund goes to the amount: the row shows +1.03 and is classified like any other income,
+        /// instead of 0.00 plus a negative fee. Fee-only charges keep going to the fee entry.
+        /// </summary>
+        public static (decimal Amount, decimal Fee) MoveFeeRefundToAmount(decimal amount, decimal fee) =>
+            amount == 0m && fee < 0m ? (-fee, 0m) : (amount, fee);
 
         private static Dictionary<string, int> BuildColumnIndex(
             IReadOnlyList<string> header, out List<string> missing)
