@@ -261,7 +261,11 @@ namespace PersonalFinance.Api.Features.Chat
             using var response = await _http.SendAsync(httpRequest, ct);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Anthropic devolvió HTTP {StatusCode} en el chat global.", (int)response.StatusCode);
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Anthropic devolvió HTTP {StatusCode} en el chat global: {Body}",
+                    (int)response.StatusCode,
+                    errorBody.Length > 300 ? errorBody[..300] : errorBody);
                 return new ChatResponseDto { Reply = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento." };
             }
 
