@@ -100,6 +100,7 @@ namespace PersonalFinance.Api.Features.Reminders
             reminder.Title = input.Title;
             reminder.Notes = input.Notes;
             reminder.Amount = input.Amount;
+            reminder.IsIncome = input.IsIncome;
             reminder.Repeat = input.Repeat;
             reminder.NotifyDaysBefore = input.NotifyDaysBefore;
             reminder.EmailEnabled = input.EmailEnabled;
@@ -168,6 +169,7 @@ namespace PersonalFinance.Api.Features.Reminders
                 DueDate = input.DueDate,
                 AnchorDay = input.DueDate.Day,
                 Amount = input.Amount,
+                IsIncome = input.IsIncome,
                 Repeat = input.Repeat,
                 NotifyDaysBefore = input.NotifyDaysBefore,
                 EmailEnabled = input.EmailEnabled,

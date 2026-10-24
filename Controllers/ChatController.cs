@@ -185,9 +185,10 @@ namespace PersonalFinance.Api.Controllers
             CreateLedgerMovement(action, userId, ConceptKind.Income, ct);
 
         /// <summary>
-        /// Anota el gasto o ingreso en «Mes» igual que la pantalla: crea el
-        /// asiento y, si su fecha ya ha llegado (hoy en Madrid), lo confirma
-        /// como pagado con ese importe y esa fecha.
+        /// Anota el gasto o ingreso en «Mes» como previsto. El dinero del banco sólo se
+        /// marca como cobrado/pagado cuando el extracto importado lo casa (o el usuario lo
+        /// hace a mano); sólo el efectivo, que nunca pasa por el banco, queda pagado al
+        /// momento si su fecha ya ha llegado (hoy en Madrid).
         /// </summary>
         private async Task<IActionResult> CreateLedgerMovement(
             ProposedActionDto action,
@@ -213,16 +214,19 @@ namespace PersonalFinance.Api.Controllers
             if (!conceptValid)
                 return BadRequest(new { message = $"El concepto elegido no es un concepto de {label} válido." });
 
+            var isCashAccount = false;
             if (action.AccountId is not null)
             {
-                var accountValid = await _db.Accounts.AnyAsync(
-                    item =>
+                var account = await _db.Accounts
+                    .Where(item =>
                         item.Id == action.AccountId.Value &&
                         item.UserId == userId &&
-                        item.IsActive,
-                    ct);
-                if (!accountValid)
+                        item.IsActive)
+                    .Select(item => new { item.Type })
+                    .FirstOrDefaultAsync(ct);
+                if (account is null)
                     return BadRequest(new { message = "La cuenta elegida no existe o está desactivada." });
+                isCashAccount = account.Type == AccountType.Cash;
             }
 
             var day = DateOnly.FromDateTime(date);
@@ -237,7 +241,7 @@ namespace PersonalFinance.Api.Controllers
                 Description = Clip(NullIfBlank(action.Description), 300),
                 Notes = Clip(NullIfBlank(action.Notes), 500)
             }), ct);
-            if (day <= ReminderRules.LocalToday(DateTime.UtcNow))
+            if (isCashAccount && day <= ReminderRules.LocalToday(DateTime.UtcNow))
             {
                 await Mediator.Send(new ConfirmLedgerEntryCommand(userId, created.Id, new ConfirmLedgerEntryDto
                 {
@@ -644,6 +648,7 @@ namespace PersonalFinance.Api.Controllers
                 Title = action.Name,
                 DueDate = action.Date,
                 Amount = action.Amount,
+                IsIncome = action.IsIncome,
                 Notes = action.Notes,
                 Repeat = action.Repeat,
                 NotifyDaysBefore = action.NotifyDaysBefore
@@ -668,6 +673,7 @@ namespace PersonalFinance.Api.Controllers
                 Title = action.Name,
                 DueDate = action.Date,
                 Amount = action.Amount,
+                IsIncome = action.IsIncome,
                 Notes = action.Notes,
                 Repeat = action.Repeat,
                 NotifyDaysBefore = action.NotifyDaysBefore

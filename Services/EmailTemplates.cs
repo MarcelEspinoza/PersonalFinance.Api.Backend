@@ -135,7 +135,7 @@
             {
                 var details = "Fecha: " + PersonalFinance.Api.Features.Reminders.ReminderRules.FormatDate(reminder.DueDate);
                 if (reminder.Amount is { } amount)
-                    details += " · Importe: " + PersonalFinance.Api.Features.Reminders.ReminderRules.FormatAmount(amount);
+                    details += " · Importe: " + PersonalFinance.Api.Features.Reminders.ReminderRules.DescribeAmount(amount, reminder.IsIncome);
                 var notes = string.IsNullOrWhiteSpace(reminder.Notes)
                     ? string.Empty
                     : $@"<br><span style=""color:#6b7280; font-size:13px;"">{System.Net.WebUtility.HtmlEncode(reminder.Notes.Trim()).Replace("\n", "<br>")}</span>";

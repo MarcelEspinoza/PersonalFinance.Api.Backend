@@ -206,10 +206,11 @@ namespace PersonalFinance.Api.Services
                     Balance = balance,
                     IsCurrent = isCurrent,
                     ProjectionSource = source,
-                    PendingIncome = ledgerTotals.PendingIncome + forecast.RuleIncome + forecast.SettlementIncome,
+                    PendingIncome = ledgerTotals.PendingIncome + forecast.RuleIncome + forecast.ReminderIncome + forecast.SettlementIncome,
                     PendingExpense = ledgerTotals.PendingExpense + forecast.RuleExpense + forecast.Reminders + forecast.SettlementExpense,
                     VariableExpenseReserve = forecast.VariableExpenseReserve,
                     Reminders = forecast.Reminders,
+                    ReminderIncome = forecast.ReminderIncome,
                     SettlementIncome = forecast.SettlementIncome,
                     SettlementExpense = forecast.SettlementExpense
                 });

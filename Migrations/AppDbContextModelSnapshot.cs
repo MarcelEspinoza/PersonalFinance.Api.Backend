@@ -839,6 +839,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<bool>("IsDone")
                         .HasColumnType("tinyint(1)");
 
+                    b.Property<bool>("IsIncome")
+                        .HasColumnType("tinyint(1)");
+
                     b.Property<DateOnly?>("LastEmailedForDueDate")
                         .HasColumnType("date");
 

@@ -319,8 +319,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
             }
 
-            // Pending reminders with an amount are expenses too. They have no concept
-            // (Guid.Empty) and no account, so they count against the unassigned money.
+            // Pending reminders with an amount are expenses too (or income when the reminder is a cobro).
+            // They have no concept (Guid.Empty) and no account, so they count against the unassigned money.
             var calendarStart = new DateOnly(input.Today.Year, input.Today.Month, 1);
             foreach (var reminder in input.Reminders ?? Array.Empty<PersonalFinance.Api.Models.Entities.Reminder>())
             {
@@ -339,7 +339,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         Guid.Empty,
                         "Recordatorio",
                         null,
-                        EntryDirection.Out,
+                        reminder.IsIncome ? EntryDirection.In : EntryDirection.Out,
                         reminder.Amount ?? 0m,
                         false,
                         ReminderId: reminder.Id));

@@ -17,7 +17,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         RuleOccurrence,
         /// <summary>What is still left of a variable concept's monthly limit.</summary>
         VariableReserve,
-        /// <summary>A pending reminder with an amount. Reminders have no direction: always an expense.</summary>
+        /// <summary>A pending reminder with an amount: a pago (Out) or, when the reminder is marked as a cobro, In.</summary>
         Reminder,
         /// <summary>What an open settlement (mamá, Vane…) still expects: to collect or to pay.</summary>
         Settlement
@@ -70,7 +70,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 item.Kind == ForecastItemKind.VariableReserve && item.Direction == EntryDirection.Out);
             VariableIncomeExpected = Sum(items, item =>
                 item.Kind == ForecastItemKind.VariableReserve && item.Direction == EntryDirection.In);
-            Reminders = Sum(items, item => item.Kind == ForecastItemKind.Reminder);
+            Reminders = Sum(items, item =>
+                item.Kind == ForecastItemKind.Reminder && item.Direction == EntryDirection.Out);
+            ReminderIncome = Sum(items, item =>
+                item.Kind == ForecastItemKind.Reminder && item.Direction == EntryDirection.In);
             RuleIncome = Sum(items, item =>
                 item.Kind == ForecastItemKind.RuleOccurrence && item.Direction == EntryDirection.In);
             RuleExpense = Sum(items, item =>
@@ -91,7 +94,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public decimal Balance => Income - Expense;
         public decimal VariableExpenseReserve { get; }
         public decimal VariableIncomeExpected { get; }
+        /// <summary>Reminders that are pagos (money going out).</summary>
         public decimal Reminders { get; }
+        /// <summary>Reminders that are cobros (money coming in).</summary>
+        public decimal ReminderIncome { get; }
         public decimal RuleIncome { get; }
         public decimal RuleExpense { get; }
         public decimal SettlementIncome { get; }
@@ -254,7 +260,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         ForecastItemKind.Reminder,
                         ForecastIds.Reminder(occurrence.Reminder.Id, occurrence.Date),
                         occurrence.Date,
-                        EntryDirection.Out,
+                        occurrence.Reminder.IsIncome ? EntryDirection.In : EntryDirection.Out,
                         occurrence.Reminder.Amount!.Value,
                         occurrence.Reminder.Title,
                         null,

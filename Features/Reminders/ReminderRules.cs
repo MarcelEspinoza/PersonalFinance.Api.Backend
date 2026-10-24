@@ -11,6 +11,7 @@ namespace PersonalFinance.Api.Features.Reminders
         string? Notes,
         DateOnly DueDate,
         decimal? Amount,
+        bool IsIncome,
         ReminderRepeat Repeat,
         int NotifyDaysBefore,
         bool EmailEnabled,
@@ -103,6 +104,10 @@ namespace PersonalFinance.Api.Features.Reminders
 
         public static string FormatAmount(decimal amount) => amount.ToString("N2", Spanish) + " €";
 
+        /// <summary>"cobro de 20,00 €" or "pago de 20,00 €": a reminder amount always says which way the money goes.</summary>
+        public static string DescribeAmount(decimal amount, bool isIncome) =>
+            $"{(isIncome ? "cobro" : "pago")} de {FormatAmount(amount)}";
+
         /// <summary>Spanish summary shown on the chat confirmation card.</summary>
         public static string DescribeProposal(ReminderInput input)
         {
@@ -114,7 +119,7 @@ namespace PersonalFinance.Api.Features.Reminders
             };
             var summary = $"Crear recordatorio «{input.Title}» para el {FormatDate(input.DueDate)} " +
                           $"({DescribeRepeat(input.Repeat)}, {notice})";
-            return input.Amount is { } amount ? $"{summary} · {FormatAmount(amount)}" : summary;
+            return input.Amount is { } amount ? $"{summary} · {DescribeAmount(amount, input.IsIncome)}" : summary;
         }
 
         public static ReminderDto ToDto(Reminder reminder) => new(
@@ -123,6 +128,7 @@ namespace PersonalFinance.Api.Features.Reminders
             reminder.Notes,
             reminder.DueDate,
             reminder.Amount,
+            reminder.IsIncome,
             ToApi(reminder.Repeat),
             reminder.NotifyDaysBefore,
             reminder.EmailEnabled,
@@ -173,6 +179,8 @@ namespace PersonalFinance.Api.Features.Reminders
                 return Fail("El importe es demasiado alto.", out error);
             if (amount == 0) amount = null;
 
+            var isIncome = dto.IsIncome ?? existing?.IsIncome ?? false;
+
             ReminderRepeat repeat;
             if (string.IsNullOrWhiteSpace(dto.Repeat))
                 repeat = existing?.Repeat ?? ReminderRepeat.None;
@@ -197,7 +205,7 @@ namespace PersonalFinance.Api.Features.Reminders
                     return Fail("El origen del recordatorio debe ser manual o ai.", out error);
             }
 
-            input = new ReminderInput(title, notes, dueDate, amount, repeat, notifyDaysBefore, emailEnabled, source);
+            input = new ReminderInput(title, notes, dueDate, amount, isIncome, repeat, notifyDaysBefore, emailEnabled, source);
             error = null;
             return true;
         }
@@ -218,6 +226,7 @@ namespace PersonalFinance.Api.Features.Reminders
                 Notes = dto.Notes,
                 DueDate = dto.DueDate,
                 Amount = dto.Amount,
+                IsIncome = dto.IsIncome,
                 Repeat = dto.Repeat,
                 NotifyDaysBefore = dto.NotifyDaysBefore,
                 EmailEnabled = true,

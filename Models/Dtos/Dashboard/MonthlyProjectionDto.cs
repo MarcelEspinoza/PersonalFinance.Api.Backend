@@ -40,8 +40,11 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// <summary>Part of Expense kept for what is left of the variable expense limits.</summary>
         public decimal VariableExpenseReserve { get; set; }
 
-        /// <summary>Part of Expense that comes from pending reminders with an amount.</summary>
+        /// <summary>Part of Expense that comes from pending reminders with an amount that are pagos.</summary>
         public decimal Reminders { get; set; }
+
+        /// <summary>Part of Income that comes from pending reminders with an amount that are cobros.</summary>
+        public decimal ReminderIncome { get; set; }
 
         /// <summary>Part of Income that open settlements still expect to collect.</summary>
         public decimal SettlementIncome { get; set; }

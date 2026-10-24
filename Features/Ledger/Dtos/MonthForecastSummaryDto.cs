@@ -35,8 +35,11 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         /// <summary>Variable income still expected up to its estimate.</summary>
         public decimal VariableIncomeExpected { get; set; }
 
-        /// <summary>Pending reminders with an amount.</summary>
+        /// <summary>Pending reminders with an amount that are pagos (go out).</summary>
         public decimal Reminders { get; set; }
+
+        /// <summary>Pending reminders with an amount that are cobros (come in).</summary>
+        public decimal ReminderIncome { get; set; }
 
         /// <summary>What open settlements still expect to collect / to pay.</summary>
         public decimal SettlementIncome { get; set; }
@@ -64,6 +67,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
             VariableExpenseReserve = forecast.VariableExpenseReserve,
             VariableIncomeExpected = forecast.VariableIncomeExpected,
             Reminders = forecast.Reminders,
+            ReminderIncome = forecast.ReminderIncome,
             SettlementIncome = forecast.SettlementIncome,
             SettlementExpense = forecast.SettlementExpense,
             ReserveItems = forecast.Items
@@ -85,6 +89,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
                     ReminderId = item.ReminderId ?? Guid.Empty,
                     Title = item.Description,
                     Date = item.Date,
+                    IsIncome = item.Direction == EntryDirection.In,
                     Amount = item.Amount,
                     IsOverdue = item.IsOverdue
                 })
@@ -121,6 +126,10 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid ReminderId { get; set; }
         public string Title { get; set; } = string.Empty;
         public DateOnly Date { get; set; }
+
+        /// <summary>True: a cobro (money comes in). False: a pago.</summary>
+        public bool IsIncome { get; set; }
+
         public decimal Amount { get; set; }
 
         /// <summary>Due before this month and not completed yet: counted on the 1st.</summary>

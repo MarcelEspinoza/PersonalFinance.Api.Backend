@@ -92,7 +92,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         string? Title = null,
         string? Repeat = null,
         int? NotifyDaysBefore = null,
-        string? Notes = null);
+        string? Notes = null,
+        bool? IsIncome = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -343,8 +344,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   AAAA-MM-DD): cambia el importe o la fecha de un previsto que cambió.
                 - "create_reminder": crea un recordatorio sólo si el usuario lo pide o lo
                   acepta. "title" (hasta 200 caracteres), "dueDate" (AAAA-MM-DD, hoy o
-                  después), "amount" opcional, "repeat" ("none", "weekly", "monthly" o
-                  "yearly"), "notifyDaysBefore" (de 0 a 30) y "notes" opcional.
+                  después), "amount" opcional, "isIncome" (true si es dinero que le van a
+                  pagar o devolver al usuario, un cobro; false si lo paga él), "repeat"
+                  ("none", "weekly", "monthly" o "yearly"), "notifyDaysBefore" (de 0 a 30) y
+                  "notes" opcional. Si ese cobro o pago ya está como previsto en «Mes», no
+                  pongas "amount": se contaría dos veces.
                 - Si la revisión dice «No casa con lo previsto», «Importe distinto de lo
                   previsto» o «Previsto en otra cuenta» y el movimiento es parte de ese
                   previsto, propón "link_planned" en vez de aconsejar «Descartar este mes».
@@ -409,7 +413,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {"type":"unlink_planned","rowIds":["guid"]}
                 {"type":"skip_planned","plannedEntryId":"guid"}
                 {"type":"update_planned","plannedEntryId":"guid","amount":200.00,"dueDate":"AAAA-MM-DD"}
-                {"type":"create_reminder","title":"texto","dueDate":"AAAA-MM-DD","amount":50.00,"repeat":"none","notifyDaysBefore":1,"notes":"texto"}
+                {"type":"create_reminder","title":"texto","dueDate":"AAAA-MM-DD","amount":50.00,"isIncome":false,"repeat":"none","notifyDaysBefore":1,"notes":"texto"}
 
                 Escribe "reply" en texto plano, sin markdown (sin asteriscos, almohadillas
                 ni tablas). Si el usuario sólo pregunta (no pide cambios), deja
@@ -685,7 +689,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 1 => "avisa 1 día antes",
                 _ => $"avisa {notifyDays} días antes"
             };
-            var amountText = roundedAmount is { } shown ? $" de {Money(shown)}" : string.Empty;
+            var isIncome = ReadBool(item, "isIncome");
+            var amountText = roundedAmount is { } shown ? $" ({(isIncome ? "cobro" : "pago")} de {Money(shown)})" : string.Empty;
 
             return new ImportChatProposal(
                 ImportChatActionTypes.CreateReminder,
@@ -697,7 +702,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Title: title,
                 Repeat: repeat,
                 NotifyDaysBefore: notifyDays,
-                Notes: notes.Length == 0 ? null : notes);
+                Notes: notes.Length == 0 ? null : notes,
+                IsIncome: isIncome);
         }
 
         private static string PlannedName(ImportChatPlannedContext planned) =>

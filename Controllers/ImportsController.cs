@@ -653,7 +653,8 @@ namespace PersonalFinance.Api.Controllers
                         Title = p.Title,
                         Repeat = p.Repeat,
                         NotifyDaysBefore = p.NotifyDaysBefore,
-                        Notes = p.Notes
+                        Notes = p.Notes,
+                        IsIncome = p.IsIncome
                     })
                     .ToList()
             });

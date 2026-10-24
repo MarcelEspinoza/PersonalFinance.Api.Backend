@@ -12,6 +12,7 @@ namespace PersonalFinance.Api.Features.Reminders
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Notes,
         DateOnly DueDate,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Amount,
+        bool IsIncome,
         string Repeat,
         int NotifyDaysBefore,
         bool EmailEnabled,
@@ -33,6 +34,7 @@ namespace PersonalFinance.Api.Features.Reminders
         public string? Notes { get; set; }
         public string? DueDate { get; set; } // yyyy-MM-dd
         public decimal? Amount { get; set; }
+        public bool? IsIncome { get; set; } // true = cobro (money comes in); omitted on update keeps the value
         public string? Repeat { get; set; } // none | weekly | monthly | yearly
         public int? NotifyDaysBefore { get; set; }
         public bool? EmailEnabled { get; set; }

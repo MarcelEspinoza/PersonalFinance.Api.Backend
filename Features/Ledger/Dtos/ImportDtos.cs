@@ -191,5 +191,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string? Repeat { get; set; }
         public int? NotifyDaysBefore { get; set; }
         public string? Notes { get; set; }
+        // create_reminder: true = a cobro (money comes in), so the forecast adds it.
+        public bool? IsIncome { get; set; }
     }
 }

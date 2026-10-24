@@ -30,6 +30,9 @@ namespace PersonalFinance.Api.Models.Entities
         [Column(TypeName = "decimal(18,2)")]
         public decimal? Amount { get; set; }
 
+        // true = money coming in (a cobro): the forecast adds the amount instead of subtracting it.
+        public bool IsIncome { get; set; }
+
         public ReminderRepeat Repeat { get; set; } = ReminderRepeat.None;
 
         public int NotifyDaysBefore { get; set; } = 1;

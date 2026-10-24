@@ -41,6 +41,8 @@ namespace PersonalFinance.Api.Features.Chat
         // create_reminder only: none | weekly | monthly | yearly, and days of notice (0-30).
         public string? Repeat { get; set; }
         public int? NotifyDaysBefore { get; set; }
+        // Reminders only: true = cobro (money that comes in), false = pago. On update, null keeps it.
+        public bool? IsIncome { get; set; }
 
         // api_call only (admins): the frontend calls Method + Path (relative to its API base,
         // never prefixed with "/api") with the user's own token. Label, Danger and TargetName
