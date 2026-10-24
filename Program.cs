@@ -169,6 +169,8 @@ builder.Services.AddScoped<PersonalFinance.Api.Features.Ledger.Common.IImportBat
     PersonalFinance.Api.Features.Ledger.Common.ImportBatchApplicationService>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IGlobalChatService,
     PersonalFinance.Api.Features.Chat.GlobalChatService>();
+// Write endpoints an admin may ask the assistant to propose; built from ApiExplorer on first use.
+builder.Services.AddSingleton<PersonalFinance.Api.Features.Chat.AdminActionCatalog>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IMonthAdvisorService,
     PersonalFinance.Api.Features.Chat.MonthAdvisorService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementService,

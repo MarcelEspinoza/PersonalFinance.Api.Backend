@@ -37,7 +37,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             decimal Amount,
             bool IsTransfer,
             bool FromRule = false,
-            bool IsVariableReserve = false)
+            bool IsVariableReserve = false,
+            Guid? EntryId = null)
         {
             public decimal Signed => Direction == EntryDirection.In ? Amount : -Amount;
         }
@@ -275,7 +276,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     entry.AccountId,
                     entry.Direction,
                     entry.Remaining > 0m ? entry.Remaining : entry.ForecastAmount,
-                    entry.IsTransfer))
+                    entry.IsTransfer,
+                    EntryId: entry.Id))
                 .ToList();
 
             // Las reglas que todavía no se han convertido en asientos también cuentan.
@@ -478,7 +480,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Amount = item.Amount,
             IsOverdue = item.DueDate < today,
             IsTransfer = item.IsTransfer,
-            IsVariableReserve = item.IsVariableReserve
+            IsVariableReserve = item.IsVariableReserve,
+            EntryId = item.EntryId,
+            ConceptId = item.ConceptId
         };
 
         private static string ConceptName(IReadOnlyDictionary<Guid, Concept> conceptById, Guid conceptId) =>

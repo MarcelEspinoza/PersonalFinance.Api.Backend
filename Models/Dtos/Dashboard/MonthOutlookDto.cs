@@ -102,6 +102,12 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         public bool IsOverdue { get; set; }
         public bool IsTransfer { get; set; }
         public bool IsVariableReserve { get; set; }
+
+        /// <summary>Asiento del que sale la línea; null en reservas variables y en ocurrencias de reglas aún sin asiento.</summary>
+        public Guid? EntryId { get; set; }
+
+        /// <summary>Concepto de la línea; es la única referencia de una reserva variable.</summary>
+        public Guid? ConceptId { get; set; }
     }
 
     public class TransferSuggestionDto

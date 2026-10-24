@@ -419,6 +419,11 @@ namespace PersonalFinance.Api.Features.Chat
             var itemsByAccount = outlook.PendingItems
                 .Where(item => item.AccountId.HasValue)
                 .ToLookup(item => item.AccountId!.Value);
+            // Lo ya gastado (pagado + pendiente) por concepto: lo que debe quedar
+            // de límite para que su reserva variable llegue a 0.
+            var spentByConcept = outlook.Deviations
+                .GroupBy(item => item.ConceptId)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Actual + item.Pending));
 
             var accounts = outlook.Accounts.Select(account =>
             {
@@ -434,7 +439,13 @@ namespace PersonalFinance.Api.Features.Chat
                             date = item.DueDate.ToString("yyyy-MM-dd"),
                             concept = cleanDescription(item.Description),
                             amount = item.Direction == EntryDirection.In ? item.Amount : -item.Amount,
-                            balanceAfter = balance
+                            balanceAfter = balance,
+                            entryId = item.EntryId,
+                            isVariableReserve = item.IsVariableReserve,
+                            conceptId = item.IsVariableReserve ? item.ConceptId : null,
+                            spent = item.IsVariableReserve && item.ConceptId is Guid conceptId
+                                ? spentByConcept.GetValueOrDefault(conceptId)
+                                : (decimal?)null
                         };
                     })
                     .ToList();
@@ -475,7 +486,8 @@ namespace PersonalFinance.Api.Features.Chat
                     date = item.DueDate.ToString("yyyy-MM-dd"),
                     concept = cleanDescription(item.Description),
                     item.Amount,
-                    account = cleanName(item.AccountName)
+                    account = cleanName(item.AccountName),
+                    entryId = item.EntryId
                 }),
                 deviations = outlook.Deviations
                     .Where(item => Math.Abs(item.Deviation) >= 1m && (item.Actual > 0m || item.Pending > 0m))

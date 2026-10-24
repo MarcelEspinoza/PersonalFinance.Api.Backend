@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services;
 using PersonalFinance.Api.Services.Contracts;
@@ -183,6 +184,10 @@ namespace PersonalFinance.Api.Controllers
             if (!await _userManager.IsInRoleAsync(user, roleName))
                 return NotFound("User does not have that role");
 
+            if (string.Equals(roleName.Trim(), "Admin", StringComparison.OrdinalIgnoreCase) &&
+                await AdminSafetyErrorAsync(user) is { } adminError)
+                return Conflict(adminError);
+
             var res = await _userManager.RemoveFromRoleAsync(user, roleName);
             if (!res.Succeeded) return BadRequest(res.Errors);
 
@@ -206,10 +211,26 @@ namespace PersonalFinance.Api.Controllers
             var user = await _userManager.FindByIdAsync(id.ToString());
             if (user == null) return NotFound();
 
+            if (await AdminSafetyErrorAsync(user) is { } adminError) return Conflict(adminError);
+
             var res = await _userManager.DeleteAsync(user);
             if (!res.Succeeded) return BadRequest(res.Errors);
 
             return NoContent();
+        }
+
+        /// <summary>
+        /// Checked on every call, not only when the chat proposes it: an admin can't remove their
+        /// own Admin role or account, and the last Admin can't be removed.
+        /// </summary>
+        private async Task<string?> AdminSafetyErrorAsync(ApplicationUser target)
+        {
+            if (target.Id == User.GetUserId())
+                return "No puedes quitarte a ti mismo el rol de administrador ni borrar tu propia cuenta.";
+            if (!await _userManager.IsInRoleAsync(target, "Admin")) return null;
+
+            var admins = await _userManager.GetUsersInRoleAsync("Admin");
+            return admins.Any(admin => admin.Id != target.Id) ? null : "Tiene que quedar al menos un administrador.";
         }
 
         private static bool IsPendingApproval(IEnumerable<string> roles) =>

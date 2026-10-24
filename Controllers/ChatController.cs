@@ -1,10 +1,16 @@
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Chat;
+using PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry;
+using PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry;
+using PersonalFinance.Api.Features.Ledger.Commands.SetMonthlyBudget;
+using PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Common;
+using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Api.Features.Reminders;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Models.Dtos.Expense;
@@ -48,6 +54,9 @@ namespace PersonalFinance.Api.Controllers
             _db = db;
         }
 
+        // Las órdenes de «Mes» (las mismas que usa api/ledger-entries).
+        private IMediator Mediator => HttpContext.RequestServices.GetRequiredService<IMediator>();
+
         [HttpPost]
         public async Task<ActionResult<ChatResponseDto>> Ask([FromBody] ChatRequestDto request, CancellationToken ct)
         {
@@ -55,7 +64,8 @@ namespace PersonalFinance.Api.Controllers
             if (userId is null) return Unauthorized();
             if (string.IsNullOrWhiteSpace(request.Message)) return BadRequest("El mensaje no puede estar vacío.");
 
-            var result = await _chat.AskAsync(userId.Value, request, ct);
+            // Admin mode (api_call proposals) depends only on the role in the token.
+            var result = await _chat.AskAsync(userId.Value, request, User.IsInRole("Admin"), ct);
             return Ok(result);
         }
 
@@ -145,55 +155,90 @@ namespace PersonalFinance.Api.Controllers
                     return await ApplyImport(action, userId.Value, ct);
                 case "create_reminder":
                     return await CreateReminder(action, userId.Value, ct);
+                case "api_call":
+                    // The frontend calls the endpoint itself with the user's token.
+                    return BadRequest("Esta acción la ejecuta la app directamente con tus permisos; no se confirma por aquí.");
                 default:
                     return BadRequest("La acción propuesta no está soportada.");
             }
         }
 
-        private async Task<IActionResult> ConfirmExpense(
+        private Task<IActionResult> ConfirmExpense(
             ProposedActionDto action,
             Guid userId,
-            CancellationToken ct)
-        {
-            if (!TryGetActionDate(action, out var date) ||
-                action.Amount <= 0 ||
-                action.CategoryId <= 0 ||
-                string.IsNullOrWhiteSpace(action.Description))
-                return BadRequest("Faltan datos para crear el gasto.");
+            CancellationToken ct) =>
+            CreateLedgerMovement(action, userId, ConceptKind.Expense, ct);
 
-            var expense = await _expenses.CreateAsync(userId, new CreateExpenseDto
-            {
-                Amount = action.Amount,
-                Description = action.Description,
-                Date = date,
-                Type = action.ExpenseType == "Fixed" ? "Fixed" : "Temporary",
-                CategoryId = action.CategoryId,
-                Notes = action.Notes
-            }, ct);
-            return Ok(new { action.Type, expense.Id });
-        }
-
-        private async Task<IActionResult> ConfirmIncome(
+        private Task<IActionResult> ConfirmIncome(
             ProposedActionDto action,
             Guid userId,
+            CancellationToken ct) =>
+            CreateLedgerMovement(action, userId, ConceptKind.Income, ct);
+
+        /// <summary>
+        /// Anota el gasto o ingreso en «Mes» igual que la pantalla: crea el
+        /// asiento y, si su fecha ya ha llegado (hoy en Madrid), lo confirma
+        /// como pagado con ese importe y esa fecha.
+        /// </summary>
+        private async Task<IActionResult> CreateLedgerMovement(
+            ProposedActionDto action,
+            Guid userId,
+            ConceptKind kind,
             CancellationToken ct)
         {
-            if (!TryGetActionDate(action, out var date) ||
-                action.Amount <= 0 ||
-                action.CategoryId <= 0 ||
-                string.IsNullOrWhiteSpace(action.Description))
-                return BadRequest("Faltan datos para crear el ingreso.");
+            var label = kind == ConceptKind.Expense ? "gasto" : "ingreso";
+            if (action.Amount <= 0)
+                return BadRequest(new { message = $"Falta el importe del {label}." });
+            if (!TryGetActionDate(action, out var date))
+                return BadRequest(new { message = $"Falta la fecha del {label}." });
+            if (action.ConceptId is null)
+                return BadRequest(new { message = $"Elige un concepto de {label} para anotarlo en «Mes»." });
 
-            var income = await _incomes.CreateAsync(userId, new CreateIncomeDto
+            var conceptValid = await _db.Concepts.AnyAsync(
+                item =>
+                    item.Id == action.ConceptId.Value &&
+                    item.UserId == userId &&
+                    item.IsActive &&
+                    item.Kind == kind,
+                ct);
+            if (!conceptValid)
+                return BadRequest(new { message = $"El concepto elegido no es un concepto de {label} válido." });
+
+            if (action.AccountId is not null)
             {
-                Amount = action.Amount,
-                Description = action.Description,
-                Date = date,
-                Type = action.ExpenseType == "Fixed" ? "Fixed" : "Temporary",
-                CategoryId = action.CategoryId,
-                Notes = action.Notes
-            }, ct);
-            return Ok(new { action.Type, income.Id });
+                var accountValid = await _db.Accounts.AnyAsync(
+                    item =>
+                        item.Id == action.AccountId.Value &&
+                        item.UserId == userId &&
+                        item.IsActive,
+                    ct);
+                if (!accountValid)
+                    return BadRequest(new { message = "La cuenta elegida no existe o está desactivada." });
+            }
+
+            var day = DateOnly.FromDateTime(date);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            var created = await Mediator.Send(new CreateLedgerEntryCommand(userId, new CreateLedgerEntryDto
+            {
+                ConceptId = action.ConceptId.Value,
+                AccountId = action.AccountId,
+                Direction = kind == ConceptKind.Expense ? EntryDirection.Out : EntryDirection.In,
+                DueDate = day,
+                ForecastAmount = action.Amount,
+                Description = Clip(NullIfBlank(action.Description), 300),
+                Notes = Clip(NullIfBlank(action.Notes), 500)
+            }), ct);
+            if (day <= ReminderRules.LocalToday(DateTime.UtcNow))
+            {
+                await Mediator.Send(new ConfirmLedgerEntryCommand(userId, created.Id, new ConfirmLedgerEntryDto
+                {
+                    ActualAmount = action.Amount,
+                    ValueDate = day
+                }), ct);
+            }
+            await tx.CommitAsync(ct);
+
+            return Ok(new { action.Type, created.Id });
         }
 
         private async Task<IActionResult> UpdateExpense(
@@ -263,26 +308,38 @@ namespace PersonalFinance.Api.Controllers
             CancellationToken ct)
         {
             if (!Guid.TryParse(action.TargetId, out var entryId))
-                return BadRequest("Falta el movimiento.");
+                return BadRequest(new { message = "Falta el movimiento." });
 
-            var entry = await _db.LedgerEntries
-                .Include(item => item.Period)
-                .FirstOrDefaultAsync(item => item.Id == entryId && item.UserId == userId, ct);
-            if (entry is null) return NotFound();
-            if (entry.Period?.Status == PeriodStatus.Closed)
-                return Conflict("El periodo está cerrado.");
+            var hasDate = TryGetActionDate(action, out var date);
+            var entryExists = await _db.LedgerEntries.AnyAsync(
+                item => item.Id == entryId && item.UserId == userId,
+                ct);
+            if (!entryExists)
+            {
+                // Una reserva de gasto variable no es un asiento: llega con el id
+                // del concepto y el importe es el nuevo límite de ese mes.
+                var isConcept = await _db.Concepts.AnyAsync(
+                    item => item.Id == entryId && item.UserId == userId,
+                    ct);
+                if (!isConcept) return NotFound(new { message = "El movimiento ya no existe." });
+                if (!hasDate) return BadRequest(new { message = "Falta el mes de la reserva." });
+
+                var month = DateOnly.FromDateTime(date);
+                var budgetId = await Mediator.Send(
+                    new SetMonthlyBudgetCommand(userId, entryId, month.Year, month.Month, action.Amount),
+                    ct);
+                return Ok(new { action.Type, Id = budgetId });
+            }
 
             if (action.ConceptId is not null)
             {
-                var concept = await _db.Concepts.FirstOrDefaultAsync(
+                var conceptExists = await _db.Concepts.AnyAsync(
                     item =>
                         item.Id == action.ConceptId.Value &&
                         item.UserId == userId &&
                         item.IsActive,
                     ct);
-                if (concept is null) return BadRequest("El concepto no existe.");
-                entry.ConceptId = concept.Id;
-                entry.IsTransfer = concept.Kind == ConceptKind.Transfer;
+                if (!conceptExists) return BadRequest(new { message = "El concepto no existe." });
             }
 
             if (action.AccountId is not null)
@@ -293,25 +350,30 @@ namespace PersonalFinance.Api.Controllers
                         item.UserId == userId &&
                         item.IsActive,
                     ct);
-                if (!accountExists) return BadRequest("La cuenta no existe.");
-                entry.AccountId = action.AccountId;
+                if (!accountExists) return BadRequest(new { message = "La cuenta no existe." });
             }
 
-            if (action.Amount > 0)
+            // Misma orden que «Mes»: cambiar la fecha a otro mes lleva el asiento
+            // a ese periodo, y el importe de una previsión sólo cambia lo previsto.
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            await Mediator.Send(new UpdateLedgerEntryCommand(userId, entryId, new UpdateLedgerEntryDto
             {
-                entry.ForecastAmount = action.Amount;
-                if (entry.Status == EntryStatus.Paid) entry.ActualAmount = action.Amount;
-            }
-            if (!string.IsNullOrWhiteSpace(action.Description))
-                entry.Description = action.Description.Trim();
-            if (TryGetActionDate(action, out var date))
-            {
-                entry.DueDate = DateOnly.FromDateTime(date);
-                if (entry.Status == EntryStatus.Paid)
-                    entry.ValueDate = DateOnly.FromDateTime(date);
-            }
+                ConceptId = action.ConceptId,
+                AccountId = action.AccountId,
+                DueDate = hasDate ? DateOnly.FromDateTime(date) : null,
+                ForecastAmount = action.Amount > 0 ? action.Amount : null,
+                Description = Clip(NullIfBlank(action.Description), 300)
+            }), ct);
 
-            await _db.SaveChangesAsync(ct);
+            var entry = await _db.LedgerEntries.FirstAsync(item => item.Id == entryId, ct);
+            if (entry.Status == EntryStatus.Paid && (action.Amount > 0 || hasDate))
+            {
+                if (action.Amount > 0) entry.ActualAmount = action.Amount;
+                if (hasDate) entry.ValueDate = DateOnly.FromDateTime(date);
+                await _db.SaveChangesAsync(ct);
+            }
+            await tx.CommitAsync(ct);
+
             return Ok(new { action.Type, entry.Id });
         }
 
@@ -499,5 +561,8 @@ namespace PersonalFinance.Api.Controllers
 
         private static string? NullIfBlank(string? value) =>
             string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+        private static string? Clip(string? value, int maxLength) =>
+            value is not null && value.Length > maxLength ? value[..maxLength] : value;
     }
 }
