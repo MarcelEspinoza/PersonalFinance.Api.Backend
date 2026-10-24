@@ -111,6 +111,148 @@ namespace PersonalFinance.Api.Controllers
             });
         }
 
+        private const int PlanMonthCount = 6;
+
+        /// <summary>Fixed and variable expenses of 6 months (from the given month, or the current one).</summary>
+        [HttpGet("months")]
+        public async Task<ActionResult<ExpensePlanMonthsDto>> GetMonths(
+            [FromQuery] int? year,
+            [FromQuery] int? month,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var currentMonth = new DateOnly(_clock.Today.Year, _clock.Today.Month, 1);
+            var start = year is >= 2000 and <= 2100 && month is >= 1 and <= 12
+                ? new DateOnly(year.Value, month.Value, 1)
+                : currentMonth;
+            var months = Enumerable.Range(0, PlanMonthCount).Select(start.AddMonths).ToList();
+            var last = months[^1];
+            var windowEnd = new DateOnly(last.Year, last.Month, DateTime.DaysInMonth(last.Year, last.Month));
+            var startKey = start.Year * 12 + start.Month;
+            var endKey = last.Year * 12 + last.Month;
+
+            var entries = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.UserId == userId.Value && entry.DueDate >= start && entry.DueDate <= windowEnd)
+                .ToListAsync(ct);
+            var concepts = await _db.Concepts
+                .AsNoTracking()
+                .Where(concept => concept.UserId == userId.Value)
+                .ToListAsync(ct);
+            var groups = await _db.ConceptGroups
+                .AsNoTracking()
+                .Where(group => group.UserId == userId.Value)
+                .ToListAsync(ct);
+            var budgets = await _db.MonthlyBudgets
+                .AsNoTracking()
+                .Where(budget =>
+                    budget.UserId == userId.Value &&
+                    budget.Year * 12 + budget.Month >= startKey &&
+                    budget.Year * 12 + budget.Month <= endKey)
+                .ToListAsync(ct);
+            var rules = await _db.RecurringRules
+                .AsNoTracking()
+                .Where(rule => rule.UserId == userId.Value && rule.IsActive)
+                .ToListAsync(ct);
+            var closedMonths = (await _db.MonthlyPeriods
+                    .AsNoTracking()
+                    .Where(period =>
+                        period.UserId == userId.Value &&
+                        period.Status == PeriodStatus.Closed &&
+                        period.Year * 12 + period.Month >= startKey &&
+                        period.Year * 12 + period.Month <= endKey)
+                    .Select(period => new { period.Year, period.Month })
+                    .ToListAsync(ct))
+                .Select(period => new DateOnly(period.Year, period.Month, 1))
+                .ToHashSet();
+
+            return Ok(PersonalFinance.Api.Features.Ledger.Common.ExpensePlanCalculator.Build(
+                months, currentMonth, entries, rules, concepts, groups, budgets, closedMonths));
+        }
+
+        /// <summary>Usual monthly limit of a variable expense. Null removes it.</summary>
+        [HttpPut("{conceptId:guid}/budget")]
+        public async Task<IActionResult> UpdateBudget(
+            Guid conceptId,
+            [FromBody] UpdateExpenseBudgetDto dto,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            if (dto.Limit is < 0m) return BadRequest("El límite mensual no puede ser negativo.");
+
+            var concept = await FindVariableExpenseAsync(userId.Value, conceptId, ct);
+            if (concept is null) return NotFound("Ese gasto variable ya no existe.");
+
+            concept.DefaultMonthlyBudget = dto.Limit is null ? null : Math.Round(dto.Limit.Value, 2);
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        /// <summary>Limit of a variable expense for one month only. Null goes back to the usual limit.</summary>
+        [HttpPut("{conceptId:guid}/budget/{year:int}/{month:int}")]
+        public async Task<IActionResult> UpdateMonthBudget(
+            Guid conceptId,
+            int year,
+            int month,
+            [FromBody] UpdateExpenseBudgetDto dto,
+            CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            if (year is < 2000 or > 2100 || month is < 1 or > 12) return BadRequest("Mes no válido.");
+            if (dto.Limit is < 0m) return BadRequest("El límite mensual no puede ser negativo.");
+
+            var concept = await FindVariableExpenseAsync(userId.Value, conceptId, ct);
+            if (concept is null) return NotFound("Ese gasto variable ya no existe.");
+
+            var closed = await _db.MonthlyPeriods.AnyAsync(period =>
+                period.UserId == userId.Value &&
+                period.Year == year &&
+                period.Month == month &&
+                period.Status == PeriodStatus.Closed, ct);
+            if (closed) return BadRequest("Ese mes está cerrado: ya no se puede cambiar su presupuesto.");
+
+            var budget = await _db.MonthlyBudgets.FirstOrDefaultAsync(item =>
+                item.UserId == userId.Value &&
+                item.ConceptId == conceptId &&
+                item.Year == year &&
+                item.Month == month, ct);
+            if (dto.Limit is null)
+            {
+                if (budget is not null) _db.MonthlyBudgets.Remove(budget);
+            }
+            else
+            {
+                if (budget is null)
+                {
+                    budget = new MonthlyBudget
+                    {
+                        UserId = userId.Value,
+                        ConceptId = conceptId,
+                        Year = year,
+                        Month = month
+                    };
+                    _db.MonthlyBudgets.Add(budget);
+                }
+
+                budget.LimitAmount = Math.Round(dto.Limit.Value, 2);
+            }
+
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        private Task<Concept?> FindVariableExpenseAsync(Guid userId, Guid conceptId, CancellationToken ct) =>
+            _db.Concepts.FirstOrDefaultAsync(concept =>
+                concept.Id == conceptId &&
+                concept.UserId == userId &&
+                concept.IsActive &&
+                concept.Kind == ConceptKind.Expense &&
+                concept.Nature == ConceptNature.Variable, ct);
+
         private async Task EnsureKnownPlanningDefaultsAsync(Guid userId, CancellationToken ct)
         {
             var accounts = await _db.Accounts
