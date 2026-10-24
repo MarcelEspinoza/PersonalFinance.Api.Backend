@@ -1261,6 +1261,10 @@ namespace PersonalFinance.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)");
 
+                    b.Property<string>("BankName")
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
@@ -1919,6 +1923,9 @@ namespace PersonalFinance.Api.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
+
+                    b.Property<DateOnly?>("ExpectedDate")
+                        .HasColumnType("date");
 
                     b.Property<decimal?>("LinkedLoanBalanceSnapshot")
                         .HasColumnType("decimal(18,2)");

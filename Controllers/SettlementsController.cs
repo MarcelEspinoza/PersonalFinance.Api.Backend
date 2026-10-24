@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Settlements;
 
@@ -186,12 +187,25 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("{id:guid}/sent")]
-        public async Task<ActionResult<SettlementDetailDto>> MarkSent(Guid id, CancellationToken ct)
+        public async Task<ActionResult<SettlementDetailDto>> MarkSent(
+            Guid id,
+            [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] MarkSentDto? dto,
+            CancellationToken ct)
         {
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
 
-            return Ok(await _service.MarkSentAsync(userId.Value, id, ct));
+            return Ok(await _service.MarkSentAsync(userId.Value, id, dto?.ExpectedDate, ct));
+        }
+
+        /// <summary>Da la liquidación por pagada a mano: sale de la previsión.</summary>
+        [HttpPost("{id:guid}/paid")]
+        public async Task<ActionResult<SettlementDetailDto>> MarkPaid(Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _service.MarkPaidAsync(userId.Value, id, ct));
         }
 
         [HttpPost("{id:guid}/reopen")]

@@ -239,6 +239,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.HasKey(x => x.Id);
                 e.Property(x => x.Name).IsRequired().HasMaxLength(120);
                 e.Property(x => x.PhoneNumber).HasMaxLength(30);
+                e.Property(x => x.BankName).HasMaxLength(120);
                 e.Property(x => x.Notes).HasMaxLength(500);
 
                 e.HasIndex(x => new { x.UserId, x.Name }).IsUnique();

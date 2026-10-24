@@ -16,6 +16,12 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// <summary>Teléfono en formato internacional sin signos, para el enlace de WhatsApp.</summary>
         public string? PhoneNumber { get; set; }
 
+        /// <summary>
+        /// Cómo aparece su nombre en el extracto del banco ("JENNY MABEL ESPINOZA").
+        /// Al importar, las transferencias que lo contienen se apuntan en su liquidación.
+        /// </summary>
+        public string? BankName { get; set; }
+
         public CounterpartyKind Kind { get; set; } = CounterpartyKind.Person;
 
         public string? Notes { get; set; }

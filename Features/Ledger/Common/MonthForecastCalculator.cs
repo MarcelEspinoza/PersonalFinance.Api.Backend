@@ -1,5 +1,6 @@
 using System.Globalization;
 using PersonalFinance.Api.Features.Reminders;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Models.Enums;
 using PersonalFinance.Domain.Ledger.Calculations;
@@ -17,7 +18,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// <summary>What is still left of a variable concept's monthly limit.</summary>
         VariableReserve,
         /// <summary>A pending reminder with an amount. Reminders have no direction: always an expense.</summary>
-        Reminder
+        Reminder,
+        /// <summary>What an open settlement (mamá, Vane…) still expects: to collect or to pay.</summary>
+        Settlement
     }
 
     public sealed record ForecastItem(
@@ -35,7 +38,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         Guid? ReminderId = null,
         decimal? Limit = null,
         decimal? Used = null,
-        bool IsOverdue = false);
+        bool IsOverdue = false,
+        Guid? SettlementId = null);
 
     /// <summary>One variable concept in one month: its limit and how much of it is already taken.</summary>
     public sealed record ForecastVariableLine(
@@ -71,6 +75,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 item.Kind == ForecastItemKind.RuleOccurrence && item.Direction == EntryDirection.In);
             RuleExpense = Sum(items, item =>
                 item.Kind == ForecastItemKind.RuleOccurrence && item.Direction == EntryDirection.Out);
+            SettlementIncome = Sum(items, item =>
+                item.Kind == ForecastItemKind.Settlement && item.Direction == EntryDirection.In);
+            SettlementExpense = Sum(items, item =>
+                item.Kind == ForecastItemKind.Settlement && item.Direction == EntryDirection.Out);
         }
 
         public int Year { get; }
@@ -86,6 +94,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public decimal Reminders { get; }
         public decimal RuleIncome { get; }
         public decimal RuleExpense { get; }
+        public decimal SettlementIncome { get; }
+        public decimal SettlementExpense { get; }
 
         private static decimal Sum(IEnumerable<ForecastItem> items, Func<ForecastItem, bool> predicate) =>
             items.Where(predicate).Sum(item => item.Amount);
@@ -94,6 +104,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     /// <param name="Concepts">All of the user's concepts, active or not (inactive ones only provide names).</param>
     /// <param name="Rules">Recurring rules; inactive ones are ignored.</param>
     /// <param name="Reminders">Reminders; done ones and those without an amount are ignored.</param>
+    /// <param name="Settlements">What open settlements still expect (see <see cref="SettlementForecast"/>).</param>
     public sealed record MonthForecastInput(
         IReadOnlyList<DateOnly> Months,
         DateOnly Today,
@@ -101,15 +112,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         IReadOnlyCollection<RecurringRule> Rules,
         IReadOnlyCollection<Concept> Concepts,
         IReadOnlyCollection<MonthlyBudget> Budgets,
-        IReadOnlyCollection<Reminder>? Reminders = null);
+        IReadOnlyCollection<Reminder>? Reminders = null,
+        IReadOnlyCollection<SettlementExpectation>? Settlements = null);
 
     /// <summary>
     /// The single source of truth for "how much comes in and goes out" in a month.
     /// Dashboard boxes, the expense plan, the «Mes» forecast and the AI all use it.
     /// A month is: its entries (not skipped, not transfers) + the recurring rule
     /// payments not written yet + what is left of each variable concept's limit
-    /// + pending reminders with an amount. A rule payment inside a variable concept
-    /// counts inside that concept's limit, never on top of it.
+    /// + pending reminders with an amount + what open settlements still expect.
+    /// A rule payment inside a variable concept counts inside that concept's limit,
+    /// never on top of it.
     /// </summary>
     public static class MonthForecastCalculator
     {
@@ -127,6 +140,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var budgetByKey = input.Budgets
                 .GroupBy(budget => (budget.ConceptId, budget.Year, budget.Month))
                 .ToDictionary(group => group.Key, group => group.First().LimitAmount);
+            var calendarStart = new DateOnly(input.Today.Year, input.Today.Month, 1);
 
             var reminderOccurrences = new List<(Reminder Reminder, DateOnly Date, bool IsOverdue)>();
             if (input.Months.Count > 0 && input.Reminders is { Count: > 0 })
@@ -249,6 +263,25 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         IsOverdue: occurrence.IsOverdue));
                 }
 
+                foreach (var expectation in input.Settlements ?? Array.Empty<SettlementExpectation>())
+                {
+                    if (expectation.Amount <= 0m) continue;
+                    // Like reminders: a date before this month is still unpaid, so it counts on the 1st.
+                    var date = expectation.Date < calendarStart ? calendarStart : expectation.Date;
+                    if (date < monthStart || date > monthEnd) continue;
+                    items.Add(new ForecastItem(
+                        ForecastItemKind.Settlement,
+                        ForecastIds.Settlement(expectation.SettlementId),
+                        date,
+                        expectation.Direction,
+                        expectation.Amount,
+                        expectation.Description,
+                        null,
+                        SettlementForecast.ConceptName,
+                        IsOverdue: expectation.Date < input.Today,
+                        SettlementId: expectation.SettlementId));
+                }
+
                 var ordered = items
                     .OrderBy(item => item.Date)
                     .ThenBy(item => item.Kind)
@@ -263,13 +296,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
     /// <summary>
     /// Ids of forecast items that are not entries. Entries keep their plain GUID.
-    /// rule:{ruleId}:{yyyy-MM} · reserve:{conceptId}:{yyyy-MM} · reminder:{reminderId}:{yyyy-MM-dd}
+    /// rule:{ruleId}:{yyyy-MM} · reserve:{conceptId}:{yyyy-MM} · reminder:{reminderId}:{yyyy-MM-dd} · settlement:{settlementId}
     /// </summary>
     public static class ForecastIds
     {
         public const string RulePrefix = "rule:";
         public const string ReservePrefix = "reserve:";
         public const string ReminderPrefix = "reminder:";
+        public const string SettlementPrefix = "settlement:";
 
         public static string Rule(Guid ruleId, int year, int month) => $"{RulePrefix}{ruleId}:{MonthKey(year, month)}";
 
@@ -277,6 +311,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         public static string Reminder(Guid reminderId, DateOnly date) =>
             $"{ReminderPrefix}{reminderId}:{date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}";
+
+        public static string Settlement(Guid settlementId) => $"{SettlementPrefix}{settlementId}";
+
+        public static bool TryParseSettlement(string? id, out Guid settlementId)
+        {
+            settlementId = Guid.Empty;
+            var parts = Split(id, SettlementPrefix);
+            return parts is { Length: 1 } && Guid.TryParse(parts[0], out settlementId);
+        }
 
         public static bool TryParseRule(string? id, out Guid ruleId, out int year, out int month) =>
             TryParseMonthId(id, RulePrefix, out ruleId, out year, out month);

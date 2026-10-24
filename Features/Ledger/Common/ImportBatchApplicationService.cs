@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Domain.Ledger.Calculations;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
@@ -16,7 +17,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         int UnassignedRows = 0,
         bool Conflict = false,
         bool NotFound = false,
-        int MatchedForecasts = 0);
+        int MatchedForecasts = 0,
+        int SettlementPayments = 0);
 
     public interface IImportBatchApplicationService
     {
@@ -251,6 +253,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var applied = 0;
             var matchedForecasts = 0;
             var bookedDeductions = new List<(Guid PlannedEntryId, decimal Amount)>();
+            var settlementCandidates = new List<SettlementPaymentCandidate>();
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
                 var isSplit = row.Allocations.Count > 0;
@@ -373,6 +376,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     forecastEntry.UpdatedAt = DateTime.UtcNow;
                     row.LedgerEntryId = forecastEntry.Id;
                     AddTransferMirror(forecastEntry, mirrorAccountByConcept);
+                    if (!forecastEntry.IsTransfer)
+                        settlementCandidates.Add(new(forecastEntry.Id, row.RawDescription, row.Amount, row.ValueDate));
 
                     // El saldo inicial es el real del banco en la fecha de apertura: un movimiento
                     // anterior ya está incluido en él, así que emparejarlo no debe modificarlo.
@@ -430,6 +435,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
                     AddTransferMirror(importedEntry, mirrorAccountByConcept);
+                    if (isPaid && !importedEntry.IsTransfer)
+                        settlementCandidates.Add(new(importedEntry.Id, row.RawDescription, row.Amount, row.ValueDate));
 
                     if (row.Fee != 0m && feeConcept is not null)
                     {
@@ -490,13 +497,22 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 planned.UpdatedAt = DateTime.UtcNow;
             }
 
+            // Transfers to or from a person with open settlements are booked there automatically.
+            var settlementPayments = await SettlementPaymentLinker.LinkAsync(
+                _db, userId, settlementCandidates, DateTime.UtcNow, ct);
+
             batch.AcceptedRows = batch.Rows.Count(row => row.Status == ImportRowStatus.Accepted);
             batch.DuplicateRows = batch.Rows.Count(row => row.Status == ImportRowStatus.Duplicate);
             batch.Status = ImportBatchStatus.Applied;
             batch.AppliedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
-            return new(true, applied, batch.Id, MatchedForecasts: matchedForecasts);
+            return new(
+                true,
+                applied,
+                batch.Id,
+                MatchedForecasts: matchedForecasts,
+                SettlementPayments: settlementPayments);
         }
 
         public async Task<IReadOnlyList<ImportForecastPreview>> PreviewForecastMatchesAsync(

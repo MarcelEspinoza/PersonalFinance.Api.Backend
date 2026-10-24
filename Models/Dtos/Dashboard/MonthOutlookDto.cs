@@ -111,6 +111,9 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
 
         /// <summary>Recordatorio con importe del que sale la línea (no tiene concepto ni asiento).</summary>
         public Guid? ReminderId { get; set; }
+
+        /// <summary>Liquidación pendiente (mamá, Vane…) de la que sale la línea: se gestiona en Liquidaciones.</summary>
+        public Guid? SettlementId { get; set; }
     }
 
     public class TransferSuggestionDto

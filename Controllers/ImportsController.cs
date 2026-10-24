@@ -918,6 +918,7 @@ namespace PersonalFinance.Api.Controllers
             {
                 applied = result.Applied,
                 matchedForecasts = result.MatchedForecasts,
+                settlementPayments = result.SettlementPayments,
                 batchId = result.BatchId
             });
         }

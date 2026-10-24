@@ -180,7 +180,11 @@ namespace PersonalFinance.Api.Features.Chat
                 con importe ("reminders"). Para decir cuánto entra, sale o queda en un mes usa
                 SIEMPRE estas cifras; no sumes por tu cuenta. Cada línea de "pending" trae su "id":
                 un GUID es un movimiento ya anotado en «Mes»; "rule:…" es un pago o cobro fijo que
-                aún no está anotado; "reminder:…" es un recordatorio con importe. Cada línea de
+                aún no está anotado; "reminder:…" es un recordatorio con importe; "settlement:…" es
+                lo que falta cobrar o pagar de una liquidación (gastos compartidos con mamá, Vane…).
+                Las liquidaciones sólo se cambian en «Liquidaciones» (fecha de cobro o «Marcar como
+                pagada») y las transferencias de esa persona se apuntan solas al importar el banco:
+                no propongas acciones sobre un "settlement:…"; explícale dónde se cambia. Cada línea de
                 "variables" trae su "id" ("reserve:…"). Si un recordatorio con importe y un pago
                 de «Mes» son lo mismo, ese mes se cuenta dos veces: explícaselo y propón dejar el
                 recordatorio sin importe (update_reminder con amount 0) o quitar el pago
@@ -1328,6 +1332,8 @@ namespace PersonalFinance.Api.Features.Chat
         /// </summary>
         private static bool TryNormalizeLedgerUpdate(RawProposedAction action, DateOnly today, LedgerMovementTargets targets)
         {
+            if (IsSettlementItem(action.TargetId, targets)) return false;
+
             if (TryFindReminder(action.TargetId, targets, out _))
             {
                 action.Type = "update_reminder";
@@ -1417,6 +1423,8 @@ namespace PersonalFinance.Api.Features.Chat
         /// </summary>
         private static bool TryNormalizeLedgerSkip(RawProposedAction action, LedgerMovementTargets targets)
         {
+            if (IsSettlementItem(action.TargetId, targets)) return false;
+
             string itemId;
             if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var year, out var month))
                 itemId = ForecastIds.Rule(ruleId, year, month);
@@ -1548,6 +1556,11 @@ namespace PersonalFinance.Api.Features.Chat
 
         private static string DescribeReminderAmount(decimal? amount) =>
             amount is { } value ? ReminderRules.FormatAmount(value) : "sin importe";
+
+        /// <summary>A settlement line of the forecast (with or without prefix): it is changed in «Liquidaciones».</summary>
+        private static bool IsSettlementItem(string? targetId, LedgerMovementTargets targets) =>
+            ForecastIds.TryParseSettlement(targetId, out _) ||
+            (Guid.TryParse(targetId, out var id) && targets.ForecastItems.ContainsKey(ForecastIds.Settlement(id)));
 
         /// <summary>Concepto y, si dice algo más, la descripción: «Viajes · Hotel Lisboa».</summary>
         private static string DescribeForecastItem(ForecastItem item)

@@ -5,9 +5,11 @@ namespace PersonalFinance.Api.Features.Settlements
         Guid Id,
         string Name,
         string? PhoneNumber,
-        int OpenSettlements);
+        int OpenSettlements,
+        string? BankName = null);
 
-    public sealed record SavePersonDto(string Name, string? PhoneNumber);
+    /// <param name="BankName">Cómo sale su nombre en el banco, para cazar sus transferencias al importar.</param>
+    public sealed record SavePersonDto(string Name, string? PhoneNumber, string? BankName = null);
 
     public sealed record SettlementLineDto(
         Guid Id,
@@ -23,7 +25,19 @@ namespace PersonalFinance.Api.Features.Settlements
         decimal Deductions,
         decimal Payments,
         decimal CarriedOver,
-        decimal Pending);
+        decimal Pending,
+        decimal PaymentsSent = 0m);
+
+    /// <summary>
+    /// Cómo cuenta la liquidación en la previsión: cuánto, en qué sentido y qué día;
+    /// o por qué no cuenta (<see cref="Reason"/>).
+    /// </summary>
+    public sealed record SettlementForecastInfoDto(
+        bool Counts,
+        string? Direction,
+        decimal Amount,
+        DateOnly? Date,
+        string? Reason);
 
     public sealed record SettlementLoanDto(
         Guid Id,
@@ -67,7 +81,9 @@ namespace PersonalFinance.Api.Features.Settlements
         SettlementTotalsDto Totals,
         IReadOnlyList<SettlementLineDto> Lines,
         string Message,
-        string? WhatsAppUrl);
+        string? WhatsAppUrl,
+        DateOnly? ExpectedDate = null,
+        SettlementForecastInfoDto? Forecast = null);
 
     public sealed record CreateSettlementDto(
         Guid CounterpartyId,
@@ -82,7 +98,11 @@ namespace PersonalFinance.Api.Features.Settlements
         DateOnly? PeriodStart,
         DateOnly? PeriodEnd,
         decimal? CarriedOverAmount,
-        string? ClosingNote);
+        string? ClosingNote,
+        DateOnly? ExpectedDate = null);
+
+    /// <param name="ExpectedDate">Día en que se espera cobrar o pagar. Si no viene, dentro de 7 días.</param>
+    public sealed record MarkSentDto(DateOnly? ExpectedDate);
 
     public sealed record CloseSettlementLoanDto(string Resolution);
     public sealed record LinkSettlementLoanDto(Guid? LoanId);

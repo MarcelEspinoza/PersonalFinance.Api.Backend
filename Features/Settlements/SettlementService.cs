@@ -27,6 +27,8 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<SettlementDetailDto> AssignEntryAsync(Guid userId, AssignEntryDto dto, CancellationToken ct);
         Task<IReadOnlyList<SettlementCandidateDto>> GetCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct);
+        Task<SettlementDetailDto> MarkPaidAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> ReopenAsync(Guid userId, Guid id, CancellationToken ct);
     }
 
@@ -63,7 +65,8 @@ namespace PersonalFinance.Api.Features.Settlements
                     c.Id,
                     c.Name,
                     c.PhoneNumber,
-                    openByPerson.FirstOrDefault(o => o.Key == c.Id)?.Count ?? 0))
+                    openByPerson.FirstOrDefault(o => o.Key == c.Id)?.Count ?? 0,
+                    c.BankName))
                 .ToList();
         }
 
@@ -100,9 +103,10 @@ namespace PersonalFinance.Api.Features.Settlements
             }
 
             person.PhoneNumber = NormalizePhone(dto.PhoneNumber);
+            person.BankName = CleanBankName(dto.BankName);
             await _db.SaveChangesAsync(ct);
 
-            return new SettlementPersonDto(person.Id, person.Name, person.PhoneNumber, 0);
+            return new SettlementPersonDto(person.Id, person.Name, person.PhoneNumber, 0, person.BankName);
         }
 
         public async Task<IReadOnlyList<SettlementSummaryDto>> ListAsync(Guid userId, CancellationToken ct)
@@ -201,6 +205,7 @@ namespace PersonalFinance.Api.Features.Settlements
             if (dto.CarriedOverAmount is { } carried) settlement.CarriedOverAmount = carried;
             if (dto.ClosingNote is not null)
                 settlement.ClosingNote = string.IsNullOrWhiteSpace(dto.ClosingNote) ? null : dto.ClosingNote.Trim();
+            if (dto.ExpectedDate is { } expected) settlement.ExpectedDate = expected;
 
             if (settlement.PeriodEnd < settlement.PeriodStart)
                 throw new BusinessRuleException("La fecha final no puede ser anterior a la inicial.");
@@ -412,7 +417,15 @@ namespace PersonalFinance.Api.Features.Settlements
                 .ToList();
         }
 
-        public async Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct)
+        public Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct) =>
+            MarkSentAsync(userId, id, null, ct);
+
+        /// <param name="expectedDate">
+        /// Día en que se espera el dinero; coloca la liquidación en la previsión. Si no
+        /// viene, se mantiene el que tuviera o, si no tenía, dentro de 7 días.
+        /// </param>
+        public async Task<SettlementDetailDto> MarkSentAsync(
+            Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct)
         {
             var settlement = await LoadAsync(userId, id, ct);
             if (settlement.LinkedLoanId.HasValue)
@@ -427,6 +440,23 @@ namespace PersonalFinance.Api.Features.Settlements
             }
             settlement.Status = SettlementStatus.Sent;
             settlement.SentAt = _clock.UtcNow;
+            settlement.ExpectedDate = expectedDate
+                ?? settlement.ExpectedDate
+                ?? DateOnly.FromDateTime(_clock.UtcNow).AddDays(SettlementForecast.DefaultDaysToCollect);
+            settlement.UpdatedAt = _clock.UtcNow;
+            await _db.SaveChangesAsync(ct);
+
+            return await ToDetailAsync(userId, settlement, ct);
+        }
+
+        /// <summary>
+        /// Da la liquidación por pagada a mano (efectivo, otra cuenta…): sale de la
+        /// previsión. Las transferencias del banco la cierran solas al llegar a 0.
+        /// </summary>
+        public async Task<SettlementDetailDto> MarkPaidAsync(Guid userId, Guid id, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            settlement.Status = SettlementStatus.Closed;
             settlement.UpdatedAt = _clock.UtcNow;
             await _db.SaveChangesAsync(ct);
 
@@ -633,6 +663,19 @@ namespace PersonalFinance.Api.Features.Settlements
             var totals = SettlementMessageBuilder.Totals(settlement, loanBalance);
             var message = SettlementMessageBuilder.Build(settlement, person?.Name, loanBalance);
 
+            // The forecast looks at all of her settlements: a carried-over balance lives in the later one.
+            var siblings = await _db.Settlements
+                .AsNoTracking()
+                .Include(s => s.Lines)
+                .Where(s => s.UserId == userId
+                    && s.CounterpartyId == settlement.CounterpartyId
+                    && s.Id != settlement.Id)
+                .ToListAsync(ct);
+            siblings.Add(settlement);
+            var forecast = SettlementForecast
+                .Evaluate(siblings, new Dictionary<Guid, string> { [settlement.CounterpartyId] = person?.Name ?? string.Empty })
+                .First(state => state.SettlementId == settlement.Id);
+
             return new SettlementDetailDto(
                 settlement.Id,
                 settlement.CounterpartyId,
@@ -655,7 +698,7 @@ namespace PersonalFinance.Api.Features.Settlements
                         linkedLoan.Status,
                         loanBalance),
                 new SettlementTotalsDto(
-                    totals.Charges, totals.Deductions, totals.Payments, totals.CarriedOver, totals.Pending),
+                    totals.Charges, totals.Deductions, totals.Payments, totals.CarriedOver, totals.Pending, totals.PaymentsSent),
                 settlement.Lines
                     .OrderBy(l => l.SortOrder)
                     .ThenBy(l => l.CreatedAt)
@@ -663,7 +706,14 @@ namespace PersonalFinance.Api.Features.Settlements
                         l.Id, l.Kind.ToString(), l.Description, l.Amount, l.FullAmount, l.LedgerEntryId, l.SortOrder))
                     .ToList(),
                 message,
-                WhatsAppLink.Build(person?.PhoneNumber, message));
+                WhatsAppLink.Build(person?.PhoneNumber, message),
+                settlement.ExpectedDate,
+                new SettlementForecastInfoDto(
+                    forecast.Expectation is not null,
+                    forecast.Expectation?.Direction.ToString(),
+                    forecast.Expectation?.Amount ?? 0m,
+                    forecast.Expectation?.Date,
+                    forecast.Reason));
         }
 
         private static string DefaultTitle(DateOnly start, DateOnly end)
@@ -692,8 +742,22 @@ namespace PersonalFinance.Api.Features.Settlements
             "charge" or "gasto" => SettlementLineKind.Charge,
             "deduction" or "restar" => SettlementLineKind.Deduction,
             "payment" or "pago" => SettlementLineKind.Payment,
+            "paymentsent" or "pagoenviado" or "enviado" => SettlementLineKind.PaymentSent,
             _ => throw new BusinessRuleException("Tipo de línea desconocido.")
         };
+
+        /// <summary>Nombre tal y como sale en el banco: sin espacios de más y en mayúsculas.</summary>
+        private static string? CleanBankName(string? value)
+        {
+            var text = string.Join(' ', (value ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .ToUpperInvariant();
+            if (text.Length == 0) return null;
+            if (SettlementPaymentLinker.Normalize(text).Length < 4)
+                throw new BusinessRuleException("El nombre del banco necesita al menos 4 letras para poder reconocerlo.");
+
+            return text.Length > 120 ? text[..120] : text;
+        }
 
         private static string? NormalizePhone(string? phone)
         {

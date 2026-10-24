@@ -1,4 +1,5 @@
 using PersonalFinance.Api.Features.Ledger.Dtos;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
 using Reminder = PersonalFinance.Api.Models.Entities.Reminder;
@@ -13,11 +14,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public static class ExpensePlanCalculator
     {
         public const string ReminderGroupName = "Recordatorio";
+        public const string SettlementGroupName = "Liquidaciones";
 
         /// <param name="concepts">All of the user's concepts, active or not (inactive ones only provide names).</param>
         /// <param name="rules">Active recurring rules.</param>
         /// <param name="reminders">Pending reminders with an amount; each one is shown as a fixed row.</param>
         /// <param name="today">Defaults to the first day of <paramref name="currentMonth"/>.</param>
+        /// <param name="settlements">What open settlements still expect; what is to be paid is shown as a fixed row.</param>
         public static ExpensePlanMonthsDto Build(
             IReadOnlyList<DateOnly> months,
             DateOnly currentMonth,
@@ -28,10 +31,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IReadOnlyCollection<MonthlyBudget> budgets,
             IReadOnlySet<DateOnly> closedMonths,
             IReadOnlyCollection<Reminder>? reminders = null,
-            DateOnly? today = null)
+            DateOnly? today = null,
+            IReadOnlyCollection<SettlementExpectation>? settlements = null)
         {
             var forecasts = MonthForecastCalculator.Build(new MonthForecastInput(
-                months, today ?? currentMonth, entries, rules, concepts, budgets, reminders));
+                months, today ?? currentMonth, entries, rules, concepts, budgets, reminders, settlements));
             var allById = concepts
                 .GroupBy(concept => concept.Id)
                 .ToDictionary(group => group.Key, group => group.First());
@@ -44,6 +48,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var fixedAmounts = new Dictionary<Guid, decimal[]>();
             var fixedPending = new Dictionary<Guid, bool[]>();
             var reminderTitles = new Dictionary<Guid, string>();
+            var settlementTitles = new Dictionary<Guid, string>();
             var variableCells = variableExpenseConcepts.ToDictionary(
                 concept => concept.Id,
                 _ => new ExpensePlanVariableCellDto[count]);
@@ -73,6 +78,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     {
                         reminderTitles[reminderId] = item.Description;
                         AddFixed(reminderId, index, item.Amount, pending: true);
+                    }
+                    else if (item.Kind == ForecastItemKind.Settlement && item.SettlementId is { } settlementId)
+                    {
+                        settlementTitles[settlementId] = item.Description;
+                        AddFixed(settlementId, index, item.Amount, pending: true);
                     }
                     else if ((item.Kind is ForecastItemKind.Entry or ForecastItemKind.RuleOccurrence) &&
                              item.ConceptId is { } conceptId &&
@@ -119,12 +129,16 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Select(concept => (concept.Id, concept.Name, GroupName(concept.GroupId))));
             // Defensive: an amount whose concept can't be found still has to show up somewhere.
             fixedRows.AddRange(fixedAmounts.Keys
-                .Where(id => !allById.ContainsKey(id) && !reminderTitles.ContainsKey(id))
+                .Where(id => !allById.ContainsKey(id) && !reminderTitles.ContainsKey(id) && !settlementTitles.ContainsKey(id))
                 .Select(id => (id, "Sin categoría", (string?)null)));
             fixedRows.AddRange(reminderTitles
                 .Where(pair => !allById.ContainsKey(pair.Key))
                 .OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
                 .Select(pair => (pair.Key, pair.Value, (string?)ReminderGroupName)));
+            fixedRows.AddRange(settlementTitles
+                .Where(pair => !allById.ContainsKey(pair.Key))
+                .OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase)
+                .Select(pair => (pair.Key, pair.Value, (string?)SettlementGroupName)));
 
             result.Fixed = fixedRows
                 .Where(row => fixedAmounts[row.Id].Any(amount => amount != 0m))

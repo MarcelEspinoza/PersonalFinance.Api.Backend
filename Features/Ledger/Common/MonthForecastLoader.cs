@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Api.Models.Entities;
 
 namespace PersonalFinance.Api.Features.Ledger.Common
@@ -42,9 +43,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     (budget.Year < last.Year || (budget.Year == last.Year && budget.Month <= last.Month)))
                 .ToListAsync(ct);
             var reminders = await LoadRemindersAsync(db, userId, ct);
+            var settlements = await SettlementForecast.LoadExpectationsAsync(db, userId, ct);
 
             return MonthForecastCalculator.Build(
-                new MonthForecastInput(months, today, entries, rules, concepts, budgets, reminders));
+                new MonthForecastInput(months, today, entries, rules, concepts, budgets, reminders, settlements));
         }
 
         /// <summary>Pending reminders with an amount: the only ones the forecast counts.</summary>

@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Features.Ledger.Common;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Api.Models.Dtos.Dashboard;
 using PersonalFinance.Api.Services.Contracts;
 using PersonalFinance.Domain.Ledger.Calculations;
@@ -140,6 +141,7 @@ namespace PersonalFinance.Api.Services
                     entry => new DateOnly(entry.DueDate.Year, entry.DueDate.Month, 1));
 
             var reminders = await MonthForecastLoader.LoadRemindersAsync(_db, userId, ct);
+            var settlements = await SettlementForecast.LoadExpectationsAsync(_db, userId, ct);
             // Same calculator as «Mes», the expense plan and the AI: one source of truth.
             var forecasts = MonthForecastCalculator.Build(new MonthForecastInput(
                 Enumerable.Range(0, 7).Select(offset => currentMonth.AddMonths(offset)).ToList(),
@@ -148,7 +150,8 @@ namespace PersonalFinance.Api.Services
                 recurringRules,
                 concepts,
                 monthlyBudgets,
-                reminders));
+                reminders,
+                settlements));
 
             for (int i = 0; i <= 6; i++)
             {
@@ -203,10 +206,12 @@ namespace PersonalFinance.Api.Services
                     Balance = balance,
                     IsCurrent = isCurrent,
                     ProjectionSource = source,
-                    PendingIncome = ledgerTotals.PendingIncome + forecast.RuleIncome,
-                    PendingExpense = ledgerTotals.PendingExpense + forecast.RuleExpense + forecast.Reminders,
+                    PendingIncome = ledgerTotals.PendingIncome + forecast.RuleIncome + forecast.SettlementIncome,
+                    PendingExpense = ledgerTotals.PendingExpense + forecast.RuleExpense + forecast.Reminders + forecast.SettlementExpense,
                     VariableExpenseReserve = forecast.VariableExpenseReserve,
-                    Reminders = forecast.Reminders
+                    Reminders = forecast.Reminders,
+                    SettlementIncome = forecast.SettlementIncome,
+                    SettlementExpense = forecast.SettlementExpense
                 });
             }
 
@@ -247,7 +252,8 @@ namespace PersonalFinance.Api.Services
                 concepts,
                 monthlyBudgets,
                 reconciledBalances,
-                reminders);
+                reminders,
+                settlements);
             var outlookWithReserve = MonthOutlookCalculator.Build(outlookInput);
             var withoutVariableReserve = MonthOutlookCalculator.Build(
                 outlookInput, includeVariableReserve: false);

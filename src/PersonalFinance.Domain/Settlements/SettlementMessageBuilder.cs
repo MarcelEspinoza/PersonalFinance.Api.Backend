@@ -22,13 +22,15 @@ namespace PersonalFinance.Domain.Settlements
             var deductions = lines.Where(l => l.Kind == SettlementLineKind.Deduction).Sum(l => l.Amount)
                 + Math.Max(0m, linkedLoanOutstanding);
             var payments = lines.Where(l => l.Kind == SettlementLineKind.Payment).Sum(l => l.Amount);
+            var paymentsSent = lines.Where(l => l.Kind == SettlementLineKind.PaymentSent).Sum(l => l.Amount);
 
             return new SettlementTotals(
                 charges,
                 deductions,
                 payments,
                 settlement.CarriedOverAmount,
-                charges + settlement.CarriedOverAmount - deductions - payments);
+                charges + settlement.CarriedOverAmount + paymentsSent - deductions - payments,
+                paymentsSent);
         }
 
         public static string Build(
@@ -71,6 +73,7 @@ namespace PersonalFinance.Domain.Settlements
                 counterpartyName,
                 linkedLoanOutstanding);
             AppendSection(text, lines, SettlementLineKind.Payment, "YA PAGADO", "TOTAL PAGADO");
+            AppendSection(text, lines, SettlementLineKind.PaymentSent, "YA TE PAGUÉ", "TOTAL QUE TE PAGUÉ");
 
             text.AppendLine();
             text.AppendLine();
@@ -152,5 +155,6 @@ namespace PersonalFinance.Domain.Settlements
         decimal Deductions,
         decimal Payments,
         decimal CarriedOver,
-        decimal Pending);
+        decimal Pending,
+        decimal PaymentsSent = 0m);
 }

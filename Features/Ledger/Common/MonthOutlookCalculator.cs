@@ -16,7 +16,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         IReadOnlyList<Concept> Concepts,
         IReadOnlyList<MonthlyBudget> Budgets,
         IReadOnlyDictionary<Guid, decimal> ReconciledBalances,
-        IReadOnlyList<PersonalFinance.Api.Models.Entities.Reminder>? Reminders = null);
+        IReadOnlyList<PersonalFinance.Api.Models.Entities.Reminder>? Reminders = null,
+        IReadOnlyCollection<PersonalFinance.Api.Features.Settlements.SettlementExpectation>? Settlements = null);
 
     /// <summary>
     /// Proyecta cada cuenta hasta fin del mes seleccionado a partir de su saldo
@@ -40,7 +41,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             bool FromRule = false,
             bool IsVariableReserve = false,
             Guid? EntryId = null,
-            Guid? ReminderId = null)
+            Guid? ReminderId = null,
+            Guid? SettlementId = null)
         {
             public decimal Signed => Direction == EntryDirection.In ? Amount : -Amount;
         }
@@ -344,6 +346,24 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
             }
 
+            // What open settlements still expect has no concept and no account either.
+            foreach (var expectation in input.Settlements ?? Array.Empty<PersonalFinance.Api.Features.Settlements.SettlementExpectation>())
+            {
+                var date = expectation.Date < calendarStart ? calendarStart : expectation.Date;
+                if (date < from || date > to) continue;
+
+                items.Add(new PendingItem(
+                    date,
+                    expectation.Description,
+                    Guid.Empty,
+                    PersonalFinance.Api.Features.Settlements.SettlementForecast.ConceptName,
+                    null,
+                    expectation.Direction,
+                    expectation.Amount,
+                    false,
+                    SettlementId: expectation.SettlementId));
+            }
+
             return items.Where(item => item.Amount > 0m).ToList();
         }
 
@@ -512,7 +532,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IsVariableReserve = item.IsVariableReserve,
             EntryId = item.EntryId,
             ConceptId = item.ConceptId == Guid.Empty ? (Guid?)null : item.ConceptId,
-            ReminderId = item.ReminderId
+            ReminderId = item.ReminderId,
+            SettlementId = item.SettlementId
         };
 
         private static string ConceptName(IReadOnlyDictionary<Guid, Concept> conceptById, Guid conceptId) =>

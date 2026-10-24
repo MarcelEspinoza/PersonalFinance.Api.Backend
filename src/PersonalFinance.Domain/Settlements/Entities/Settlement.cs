@@ -45,6 +45,12 @@ namespace PersonalFinance.Domain.Settlements.Entities
 
         public DateTime? SentAt { get; set; }
 
+        /// <summary>
+        /// Día en que se espera cobrar o pagar el pendiente. Coloca la
+        /// liquidación en la previsión del mes que toca.
+        /// </summary>
+        public DateOnly? ExpectedDate { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? UpdatedAt { get; set; }

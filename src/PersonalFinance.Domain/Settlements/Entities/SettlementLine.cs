@@ -35,7 +35,7 @@ namespace PersonalFinance.Domain.Settlements.Entities
 
         /// <summary>Cuánto suma o resta esta línea al total pendiente.</summary>
         public decimal SignedAmount =>
-            Kind == SettlementLineKind.Charge ? Amount : -Amount;
+            Kind is SettlementLineKind.Charge or SettlementLineKind.PaymentSent ? Amount : -Amount;
 
         /// <summary>True si el gasto se repartió y conviene enseñar el total.</summary>
         public bool IsShared => FullAmount.HasValue && FullAmount.Value != Amount;

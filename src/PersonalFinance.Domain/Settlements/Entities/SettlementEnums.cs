@@ -20,6 +20,9 @@ namespace PersonalFinance.Domain.Settlements.Entities
         Deduction = 1,
 
         /// <summary>Dinero que ya me ha ingresado a cuenta. Resta.</summary>
-        Payment = 2
+        Payment = 2,
+
+        /// <summary>Dinero que yo le transferí a ella cuando el saldo era a su favor. Suma.</summary>
+        PaymentSent = 3
     }
 }

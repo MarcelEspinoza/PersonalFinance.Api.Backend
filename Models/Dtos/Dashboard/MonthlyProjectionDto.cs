@@ -43,6 +43,12 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         /// <summary>Part of Expense that comes from pending reminders with an amount.</summary>
         public decimal Reminders { get; set; }
 
+        /// <summary>Part of Income that open settlements still expect to collect.</summary>
+        public decimal SettlementIncome { get; set; }
+
+        /// <summary>Part of Expense that open settlements still expect to pay.</summary>
+        public decimal SettlementExpense { get; set; }
+
         public CommitmentSummaryDto? Commitments { get; set; }
     }
 
