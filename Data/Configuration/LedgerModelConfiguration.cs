@@ -374,6 +374,29 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.HasIndex(x => new { x.UserId, x.Year, x.Month });
             });
 
+            b.Entity<PersonalFinance.Domain.Advice.Entities.ServiceReview>(e =>
+            {
+                e.ToTable("ServiceReviews");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Status).IsRequired().HasMaxLength(20);
+                e.Property(x => x.Summary).HasMaxLength(2000);
+                e.Property(x => x.Error).HasMaxLength(500);
+                e.Property(x => x.Model).HasMaxLength(100);
+
+                e.HasIndex(x => new { x.UserId, x.StartedAt });
+            });
+
+            b.Entity<PersonalFinance.Domain.Advice.Entities.ServiceNote>(e =>
+            {
+                e.ToTable("ServiceNotes");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.ServiceKey).IsRequired().HasMaxLength(200);
+                e.Property(x => x.ServiceName).IsRequired().HasMaxLength(200);
+                e.Property(x => x.Message).HasMaxLength(1000);
+
+                e.HasIndex(x => new { x.UserId, x.ServiceKey }).IsUnique();
+            });
+
             ConfigureSettlements(b);
         }
 

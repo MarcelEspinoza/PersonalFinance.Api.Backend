@@ -173,6 +173,11 @@ builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IGlobalChatServ
 builder.Services.AddSingleton<PersonalFinance.Api.Features.Chat.AdminActionCatalog>();
 builder.Services.AddHttpClient<PersonalFinance.Api.Features.Chat.IMonthAdvisorService,
     PersonalFinance.Api.Features.Chat.MonthAdvisorService>();
+// "Ahorra en tus servicios": reviews run in the background (AI + web search can take minutes).
+builder.Services.AddHttpClient<PersonalFinance.Api.Features.ServiceSavings.IServiceSavingsService,
+    PersonalFinance.Api.Features.ServiceSavings.ServiceSavingsService>(c => c.Timeout = TimeSpan.FromMinutes(5));
+builder.Services.AddSingleton<PersonalFinance.Api.Features.ServiceSavings.ServiceSavingsQueue>();
+builder.Services.AddHostedService<PersonalFinance.Api.Features.ServiceSavings.ServiceSavingsWorker>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementService,
     PersonalFinance.Api.Features.Settlements.SettlementService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.IReminderService,

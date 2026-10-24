@@ -30,6 +30,8 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<ImportRowAllocation> ImportRowAllocations { get; }
         DbSet<ConceptMapping> ConceptMappings { get; }
         DbSet<PersonalFinance.Domain.Advice.Entities.AdviceNote> AdviceNotes { get; }
+        DbSet<PersonalFinance.Domain.Advice.Entities.ServiceReview> ServiceReviews { get; }
+        DbSet<PersonalFinance.Domain.Advice.Entities.ServiceNote> ServiceNotes { get; }
         DbSet<PersonalFinance.Domain.Settlements.Entities.Settlement> Settlements { get; }
         DbSet<PersonalFinance.Domain.Settlements.Entities.SettlementLine> SettlementLines { get; }
 
