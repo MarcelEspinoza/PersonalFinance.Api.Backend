@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using PersonalFinance.Api.Controllers;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Models.Dtos.Auth;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
 
@@ -142,6 +144,25 @@ public sealed class AccountApprovalTests : LedgerTestBase, IAsyncLifetime
     public async Task Aprobar_un_usuario_inexistente_devuelve_404()
     {
         Assert.IsType<NotFoundResult>(await CreateAdminController().ApproveUser(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task Cambiar_la_contrasena_exige_la_contrasena_actual()
+    {
+        const string newPassword = "otra-clave-larga";
+        var admin = await Users.FindByEmailAsync(AdminEmail);
+        var auth = CreateAuthController();
+        auth.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, admin!.Id.ToString()) }, "Test"));
+
+        Assert.IsType<BadRequestObjectResult>(await auth.ChangePassword(
+            new ChangePasswordDto { CurrentPassword = "incorrecta", NewPassword = newPassword }));
+        Assert.IsType<OkObjectResult>(await auth.Login(new LoginDto(AdminEmail, Password)));
+
+        Assert.IsType<NoContentResult>(await auth.ChangePassword(
+            new ChangePasswordDto { CurrentPassword = Password, NewPassword = newPassword }));
+        Assert.IsType<UnauthorizedObjectResult>(await auth.Login(new LoginDto(AdminEmail, Password)));
+        Assert.IsType<OkObjectResult>(await auth.Login(new LoginDto(AdminEmail, newPassword)));
     }
 
     private AuthController CreateAuthController() => WithHttpContext(new AuthController(

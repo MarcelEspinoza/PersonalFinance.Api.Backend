@@ -198,6 +198,18 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        [HttpPost("change-password")]
+        [Authorize]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDto dto)
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null) return Unauthorized();
+
+            var result = await _userManager.ChangePasswordAsync(user, dto.CurrentPassword, dto.NewPassword);
+            if (!result.Succeeded) return BadRequest(result.Errors);
+            return NoContent();
+        }
+
         private async Task NotifyAdminsOfRegistrationAsync(ApplicationUser user)
         {
             try
