@@ -213,7 +213,11 @@ builder.Services.AddScoped<ILoanService, LoanService>();
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ISavingService, SavingService>();
 builder.Services.AddScoped<IPasanacoService, PasanacoService>();
-builder.Services.AddSingleton<IEmailSender, SendGridEmailSender>();
+// Brevo replaces SendGrid when its key is set (SendGrid ended its free plan).
+if (!string.IsNullOrWhiteSpace(configuration["Brevo:ApiKey"]))
+    builder.Services.AddHttpClient<IEmailSender, BrevoEmailSender>();
+else
+    builder.Services.AddSingleton<IEmailSender, SendGridEmailSender>();
 builder.Services.AddScoped<IBankService, BankService>();
 builder.Services.AddScoped<IReconciliationService, ReconciliationService>();
 builder.Services.AddScoped<ITransferService, TransferService>();

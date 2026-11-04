@@ -4,7 +4,7 @@ namespace PersonalFinance.Api.Features.Reminders
 {
     /// <summary>
     /// Every 30 minutes, emails the reminders that became due (from 08:00 Madrid time).
-    /// Disabled with Reminders:EmailJobEnabled=false or when SendGrid has no API key.
+    /// Disabled with Reminders:EmailJobEnabled=false or when neither Brevo nor SendGrid has an API key.
     /// Never lets an exception stop the host.
     /// </summary>
     public sealed class ReminderEmailJob : BackgroundService
@@ -36,9 +36,10 @@ namespace PersonalFinance.Api.Features.Reminders
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_configuration["SendGrid:ApiKey"]))
+            if (string.IsNullOrWhiteSpace(_configuration["Brevo:ApiKey"]) &&
+                string.IsNullOrWhiteSpace(_configuration["SendGrid:ApiKey"]))
             {
-                _logger.LogInformation("Reminder email job not started: SendGrid is not configured.");
+                _logger.LogInformation("Reminder email job not started: no email provider (Brevo or SendGrid) is configured.");
                 return;
             }
 
