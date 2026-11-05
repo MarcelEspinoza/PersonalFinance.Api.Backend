@@ -70,7 +70,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry
 
             entry.Account = entry.AccountId is null
                 ? null
-                : await _db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == entry.AccountId.Value, ct);
+                : await _db.Accounts.FirstOrDefaultAsync(a => a.Id == entry.AccountId.Value, ct);
 
             if (transaction is not null) await transaction.CommitAsync(ct);
 

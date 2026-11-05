@@ -20,7 +20,7 @@ namespace PersonalFinance.Api.Features.Zeus
         public Guid AccountId { get; set; }
         public DateOnly Date { get; set; }
 
-        [Range(typeof(decimal), "0.01", "999999999")]
+        [Range(typeof(decimal), "0.01", "999999999", ParseLimitsInInvariantCulture = true)]
         public decimal Amount { get; set; }
     }
 
@@ -53,7 +53,7 @@ namespace PersonalFinance.Api.Features.Zeus
         public TimeOnly? EndTime { get; set; }
         public int Nights { get; set; }
 
-        [Range(typeof(decimal), "0.01", "999999999")]
+        [Range(typeof(decimal), "0.01", "999999999", ParseLimitsInInvariantCulture = true)]
         public decimal Amount { get; set; }
 
         [MaxLength(300)]

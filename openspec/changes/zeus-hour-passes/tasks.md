@@ -54,3 +54,15 @@ The user approved commit and push of the previously presented forecast/cancellat
 Production logs reported a value too long for `ZeusCareStays.Kind`. The repair stores `cancel` while preserving `cancellation` in the domain/API; `day` and `night` remain unchanged. No schema or live data change is required.
 
 The user explicitly approved the listed repair files, commit message and push after reviewing the synthetic cancellation form.
+
+## 8. Shared ledger account tracking repair
+
+- [x] 8.1 Trace the production payment failure and remove duplicate untracked account instances from ledger creation and confirmation.
+- [x] 8.2 Compile and manually preview real persistence using isolated synthetic data, without tests or live financial writes.
+- [x] 8.3 Present the exact files and commit message and obtain separate publication approval.
+
+Production logs report an EF account identity conflict during the enclosing Zeus transaction save. Both shared ledger commands must preserve tracked account identity so pass purchases, care payments, forecasts and forecast confirmation can be composed safely.
+
+The local API preview also exposed locale-dependent parsing of decimal validation limits; the Zeus amount attributes now parse their declared limits using invariant culture. The real API and MySQL preview saved a pass purchase, attendance and its correction, a cancellation forecast and confirmation, paid daytime nanny care, a paid daycare night and a future nanny-night forecast. The browser then saved another cancellation and forecast and reloaded the persisted record. No mocked save responses, tests or production writes were used. Both the local API and its disposable database were stopped afterward. Compilation and offline model consistency passed; no migration is required.
+
+The user explicitly approved commit and push of the five listed backend files and the presented repair message after reviewing the real local persistence screenshot.

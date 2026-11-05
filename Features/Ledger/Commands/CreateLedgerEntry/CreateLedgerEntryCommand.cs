@@ -64,7 +64,7 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry
 
             entry.Account = dto.AccountId is null
                 ? null
-                : await _db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == dto.AccountId.Value, ct);
+                : await _db.Accounts.FirstOrDefaultAsync(a => a.Id == dto.AccountId.Value, ct);
 
             return MonthlySummaryBuilder.MapEntry(entry);
         }
