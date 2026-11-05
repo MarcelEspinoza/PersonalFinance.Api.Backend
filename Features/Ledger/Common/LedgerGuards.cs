@@ -18,7 +18,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// lo mismo (no encontrado) para no revelar qué identificadores existen.
         /// </summary>
         public static async Task<LedgerEntry> LoadEditableEntryAsync(
-            IAppDbContext db, Guid userId, Guid entryId, CancellationToken ct, bool allowSettlementAllocation = false)
+            IAppDbContext db, Guid userId, Guid entryId, CancellationToken ct,
+            bool allowSettlementAllocation = false, bool allowZeusCareForecast = false)
         {
             var entry = await db.LedgerEntries
                 .Include(e => e.Period)
@@ -36,9 +37,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     "Este gasto está vinculado a un bono de Zeus. Retira primero el bono sin consumir en «Zeus» para modificar el gasto.");
 
             if (await db.ZeusCareStays.AnyAsync(stay =>
-                stay.UserId == userId && stay.LedgerEntryId == entryId, ct))
+                stay.UserId == userId && stay.LedgerEntryId == entryId, ct)
+                && !(allowZeusCareForecast && entry.Status is EntryStatus.Planned or EntryStatus.Pending))
                 throw new BusinessRuleException(
-                    "Este gasto paga cuidados de Zeus. Desvincula primero sus estancias en «Zeus» para modificarlo.");
+                    "Este gasto está vinculado a cuidados de Zeus. Puedes confirmar su previsión; para otros cambios, desvincula primero sus estancias en «Zeus».");
 
             if (!allowSettlementAllocation && entry.SettlementAllocatedAmount > 0m)
                 throw new BusinessRuleException(

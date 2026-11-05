@@ -5,6 +5,8 @@ using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry;
+using PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Domain.Ledger.Entities;
@@ -138,11 +140,11 @@ namespace PersonalFinance.Api.Features.Zeus
             Guid userId, Guid? id, SaveZeusCareStayDto dto, CancellationToken ct) =>
             MutateAsync(userId, state =>
             {
-                ValidateDate(dto.Date);
+                ValidateDate(dto.Date, allowFuture: true);
                 if (dto.Provider is not ("daycare" or "alessia")
-                    || dto.Kind is not ("day" or "night")
+                    || dto.Kind is not ("day" or "night" or "cancellation")
                     || (dto.Provider == "daycare" && dto.Kind != "night"))
-                    throw new BusinessRuleException("Elige noches de guardería o cuidados de Alessia.");
+                    throw new BusinessRuleException("Elige noches de guardería o cuidados o cancelaciones de Alessia.");
                 if (dto.Amount <= 0m || dto.Amount > 999_999_999m
                     || decimal.Round(dto.Amount, 2) != dto.Amount)
                     throw new BusinessRuleException("Indica un precio positivo con un máximo de dos decimales.");
@@ -154,19 +156,23 @@ namespace PersonalFinance.Api.Features.Zeus
                         throw new BusinessRuleException("Un cuidado por horas no puede incluir noches.");
                     ResolveUsageMinutes(new SaveZeusUsageDto { StartTime = dto.StartTime, EndTime = dto.EndTime });
                 }
-                else
+                else if (dto.Kind == "night")
                 {
                     if (dto.Nights < 1 || dto.Nights > 365 || dto.StartTime.HasValue || dto.EndTime.HasValue)
                         throw new BusinessRuleException("Indica entre 1 y 365 noches, sin mezclar un horario diurno.");
-                    ValidateDate(dto.Date.AddDays(dto.Nights - 1));
+                    if (dto.Date.DayNumber + dto.Nights > new DateOnly(9999, 1, 1).DayNumber)
+                        throw new BusinessRuleException("La estancia debe terminar antes del año 9999.");
+                    ValidateDate(dto.Date.AddDays(dto.Nights - 1), allowFuture: true);
                 }
+                else if (dto.Nights != 0 || dto.StartTime.HasValue || dto.EndTime.HasValue)
+                    throw new BusinessRuleException("Una cancelación no puede incluir horas ni noches de cuidado.");
                 ZeusCareStay stay;
                 if (id.HasValue)
                 {
                     stay = state.CareStays.FirstOrDefault(stay => stay.Id == id)
                         ?? throw new NotFoundException("No encuentro esa estancia.");
                     if (stay.LedgerEntryId.HasValue)
-                        throw new BusinessRuleException("Desvincula primero el pago para corregir esta estancia. El gasto se conservará.");
+                        throw new BusinessRuleException("Desvincula primero el pago o la previsión para corregir este registro. Una previsión se ajustará; un pago real se conservará.");
                 }
                 else
                 {
@@ -188,25 +194,25 @@ namespace PersonalFinance.Api.Features.Zeus
             }, ct);
 
         public Task<ZeusSummaryDto> RemoveCareAsync(Guid userId, Guid id, CancellationToken ct) =>
-            MutateAsync(userId, state =>
+            MutateAsync(userId, async state =>
             {
                 var stay = state.CareStays.FirstOrDefault(stay => stay.Id == id)
                     ?? throw new NotFoundException("No encuentro esa estancia.");
+                await ReleaseForecastsAsync(state, [stay], ct);
                 state.CareStays.Remove(stay);
                 db.ZeusCareStays.Remove(stay);
-                return Task.CompletedTask;
             }, ct);
 
         public Task<ZeusSummaryDto> UnlinkCarePaymentAsync(Guid userId, Guid id, CancellationToken ct) =>
-            MutateAsync(userId, state =>
+            MutateAsync(userId, async state =>
             {
                 var stay = state.CareStays.FirstOrDefault(stay => stay.Id == id)
                     ?? throw new NotFoundException("No encuentro esa estancia.");
                 if (!stay.LedgerEntryId.HasValue)
                     throw new BusinessRuleException("Esta estancia no tiene un pago vinculado.");
+                await ReleaseForecastsAsync(state, [stay], ct);
                 stay.LedgerEntryId = null;
                 stay.LedgerEntry = null;
-                return Task.CompletedTask;
             }, ct);
 
         public Task<ZeusSummaryDto> PayCareAsync(Guid userId, PayZeusCareDto dto, CancellationToken ct) =>
@@ -215,26 +221,66 @@ namespace PersonalFinance.Api.Features.Zeus
                 if (dto.StayIds.Count == 0 || dto.StayIds.Count != dto.StayIds.Distinct().Count())
                     throw new BusinessRuleException("Selecciona una o varias estancias distintas para este pago.");
                 var stays = state.CareStays.Where(stay => dto.StayIds.Contains(stay.Id)).ToList();
-                if (stays.Count != dto.StayIds.Count || stays.Any(stay => stay.LedgerEntryId.HasValue))
-                    throw new BusinessRuleException("Alguna estancia no existe o ya tiene un pago. Actualiza la página.");
+                if (stays.Count != dto.StayIds.Count || stays.Any(stay => stay.LedgerEntry?.Status == EntryStatus.Paid))
+                    throw new BusinessRuleException("Alguna estancia no existe o ya está pagada. Actualiza la página.");
                 if (stays.Select(stay => stay.Provider).Distinct().Count() != 1)
                     throw new BusinessRuleException("Un pago debe corresponder a la guardería o a Alessia, no a ambas.");
                 var provider = stays[0].Provider;
-                var expense = await ResolveExpenseAsync(userId, dto.LedgerEntryId, dto.NewExpense,
-                    $"Cuidados de Zeus · {(provider == "alessia" ? "Alessia" : "Guardería")} · {stays.Count} estancia(s)", ct);
+                var forecast = dto.NewForecast;
+                if (forecast is not null && (dto.LedgerEntryId.HasValue || dto.NewExpense is not null))
+                    throw new BusinessRuleException("Elige una previsión nueva o un pago, no ambos.");
+                if (forecast is not null && forecast.Amount != stays.Sum(stay => stay.Amount))
+                    throw new BusinessRuleException("La previsión debe coincidir con el total de las estancias seleccionadas.");
+                var expense = await ResolveExpenseAsync(userId, dto.LedgerEntryId, forecast ?? dto.NewExpense,
+                    $"Cuidados de Zeus · {(provider == "alessia" ? "Alessia" : "Guardería")} · {stays.Count} estancia(s)",
+                    ct, isForecast: forecast is not null);
                 if (state.Passes.Any(pass => pass.LedgerEntryId == expense.Id))
                     throw new BusinessRuleException("Ese gasto ya compra un bono de horas de Zeus.");
                 var linked = state.CareStays.Where(stay => stay.LedgerEntryId == expense.Id).ToList();
                 if (linked.Any(stay => stay.Provider != provider))
                     throw new BusinessRuleException("Ese gasto ya paga al otro cuidador de Zeus.");
-                if (linked.Sum(stay => stay.Amount) + stays.Sum(stay => stay.Amount) > expense.ActualAmount!.Value)
+                if (linked.Sum(stay => stay.Amount) + stays.Sum(stay => stay.Amount) > expense.EffectiveAmount)
                     throw new BusinessRuleException("El importe disponible del gasto no cubre las estancias seleccionadas. Revisa la selección o el precio de cada estancia.");
+                await ReleaseForecastsAsync(state, stays, ct);
                 foreach (var stay in stays)
                 {
                     stay.LedgerEntryId = expense.Id;
                     stay.LedgerEntry = expense;
                 }
             }, ct);
+
+        public Task<ZeusSummaryDto> ConfirmCarePaymentAsync(
+            Guid userId, Guid entryId, ConfirmLedgerEntryDto dto, CancellationToken ct) =>
+            MutateAsync(userId, async state =>
+            {
+                var stays = state.CareStays.Where(stay => stay.LedgerEntryId == entryId).ToList();
+                if (stays.Count == 0 || stays[0].LedgerEntry?.Status is not (EntryStatus.Planned or EntryStatus.Pending))
+                    throw new BusinessRuleException("No encuentro una previsión pendiente para estos cuidados.");
+                await sender.Send(new ConfirmLedgerEntryCommand(userId, entryId, dto), ct);
+            }, ct);
+
+        private async Task ReleaseForecastsAsync(HourState state, IReadOnlyList<ZeusCareStay> removed, CancellationToken ct)
+        {
+            foreach (var group in removed.Where(stay => stay.LedgerEntryId.HasValue)
+                         .GroupBy(stay => stay.LedgerEntryId!.Value))
+            {
+                var entry = group.First().LedgerEntry!;
+                if (entry.Status is not (EntryStatus.Planned or EntryStatus.Pending)) continue;
+                await LedgerGuards.LoadEditableEntryAsync(db, entry.UserId, entry.Id, ct, allowZeusCareForecast: true);
+                if (entry.ImportRowId.HasValue || entry.RecurringRuleId.HasValue)
+                    throw new BusinessRuleException("Esta previsión no es exclusiva de los cuidados de Zeus. Desvincúlala antes de modificar su origen.");
+                var remaining = state.CareStays.Where(stay => stay.LedgerEntryId == entry.Id && !removed.Contains(stay))
+                    .Sum(stay => stay.Amount);
+                if (remaining == 0m)
+                {
+                    entry.Status = EntryStatus.Skipped;
+                    entry.ActualAmount = null;
+                    entry.ValueDate = null;
+                }
+                else entry.ForecastAmount = remaining;
+                entry.UpdatedAt = clock.UtcNow;
+            }
+        }
 
         private async Task<ZeusSummaryDto> MutateAsync(
             Guid userId, Func<HourState, Task> mutation, CancellationToken ct)
@@ -259,7 +305,8 @@ namespace PersonalFinance.Api.Features.Zeus
 
         private static ZeusSummaryDto Summarize(HourState state)
         {
-            foreach (var group in state.CareStays.GroupBy(stay => new { stay.Provider, stay.Kind }))
+            foreach (var group in state.CareStays.Where(stay => stay.Kind != "cancellation")
+                         .GroupBy(stay => new { stay.Provider, stay.Kind }))
             {
                 DateTime? previousEnd = null;
                 foreach (var stay in group.OrderBy(stay => stay.Date).ThenBy(stay => stay.StartTime))
@@ -331,17 +378,19 @@ namespace PersonalFinance.Api.Features.Zeus
 
         private static ZeusExpenseDto MapExpense(LedgerEntry entry, decimal allocatedAmount = 0m) => new(
             entry.Id, entry.ValueDate ?? entry.DueDate, entry.Description ?? entry.Concept!.Name,
-            entry.Concept!.Name, entry.Account?.Name ?? "Sin cuenta", entry.ActualAmount!.Value, allocatedAmount);
+            entry.Concept!.Name, entry.Account?.Name ?? "Sin cuenta",
+            entry.Status == EntryStatus.Paid ? entry.ActualAmount!.Value : entry.ForecastAmount, allocatedAmount, entry.Status);
 
         private async Task<LedgerEntry> ResolveExpenseAsync(
-            Guid userId, Guid? ledgerEntryId, ZeusPurchaseExpenseDto? purchase, string description, CancellationToken ct)
+            Guid userId, Guid? ledgerEntryId, ZeusPurchaseExpenseDto? purchase, string description,
+            CancellationToken ct, bool isForecast = false)
         {
             if (ledgerEntryId.HasValue == (purchase is not null))
                 throw new BusinessRuleException("Vincula un gasto existente o crea uno nuevo, no ambos.");
             Guid entryId;
             if (purchase is not null)
             {
-                ValidateDate(purchase.Date);
+                ValidateDate(purchase.Date, allowFuture: isForecast);
                 if (purchase.Amount <= 0m || purchase.Amount > 999_999_999m
                     || decimal.Round(purchase.Amount, 2) != purchase.Amount)
                     throw new BusinessRuleException("El precio debe ser positivo y tener como máximo dos decimales.");
@@ -357,8 +406,8 @@ namespace PersonalFinance.Api.Features.Zeus
                 var entry = await sender.Send(new CreateLedgerEntryCommand(userId, new CreateLedgerEntryDto
                 {
                     ConceptId = purchase.ConceptId, AccountId = purchase.AccountId,
-                    Direction = EntryDirection.Out, DueDate = purchase.Date, ValueDate = purchase.Date,
-                    ForecastAmount = purchase.Amount, ActualAmount = purchase.Amount, Description = description
+                    Direction = EntryDirection.Out, DueDate = purchase.Date, ValueDate = isForecast ? null : purchase.Date,
+                    ForecastAmount = purchase.Amount, ActualAmount = isForecast ? null : purchase.Amount, Description = description
                 }), ct);
                 entryId = entry.Id;
             }
@@ -366,12 +415,15 @@ namespace PersonalFinance.Api.Features.Zeus
             var expense = await db.LedgerEntries.Include(entry => entry.Concept).Include(entry => entry.Account)
                 .FirstOrDefaultAsync(entry => entry.Id == entryId && entry.UserId == userId, ct)
                 ?? throw new NotFoundException("No encuentro ese gasto.");
-            if (expense.Status != EntryStatus.Paid || expense.Direction != EntryDirection.Out
+            if ((isForecast ? expense.Status is not (EntryStatus.Planned or EntryStatus.Pending)
+                    : expense.Status != EntryStatus.Paid)
+                || expense.Direction != EntryDirection.Out
                 || expense.IsTransfer || expense.Concept?.Kind != ConceptKind.Expense
-                || expense.ActualAmount is null or <= 0m || expense.AccountId is null
+                || (!isForecast && expense.ActualAmount is null or <= 0m)
+                || expense.EffectiveAmount <= 0m || expense.AccountId is null
                 || expense.SettlementAllocatedAmount != 0m)
                 throw new BusinessRuleException("Elige un gasto pagado, sin traspasos ni importes compensados.");
-            ValidateDate(expense.ValueDate ?? expense.DueDate);
+            ValidateDate(expense.ValueDate ?? expense.DueDate, allowFuture: isForecast);
             return expense;
         }
 
@@ -395,10 +447,12 @@ namespace PersonalFinance.Api.Features.Zeus
             return legacyMinutes;
         }
 
-        private void ValidateDate(DateOnly date)
+        private void ValidateDate(DateOnly date, bool allowFuture = false)
         {
-            if (date.Year < 2000 || date > clock.Today)
-                throw new BusinessRuleException("Elige una fecha de hoy o anterior, desde el año 2000.");
+            if (date.Year < 2000 || date.Year > 9998 || (!allowFuture && date > clock.Today))
+                throw new BusinessRuleException(allowFuture
+                    ? "Elige una fecha válida entre los años 2000 y 9998."
+                    : "Elige una fecha de hoy o anterior, desde el año 2000.");
         }
     }
 }

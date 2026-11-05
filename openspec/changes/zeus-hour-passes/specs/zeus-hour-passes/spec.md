@@ -95,3 +95,32 @@ The system SHALL allow a paid owned expense or an explicitly created expense to 
 #### Scenario: Correcting paid care
 - **WHEN** the user unlinks a payment or removes a care record
 - **THEN** the financial expense remains intact, and linked ledger entries cannot be edited until all care links are removed.
+
+### Requirement: Agreed future care and forecast payments
+The system SHALL accept future independent care dates and allow an explicit linked ledger forecast due on the agreed payment date. A forecast SHALL not be reported as paid or reduce the current bank balance.
+
+#### Scenario: Agreed nanny visit
+- **WHEN** a user records a future Alessia visit and creates its payment forecast
+- **THEN** the ledger contains one planned outgoing expense with the agreed amount, account and due date, and Zeus shows it as forecast rather than paid.
+
+#### Scenario: Confirm the forecast
+- **WHEN** a linked forecast is confirmed from Zeus or Mes for an amount covering all its care allocations
+- **THEN** the existing expense and care links are retained and the provider balance changes from outstanding to paid without another expense.
+
+#### Scenario: Link an imported paid movement
+- **WHEN** a paid movement is linked to care that already has a forecast
+- **THEN** the operation reduces or discards the old forecast atomically and links the actual payment without double counting.
+
+#### Scenario: Cancel or remove forecast care
+- **WHEN** care is unlinked or removed from a forecast
+- **THEN** the forecast is reduced by the removed allocation or discarded when no linked stays remain; actual paid expenses remain unchanged.
+
+### Requirement: Late cancellation fee
+The system SHALL offer an Alessia-only cancellation record with a suggested price of 10 euros, no attended hours or nights, and the same forecast or actual-payment options as other independent care.
+
+### Requirement: Provider-wide payment overview
+The frontend SHALL show all-time paid and outstanding care amounts and the forecast portion, irrespective of the selected history month, and distinguish future care and forecasts from completed paid care.
+
+#### Scenario: Prior-month unpaid care
+- **WHEN** a user views a different month while an older care charge remains unpaid
+- **THEN** the unpaid charge remains included in the outstanding total and accessible for payment.

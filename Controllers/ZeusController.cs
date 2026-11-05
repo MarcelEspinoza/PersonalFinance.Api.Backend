@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Zeus;
+using PersonalFinance.Api.Features.Ledger.Dtos;
 
 namespace PersonalFinance.Api.Controllers
 {
@@ -105,6 +106,15 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
             return Ok(await service.UnlinkCarePaymentAsync(userId.Value, id, ct));
+        }
+
+        [HttpPost("care/payments/{entryId:guid}/confirm")]
+        public async Task<ActionResult<ZeusSummaryDto>> ConfirmCarePayment(
+            Guid entryId, ConfirmLedgerEntryDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.ConfirmCarePaymentAsync(userId.Value, entryId, dto, ct));
         }
     }
 }

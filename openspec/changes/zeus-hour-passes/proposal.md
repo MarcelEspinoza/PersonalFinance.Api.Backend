@@ -12,6 +12,8 @@ Zeus needs a simple record of purchased care hours and daily attendance. Linking
 - Preload all daytime daycare brochure tariffs without the optional discount.
 - Track daycare nights and care by Zeus's nanny Alessia separately from daycare hour passes.
 - Link one paid expense to one or several care stays without duplicating money.
+- Plan future care, create linked ledger forecasts for agreed payment dates and distinguish forecast money from actual payments.
+- Record Alessia's late-cancellation fee and show a provider-wide paid/outstanding balance.
 
 ## Capabilities
 

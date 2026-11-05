@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using PersonalFinance.Domain.Ledger.Enums;
 
 namespace PersonalFinance.Api.Features.Zeus
 {
@@ -40,7 +41,7 @@ namespace PersonalFinance.Api.Features.Zeus
 
     public sealed record ZeusExpenseDto(
         Guid Id, DateOnly Date, string Description, string ConceptName,
-        string AccountName, decimal Amount, decimal AllocatedAmount = 0m);
+        string AccountName, decimal Amount, decimal AllocatedAmount = 0m, EntryStatus Status = EntryStatus.Paid);
 
     public sealed class SaveZeusCareStayDto
     {
@@ -64,6 +65,7 @@ namespace PersonalFinance.Api.Features.Zeus
         public List<Guid> StayIds { get; set; } = [];
         public Guid? LedgerEntryId { get; set; }
         public ZeusPurchaseExpenseDto? NewExpense { get; set; }
+        public ZeusPurchaseExpenseDto? NewForecast { get; set; }
     }
 
     public sealed record ZeusCareStayDto(

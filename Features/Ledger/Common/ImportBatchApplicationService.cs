@@ -106,6 +106,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .ToList();
             var deductedRowIds = deductedRows.Select(row => row.Id).ToHashSet();
             var deductedEntryIds = deductedRows.Select(row => row.PlannedEntryId!.Value).ToHashSet();
+            if (await _db.ZeusCareStays.AnyAsync(stay =>
+                stay.UserId == userId && stay.LedgerEntryId.HasValue
+                && deductedEntryIds.Contains(stay.LedgerEntryId.Value), ct))
+                return new(false, 0, batchId,
+                    "Una previsión está vinculada a cuidados de Zeus. No la reduzcas como un previsto genérico: deja que se empareje con el pago o importa el Bizum y vincúlalo desde «Zeus».",
+                    Conflict: true);
             foreach (var plannedId in deductedEntryIds)
             {
                 var plannedPeriod = plannedById[plannedId].Period;
@@ -172,6 +178,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 deductedEntryIds,
                 ct);
             var matchByRowId = plannedMatches.ToDictionary(match => match.Row.Id);
+            var matchedCareEntryIds = plannedMatches.Where(match => match.Entry is not null)
+                .Select(match => match.Entry!.Id).ToList();
+            var careAmounts = await _db.ZeusCareStays.Where(stay => stay.UserId == userId
+                    && stay.LedgerEntryId.HasValue && matchedCareEntryIds.Contains(stay.LedgerEntryId.Value))
+                .GroupBy(stay => stay.LedgerEntryId!.Value)
+                .Select(group => new { Id = group.Key, Amount = group.Sum(stay => stay.Amount) })
+                .ToDictionaryAsync(item => item.Id, item => item.Amount, ct);
+            if (plannedMatches.Any(match => match.Entry is not null
+                && careAmounts.GetValueOrDefault(match.Entry.Id) > Math.Abs(match.Row.Amount)))
+                return new(false, 0, batchId,
+                    "Un pago no cubre todos los cuidados de Zeus vinculados a su previsión. Revisa sus precios o importa el movimiento por separado y vincúlalo desde «Zeus».",
+                    Conflict: true);
             var periods = new Dictionary<(int Year, int Month), MonthlyPeriod>();
             foreach (var month in batch.Rows
                          .Where(row => row.Status == ImportRowStatus.Pending)

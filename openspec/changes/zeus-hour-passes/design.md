@@ -6,7 +6,7 @@ The app uses ASP.NET Core, EF Core/MySQL and a React/Tailwind frontend. The ledg
 
 **Goals:** A user-owned Zeus section with cumulative hours, minute-accurate attendance, FIFO pass consumption, expense links and clear correction controls.
 
-**Non-Goals:** Pet profiles, bookings, expiry, automatic payments, AI actions, recurring attendance or changes to existing live financial data.
+**Non-Goals:** Pet profiles, external bookings, expiry, automatic payments, AI actions, recurring attendance or changes to existing live financial data.
 
 ## Decisions
 
@@ -20,6 +20,11 @@ The app uses ASP.NET Core, EF Core/MySQL and a React/Tailwind frontend. The ledg
 - Store independent care stays for daycare nights and Alessia, Zeus's nanny. These never consume hour passes. Daycare night prices are 28/52/75/96/115 euros for one through five nights and 21 euros per night from six nights. Alessia costs 20 euros below four hours, 25 above four hours, and 30 per night. Exactly four hours requires an explicit 20/25 choice. Store the agreed price; allow explicit adjustment for actual charges.
 - Do not assume that night packages accumulate across separate visits. Record each stay and its number of nights. Night-package portability remains unknown.
 - Allow pending care stays to share a paid expense for the same provider, allocating each stay's agreed price. Reject allocations above the actual expense, reuse of pass expenses and mixing providers. Show allocated and remaining payment amounts; do not treat unallocated money as paid care. A new expense is explicit and atomic. Unlinking or deleting care preserves the expense. Linked care must be unlinked before editing.
+- Allow future independent care records, while pass attendance still requires today or earlier. Add an Alessia-only cancellation kind with a suggested 10-euro fee, no hours or nights, and no attendance-overlap impact.
+- Reuse the care expense link for either a paid expense or an explicitly created forecast. Create forecasts through the existing ledger command without ActualAmount or ValueDate, due on the selected payment date, for exactly the selected stays' agreed total. No schema change or separate reminder duplicates the forecast.
+- Derive care payment state from the linked ledger status, never from link existence. Confirming a linked forecast through the normal ledger command preserves its ID and care links and requires an actual payment covering all linked stays. Prevent all other direct edits while linked.
+- When replacing a forecast with a paid bank expense, unlinking it or deleting a care record, atomically reduce its remaining care allocation and discard the forecast if no care stays remain. Paid expenses are never changed. Closed-period or settlement-linked forecasts must not be changed silently.
+- Show provider-wide paid, outstanding and forecast amounts independent of month filtering. Outstanding includes forecasts but does not count them twice; upcoming care is visible separately. A zero outstanding balance shows "Todo pagado" only when care records exist.
 
 ## Risks / Trade-offs
 

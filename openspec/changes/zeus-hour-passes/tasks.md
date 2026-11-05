@@ -33,3 +33,13 @@ The migration creates only ZeusHourPasses and ZeusHourUsages, their indexes and 
 - [x] 5.5 Obtain approval for the complete follow-up files, commits, push and schema changes before publication.
 
 The user explicitly approved the listed backend/frontend commits, push and deployment with both follow-up migrations: nullable attendance times and an empty ZeusCareStays table. No example data or financial transactions are included.
+
+## 6. Agreed future care, cancellations and outstanding balance
+
+- [x] 6.1 Allow future care and Alessia cancellation charges without consuming hour passes.
+- [x] 6.2 Create linked payment forecasts and support confirmation or replacement with paid movements without duplicate expenses.
+- [x] 6.3 Add forecast/payment choices, upcoming care and provider-wide paid/outstanding summaries.
+- [x] 6.4 Build, lint and preview the revised flows without tests or live financial writes.
+- [x] 6.5 Obtain separate approval for the exact commits and push before publication.
+
+The user approved commit and push of the previously presented forecast/cancellation follow-up files and messages. This follow-up requires no migration and includes no live care records or expenses.
