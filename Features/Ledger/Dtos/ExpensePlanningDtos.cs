@@ -54,10 +54,13 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public DateOnly? FirstDueMonth { get; set; }
     }
 
-    /// <summary>Fixed and variable expenses month by month, with the same month totals as the dashboard.</summary>
+    /// <summary>What comes in and the fixed and variable expenses, month by month, with the same month totals as the dashboard.</summary>
     public sealed class ExpensePlanMonthsDto
     {
         public List<ExpensePlanMonthDto> Months { get; set; } = new();
+
+        /// <summary>Where each month's income comes from; the rows add up to <see cref="ExpensePlanMonthDto.Income"/>.</summary>
+        public List<ExpensePlanFixedRowDto> Income { get; set; } = new();
         public List<ExpensePlanFixedRowDto> Fixed { get; set; } = new();
         public List<ExpensePlanVariableRowDto> Variable { get; set; } = new();
     }

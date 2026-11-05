@@ -526,7 +526,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         $"{label}: «{concept.Name}» está previsto {where}, pero el banco lo cobró en «{account.Name}». " +
                         "La app lo apuntará aparte y el previsto seguirá pendiente. Si es el mismo pago (o parte de ese " +
                         "previsto), pulsa «Descontar de un previsto» en el movimiento o pídeselo al asistente; también " +
-                        "puedes, después de aplicar, pulsar «Descartar este mes» en el previsto. Y en Planificación, " +
+                        "puedes, después de aplicar, pulsar «Descartar este mes» en el previsto. Y en «Plan de gastos», " +
                         $"cambia la cuenta de «{concept.Name}» a «{account.Name}» para que la próxima vez se emparejen solos.",
                         row));
                     continue;
