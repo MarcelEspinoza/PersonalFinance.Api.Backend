@@ -17,6 +17,9 @@ Settlement forecasts already use one signed net. The import linker currently dis
 - Explicit payment linking validates ownership, paid bank status and duplicate use. A partial explicitly linked payment only settles the included entries when the settlement reaches zero.
 - Settlement-aware import detection takes precedence over generic fixed-rule matching.
 - Block direct changes that would invalidate allocated ledger entries; changes go through the settlement.
+- Explicitly attach ledger sources to existing manual settlement lines without changing their amounts, kinds, net or closed status. A pending passthrough transfer may fulfill an existing charge or deduction; concepts linked to an own-account transfer mirror remain excluded.
+- Offer the same attachment through a dedicated confirmation action in the assistant. Include settlement lines and source IDs in its context, validate ownership and available coverage, and recompute coverage atomically.
+- Separate dated cash-payment alerts from variable budget reserves. Compute uncovered account shortfall from the combined daily cash timeline, not the sum of account minima occurring on different dates. Keep budget reserves in month-end free money and describe forecast warnings conditionally.
 
 ## Risks / Trade-offs
 

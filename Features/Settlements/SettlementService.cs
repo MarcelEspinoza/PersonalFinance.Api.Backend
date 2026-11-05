@@ -28,6 +28,9 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<IReadOnlyList<SettlementCandidateDto>> GetCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<IReadOnlyList<SettlementCandidateDto>> GetPaymentCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> LinkPaymentAsync(Guid userId, Guid id, Guid entryId, CancellationToken ct);
+        Task<IReadOnlyList<SettlementCandidateDto>> GetLineEntryCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<SettlementCandidateDto> ValidateLineEntryLinkAsync(Guid userId, Guid id, Guid lineId, Guid entryId, CancellationToken ct);
+        Task<SettlementDetailDto> LinkLineEntryAsync(Guid userId, Guid id, Guid lineId, Guid? entryId, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct);
         Task<SettlementDetailDto> MarkPaidAsync(Guid userId, Guid id, CancellationToken ct);
@@ -439,6 +442,98 @@ namespace PersonalFinance.Api.Features.Settlements
                         : settlement.Lines.Any(line => line.LedgerEntryId == e.Id),
                     e.Status == EntryStatus.Paid))
                 .ToList();
+        }
+
+        public async Task<IReadOnlyList<SettlementCandidateDto>> GetLineEntryCandidatesAsync(
+            Guid userId, Guid id, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            var ownTransferConcepts = _db.Accounts
+                .Where(account => account.UserId == userId && account.TransferConceptId != null)
+                .Select(account => account.TransferConceptId!.Value);
+            var entries = await _db.LedgerEntries.AsNoTracking()
+                .Include(entry => entry.Concept)
+                .Where(entry => entry.UserId == userId && entry.Status != EntryStatus.Skipped
+                    && entry.Period!.Status != PeriodStatus.Closed
+                    && entry.DueDate >= settlement.PeriodStart && entry.DueDate <= settlement.PeriodEnd
+                    && (!entry.IsTransfer || !ownTransferConcepts.Contains(entry.ConceptId)))
+                .OrderBy(entry => entry.DueDate).ThenBy(entry => entry.Id)
+                .ToListAsync(ct);
+            var used = await _db.SettlementLines
+                .Where(line => line.Settlement!.UserId == userId && line.LedgerEntryId != null
+                    && (line.SettlementId == id || !line.AllocatesPendingEntry))
+                .Select(line => line.LedgerEntryId!.Value).ToListAsync(ct);
+            return entries.Where(entry => !used.Contains(entry.Id) && entry.EffectiveAmount > 0m)
+                .Select(entry => new SettlementCandidateDto(
+                    entry.Id, EffectiveDate(entry), entry.Description ?? entry.Concept?.Name ?? "Movimiento",
+                    entry.Concept?.Name ?? "Sin concepto", Round(entry.EffectiveAmount),
+                    entry.Direction == EntryDirection.In ? "In" : "Out", false, entry.Status == EntryStatus.Paid))
+                .ToList();
+        }
+
+        public async Task<SettlementCandidateDto> ValidateLineEntryLinkAsync(
+            Guid userId, Guid id, Guid lineId, Guid entryId, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            var line = settlement.Lines.FirstOrDefault(line => line.Id == lineId)
+                ?? throw new NotFoundException("No encuentro esa línea.");
+            if (line.LedgerEntryId != null && line.LedgerEntryId != entryId)
+                throw new BusinessRuleException("Desvincula el movimiento anterior antes de elegir otro.");
+            var entry = await _db.LedgerEntries.AsNoTracking().Include(entry => entry.Concept)
+                .Include(entry => entry.Period)
+                .FirstOrDefaultAsync(entry => entry.Id == entryId && entry.UserId == userId, ct)
+                ?? throw new NotFoundException("No encuentro ese movimiento.");
+            if (entry.Status == EntryStatus.Skipped || entry.Period?.Status == PeriodStatus.Closed)
+                throw new BusinessRuleException("Elige un movimiento no descartado de un mes abierto.");
+            if (await _db.SettlementLines.AnyAsync(other =>
+                other.Settlement!.UserId == userId && other.Id != line.Id && other.LedgerEntryId == entryId
+                && (other.SettlementId == id || !other.AllocatesPendingEntry || entry.Status == EntryStatus.Paid), ct))
+                throw new BusinessRuleException("Ese movimiento ya está vinculado a otra línea.");
+            if (entry.IsTransfer && await _db.Accounts.AnyAsync(account =>
+                account.UserId == userId && account.TransferConceptId == entry.ConceptId, ct))
+                throw new BusinessRuleException("No se puede vincular un traspaso entre cuentas propias.");
+            if (entry.Status == EntryStatus.Paid)
+            {
+                if (line.Kind == SettlementLineKind.Payment && entry.Direction != EntryDirection.In ||
+                    line.Kind == SettlementLineKind.PaymentSent && entry.Direction != EntryDirection.Out ||
+                    entry.ActualAmount is null || entry.ActualAmount < line.Amount)
+                    throw new BusinessRuleException("El movimiento real no corresponde a esta línea.");
+            }
+            else
+            {
+                var validationLine = new SettlementLine
+                {
+                    Id = line.Id, SettlementId = id, LedgerEntryId = entryId,
+                    Kind = line.Kind, Amount = line.Amount,
+                    AllocatesPendingEntry = line.AllocatesPendingEntry
+                };
+                await SettlementEntryCoverage.AllocateAsync(_db, userId, validationLine, ct, allowPassthrough: true);
+            }
+            return new SettlementCandidateDto(entry.Id, EffectiveDate(entry),
+                entry.Description ?? entry.Concept?.Name ?? "Movimiento", entry.Concept?.Name ?? "Sin concepto",
+                entry.EffectiveAmount, entry.Direction == EntryDirection.In ? "In" : "Out", false,
+                entry.Status == EntryStatus.Paid);
+        }
+
+        public async Task<SettlementDetailDto> LinkLineEntryAsync(
+            Guid userId, Guid id, Guid lineId, Guid? entryId, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            var line = settlement.Lines.FirstOrDefault(line => line.Id == lineId)
+                ?? throw new NotFoundException("No encuentro esa línea.");
+            var previousIds = line.LedgerEntryId is { } previousId ? new[] { previousId } : Array.Empty<Guid>();
+            if (previousIds.Length > 0 && await _db.LedgerEntries.AnyAsync(entry =>
+                entry.UserId == userId && previousIds.Contains(entry.Id) &&
+                entry.Period!.Status == PeriodStatus.Closed, ct))
+                throw new BusinessRuleException("El mes del movimiento está cerrado. Reábrelo antes de cambiar el vínculo.");
+            if (entryId is { } sourceId)
+                await ValidateLineEntryLinkAsync(userId, id, lineId, sourceId, ct);
+            line.LedgerEntryId = entryId;
+            await SettlementEntryCoverage.AllocateAsync(_db, userId, line, ct, allowPassthrough: true);
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct, previousIds);
+            settlement.UpdatedAt = _clock.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return await ToDetailAsync(userId, settlement, ct);
         }
 
         public async Task<IReadOnlyList<SettlementCandidateDto>> GetPaymentCandidatesAsync(

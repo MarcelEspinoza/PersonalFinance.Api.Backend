@@ -12,7 +12,8 @@ namespace PersonalFinance.Api.Features.Settlements
             IAppDbContext db,
             Guid userId,
             SettlementLine line,
-            CancellationToken ct)
+            CancellationToken ct,
+            bool allowPassthrough = false)
         {
             if (line.LedgerEntryId is not { } entryId)
             {
@@ -26,15 +27,21 @@ namespace PersonalFinance.Api.Features.Settlements
                 ?? throw new NotFoundException("No encuentro ese movimiento.");
 
             if (entry.Status == EntryStatus.Paid && !line.AllocatesPendingEntry) return;
-            if (entry.Status == EntryStatus.Skipped || entry.IsTransfer)
+            if (entry.Status == EntryStatus.Skipped ||
+                entry.IsTransfer && !(allowPassthrough || line.AllocatesPendingEntry))
                 throw new BusinessRuleException("Ese movimiento no se puede incluir como importe pendiente.");
+            if (entry.IsTransfer && await db.Accounts.AnyAsync(account =>
+                account.UserId == userId && account.TransferConceptId == entry.ConceptId, ct))
+                throw new BusinessRuleException("Un traspaso entre cuentas propias no se compensa en una liquidación.");
             if (entry.Period?.Status == PeriodStatus.Closed)
                 throw new BusinessRuleException("El mes del movimiento está cerrado.");
 
             var expectedKind = entry.Direction == EntryDirection.In
                 ? SettlementLineKind.Charge
                 : SettlementLineKind.Deduction;
-            if (line.Kind != expectedKind)
+            if (entry.IsTransfer
+                ? line.Kind is not (SettlementLineKind.Charge or SettlementLineKind.Deduction)
+                : line.Kind != expectedKind)
                 throw new BusinessRuleException(
                     entry.Direction == EntryDirection.In
                         ? "Un ingreso pendiente se incluye como importe que te deben, no como dinero ya recibido."

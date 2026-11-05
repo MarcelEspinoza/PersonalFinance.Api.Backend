@@ -37,6 +37,9 @@ namespace PersonalFinance.Api.Features.Chat
         public int? Month { get; set; }
         public Guid? ConceptId { get; set; }
         public Guid? AccountId { get; set; }
+        public Guid? SettlementId { get; set; }
+        public Guid? SettlementLineId { get; set; }
+        public Guid? LedgerEntryId { get; set; }
         public string? NormalizedDescription { get; set; }
         // create_reminder only: none | weekly | monthly | yearly, and days of notice (0-30).
         public string? Repeat { get; set; }

@@ -66,6 +66,24 @@ namespace PersonalFinance.Api.Controllers
             return Ok(await _service.GetAsync(userId.Value, id, ct));
         }
 
+        [HttpGet("{id:guid}/line-entry-candidates")]
+        public async Task<ActionResult<IReadOnlyList<SettlementCandidateDto>>> LineEntryCandidates(
+            Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await _service.GetLineEntryCandidatesAsync(userId.Value, id, ct));
+        }
+
+        [HttpPut("{id:guid}/lines/{lineId:guid}/entry")]
+        public async Task<ActionResult<SettlementDetailDto>> LinkLineEntry(
+            Guid id, Guid lineId, [FromBody] LinkSettlementLineEntryDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await _service.LinkLineEntryAsync(userId.Value, id, lineId, dto.LedgerEntryId, ct));
+        }
+
         [HttpGet("loans")]
         public async Task<ActionResult<IReadOnlyList<SettlementLoanOptionDto>>> LoanOptions(CancellationToken ct)
         {

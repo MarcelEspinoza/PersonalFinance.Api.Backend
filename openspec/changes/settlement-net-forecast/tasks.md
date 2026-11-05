@@ -15,4 +15,17 @@
 - [x] 3.1 Compile both projects without writing or running tests.
 - [ ] 3.2 Review the diff and prepare the exact legacy cleanup inventory without executing it.
 
-The diff review and synthetic UI screenshots are complete. Read-only API calls identified the two November occurrences and current settlement balances. Full future-occurrence enumeration is blocked: the public MySQL URL has no endpoint and Railway SSH times out. Do not use the monthly GET endpoint for inventory because it writes data. The partial cleanup proposal is a session artifact, not an approved execution plan. No live migration, cleanup, commit or push has been performed.
+The original implementation was published with approval. The full legacy-rule cleanup inventory remains blocked and no cleanup was executed.
+
+## 4. Existing manual line repair
+
+- [x] 4.1 Add explicit source attachment with coverage refresh and unchanged financial totals, including closed settlements and passthrough obligations.
+- [x] 4.2 Expose existing line attachment in the settlement UI and assistant confirmation cards.
+- [ ] 4.3 Build without tests, capture the repair UI and apply the specifically approved November source link after deployment approval.
+
+## 5. Dashboard cash warnings
+
+- [x] 5.1 Separate variable budget reserves from dated payment alerts and calculate uncovered shortfall on the combined daily account timeline.
+- [x] 5.2 Build without tests and preview the revised warning with the November snapshot.
+- [x] 5.3 Apply the explicitly approved gas forecast corrections (42.37 and 50.20), preserving pending status and actual bank balances.
+- [ ] 5.4 Review and approve the exact November Pasanaco compensation: 2000 gross less 600 own contribution and 200 already received leaves 1200 pending on November 5. Preserve December forecasts and the mother's closed settlement net.

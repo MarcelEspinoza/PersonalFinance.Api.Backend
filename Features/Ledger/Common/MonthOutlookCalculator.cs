@@ -425,6 +425,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// </summary>
         private static void SuggestTransfers(MonthOutlookDto outlook)
         {
+            var accountIds = outlook.Accounts.Select(account => account.AccountId).ToHashSet();
+            var combinedBalance = outlook.Accounts.Sum(account => account.BaseBalance);
+            var lowestCombinedBalance = combinedBalance;
+            foreach (var day in outlook.PendingItems
+                         .Where(item => item.AccountId.HasValue && accountIds.Contains(item.AccountId.Value))
+                         .GroupBy(item => item.DueDate)
+                         .OrderBy(group => group.Key))
+            {
+                combinedBalance += day.Sum(item =>
+                    item.Direction == EntryDirection.In ? item.Amount : -item.Amount);
+                lowestCombinedBalance = Math.Min(lowestCombinedBalance, combinedBalance);
+            }
+            outlook.UncoveredShortfall = Math.Round(Math.Max(0m, -lowestCombinedBalance), 2);
+
             var margins = outlook.Accounts
                 .Where(account => account.LowestBalance > Tolerance)
                 .ToDictionary(account => account.AccountId, account => account.LowestBalance);
@@ -455,8 +469,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         Before = target.LowestBalanceDate
                     });
                 }
-
-                if (needed > Tolerance) outlook.UncoveredShortfall += Math.Round(needed, 2);
             }
         }
 

@@ -9,8 +9,10 @@ using System.Text.Unicode;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Reminders;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
 using EntryDirection = PersonalFinance.Domain.Ledger.Enums.EntryDirection;
@@ -63,6 +65,7 @@ namespace PersonalFinance.Api.Features.Chat
         private readonly UserManager<ApplicationUser> _userManager;
         private readonly RoleManager<IdentityRole<Guid>> _roleManager;
         private readonly ILogger<GlobalChatService> _logger;
+        private readonly ISettlementService _settlements;
 
         public GlobalChatService(
             HttpClient http,
@@ -72,7 +75,8 @@ namespace PersonalFinance.Api.Features.Chat
             AdminActionCatalog adminCatalog,
             UserManager<ApplicationUser> userManager,
             RoleManager<IdentityRole<Guid>> roleManager,
-            ILogger<GlobalChatService> logger)
+            ILogger<GlobalChatService> logger,
+            ISettlementService settlements)
         {
             _http = http;
             _configuration = configuration;
@@ -82,6 +86,7 @@ namespace PersonalFinance.Api.Features.Chat
             _userManager = userManager;
             _roleManager = roleManager;
             _logger = logger;
+            _settlements = settlements;
         }
 
         public Task<ChatResponseDto> AskAsync(Guid userId, ChatRequestDto request, CancellationToken ct) =>
@@ -186,7 +191,8 @@ namespace PersonalFinance.Api.Features.Chat
                 lo que falta cobrar o pagar de una liquidación (gastos compartidos con mamá, Vane…).
                 Las liquidaciones sólo se cambian en «Liquidaciones» (fecha de cobro o «Marcar como
                 pagada») y las transferencias de esa persona se apuntan solas al importar el banco:
-                no propongas acciones sobre un "settlement:…"; explícale dónde se cambia. Cada línea de
+                no cambies un "settlement:…" con update_ledger_entry o skip_ledger_entry. Puedes
+                vincular sus líneas existentes con link_settlement_line, como se explica abajo. Cada línea de
                 "variables" trae su "id" ("reserve:…"). Si un recordatorio con importe y un pago o
                 cobro de «Mes» (o una liquidación) son lo mismo, ese dinero se cuenta dos veces:
                 explícaselo y propón dejar el recordatorio sin importe (update_reminder con amount
@@ -233,7 +239,23 @@ namespace PersonalFinance.Api.Features.Chat
                   de ese gasto variable ese mes: amount = "used" deja la reserva en 0.
                 - skip_ledger_entry: targetId (un "id" de "pending" que sea un GUID o un "rule:…").
                   Quita ese pago o cobro sólo de ese mes; no se borra (queda descartado en «Mes» y
-                  se puede recuperar). No sirve para lo ya pagado ni para recordatorios.
+                  se puede recuperar). También sirve para una salida pendiente de dinero de paso
+                  con "entryId" en "currentMonthOutlook", aunque sea "isTransfer": true.
+                  No sirve para lo ya pagado ni para recordatorios.
+                - link_settlement_line: settlementId, settlementLineId y ledgerEntryId, todos
+                  presentes en los datos. "settlements" contiene liquidaciones y sus líneas,
+                  también cerradas. Vincula un movimiento con una línea YA EXISTENTE sin añadir
+                  importes ni cambiar el neto ni su estado. Si ya hay una línea manual para
+                  una obligación, propón este vínculo en lugar de duplicarla o descartarla.
+                  Una salida pendiente de dinero de paso puede cumplir una línea existente
+                  de gastos o de descuento: no deduzcas otra vez su importe. Al vincularla a
+                  una liquidación cerrada, su parte queda saldada sin movimiento bancario nuevo.
+                  En "recentLedgerEntries", "isSettled" incluye la compensación aunque el estado
+                  interno no sea Paid. "cashRemaining" excluye lo incluido en liquidaciones.
+                  No propongas descartar ni volver a vincular partes ya cubiertas.
+                  Un cobro real se puede vincular a "Payment"; un pago real a "PaymentSent".
+                  Si no sabes qué línea corresponde, pregunta. Nunca cierres ni reabras la
+                  liquidación como parte de esta reparación. Se aplica sólo al confirmar.
                 - create_category: name y description.
                 - create_budget: amount como límite mensual, categoryId, year y month.
                 - record_loan_payment: targetId del préstamo, amount, date y notes.
@@ -314,9 +336,11 @@ namespace PersonalFinance.Api.Features.Chat
                 </datos>
 
                 Responde EXCLUSIVAMENTE JSON válido, sin markdown, con esta forma exacta:
-                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"normalizedDescription":null,"repeat":null,"notifyDaysBefore":null,"isIncome":null{{adminOutputFields}}}]}
+                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"settlementId":null,"settlementLineId":null,"ledgerEntryId":null,"normalizedDescription":null,"repeat":null,"notifyDaysBefore":null,"isIncome":null{{adminOutputFields}}}]}
 
                 Deja "proposedActions" como lista vacía si no corresponde ninguna acción.
+                Si dices que preparaste una tarjeta para confirmar, incluye obligatoriamente
+                la acción correspondiente en "proposedActions"; el texto por sí solo no crea tarjetas.
                 Mantén "reply" por debajo de 1200 caracteres para que la respuesta no se corte.
                 """;
 
@@ -411,7 +435,15 @@ namespace PersonalFinance.Api.Features.Chat
 
                     var restored = RestoreOriginals(action, data, importGroups);
                     var original = restored.Copy();
-                    if (IsStructurallyValid(restored, reminderToday, movementTargets)) proposals.Add((restored, original, null));
+                    var valid = restored.Type == "link_settlement_line"
+                        ? await TryNormalizeSettlementLineLinkAsync(restored, userId, ct)
+                        : restored.Type == "skip_ledger_entry"
+                        ? await TryNormalizeLedgerSkipAsync(restored, movementTargets, userId, ct)
+                        : IsStructurallyValid(restored, reminderToday, movementTargets);
+                    if (valid)
+                        proposals.Add((restored, original, null));
+                    else
+                        _logger.LogWarning("La propuesta del chat de tipo {ActionType} no superó la validación.", restored.Type);
                 }
 
                 var validActions = proposals
@@ -431,9 +463,17 @@ namespace PersonalFinance.Api.Features.Chat
                     if (kept is not null) actions.Add(ToDto(kept));
                 }
 
+                var reply = string.IsNullOrWhiteSpace(parsed.Reply) ? ModelJson.PlainText(raw) : parsed.Reply;
+                if (actions.Count == 0 && parsed.ProposedActions?.Count > 0)
+                {
+                    _logger.LogWarning("Ninguna de las propuestas del chat pudo convertirse en una tarjeta de confirmación.");
+                    reply = "No he podido preparar ninguna tarjeta de confirmación: las propuestas no superaron la validación. " +
+                        "No se ha aplicado ningún cambio. Revisa si el movimiento sigue pendiente y si su mes está abierto.";
+                }
+
                 return new ChatResponseDto
                 {
-                    Reply = string.IsNullOrWhiteSpace(parsed.Reply) ? ModelJson.PlainText(raw) : parsed.Reply,
+                    Reply = reply,
                     ProposedActions = actions
                 };
             }
@@ -594,6 +634,13 @@ namespace PersonalFinance.Api.Features.Chat
                     entry.DueDate,
                     entry.Direction,
                     entry.Status,
+                    entry.IsTransfer,
+                    entry.SettlementAllocatedAmount,
+                    entry.SettlementSettledAmount,
+                    isSettled = entry.Status == PersonalFinance.Domain.Ledger.Enums.EntryStatus.Paid
+                        ? entry.SettlementSettledAmount >= entry.SettlementAllocatedAmount
+                        : entry.SettlementSettledAmount >= entry.ForecastAmount && entry.SettlementSettledAmount > 0m,
+                    cashRemaining = entry.ForecastAmount - entry.SettlementAllocatedAmount - (entry.ActualAmount ?? 0m),
                     amount = entry.ActualAmount ?? entry.ForecastAmount,
                     entry.Description,
                     entry.ConceptId,
@@ -609,6 +656,11 @@ namespace PersonalFinance.Api.Features.Chat
                     entry.DueDate,
                     entry.Direction,
                     entry.Status,
+                    entry.IsTransfer,
+                    entry.SettlementAllocatedAmount,
+                    entry.SettlementSettledAmount,
+                    entry.isSettled,
+                    entry.cashRemaining,
                     entry.amount,
                     Description = data.Mask(entry.Description),
                     entry.ConceptId,
@@ -714,6 +766,30 @@ namespace PersonalFinance.Api.Features.Chat
                 })
                 .ToList();
 
+            var settlementRows = await _db.Settlements.AsNoTracking().Include(settlement => settlement.Lines)
+                .Where(settlement => settlement.UserId == userId)
+                .OrderByDescending(settlement => settlement.PeriodEnd >= monthStart && settlement.PeriodStart < nextMonthStart)
+                .ThenByDescending(settlement => settlement.PeriodStart)
+                .Take(24)
+                .ToListAsync(ct);
+            var personNames = await _db.Counterparties.AsNoTracking().Where(person => person.UserId == userId)
+                .ToDictionaryAsync(person => person.Id, person => person.Name, ct);
+            var settlements = settlementRows.Select(settlement => new
+            {
+                settlement.Id,
+                title = data.Mask(settlement.Title),
+                person = data.Mask(personNames.GetValueOrDefault(settlement.CounterpartyId)),
+                settlement.PeriodStart,
+                settlement.PeriodEnd,
+                settlement.Status,
+                remaining = SettlementForecast.Remaining(settlement),
+                lines = settlement.Lines.OrderBy(line => line.SortOrder).Select(line => new
+                {
+                    line.Id, line.Kind, description = data.Mask(line.Description),
+                    line.Amount, line.LedgerEntryId, line.AllocatesPendingEntry
+                }).ToList()
+            }).ToList();
+
             var snapshot = new
             {
                 today = ReminderRules.LocalToday(now).ToString("yyyy-MM-dd"),
@@ -729,6 +805,7 @@ namespace PersonalFinance.Api.Features.Chat
                 ledgerConcepts,
                 recurringRules,
                 recentLedgerEntries = ledgerEntries,
+                settlements,
                 pendingImports,
                 reminders
             };
@@ -1397,6 +1474,9 @@ namespace PersonalFinance.Api.Features.Chat
             Month = a.Month,
             ConceptId = a.ConceptId,
             AccountId = a.AccountId,
+            SettlementId = a.SettlementId,
+            SettlementLineId = a.SettlementLineId,
+            LedgerEntryId = a.LedgerEntryId,
             NormalizedDescription = a.NormalizedDescription,
             Repeat = a.Repeat,
             NotifyDaysBefore = a.NotifyDaysBefore,
@@ -1432,8 +1512,6 @@ namespace PersonalFinance.Api.Features.Chat
                     int.TryParse(action.TargetId, out _),
                 "update_ledger_entry" =>
                     TryNormalizeLedgerUpdate(action, today, movementTargets),
-                "skip_ledger_entry" =>
-                    TryNormalizeLedgerSkip(action, movementTargets),
                 "create_category" =>
                     !string.IsNullOrWhiteSpace(action.Name),
                 "create_budget" =>
@@ -1654,26 +1732,77 @@ namespace PersonalFinance.Api.Features.Chat
             return true;
         }
 
+        private async Task<bool> TryNormalizeSettlementLineLinkAsync(
+            RawProposedAction action, Guid userId, CancellationToken ct)
+        {
+            if (action.SettlementId is not { } settlementId ||
+                action.SettlementLineId is not { } lineId ||
+                action.LedgerEntryId is not { } entryId)
+                return false;
+            try
+            {
+                var source = await _settlements.ValidateLineEntryLinkAsync(userId, settlementId, lineId, entryId, ct);
+                var settlement = await _db.Settlements.AsNoTracking().Include(settlement => settlement.Lines)
+                    .FirstAsync(settlement => settlement.Id == settlementId && settlement.UserId == userId, ct);
+                var line = settlement.Lines.First(line => line.Id == lineId);
+                action.Summary = $"Vincular «{source.Description}» a «{line.Description}» de «{settlement.Title}»: " +
+                    $"{ReminderRules.FormatAmount(line.Amount)}; sin cambiar el neto ni crear movimientos bancarios" +
+                    (settlement.Status == PersonalFinance.Domain.Settlements.Entities.SettlementStatus.Closed && !source.IsPaid
+                        ? "; la parte vinculada quedará saldada por compensación" : string.Empty);
+                return true;
+            }
+            catch (Exception ex) when (ex is BusinessRuleException or NotFoundException)
+            {
+                _logger.LogWarning(ex, "No se pudo preparar el vínculo de la liquidación.");
+                return false;
+            }
+        }
+
         /// <summary>
         /// skip_ledger_entry quita un pago o cobro pendiente sólo de su mes: un asiento de «Mes»
         /// (GUID) o un pago fijo aún sin anotar (rule:…). No se borra: queda descartado en «Mes»
         /// y se puede recuperar. Lo ya pagado no se descarta.
         /// </summary>
-        private static bool TryNormalizeLedgerSkip(RawProposedAction action, LedgerMovementTargets targets)
+        private async Task<bool> TryNormalizeLedgerSkipAsync(
+            RawProposedAction action, LedgerMovementTargets targets, Guid userId, CancellationToken ct)
         {
             if (IsSettlementItem(action.TargetId, targets)) return false;
 
             string itemId;
+            ForecastItem? item;
             if (ForecastIds.TryParseRule(action.TargetId, out var ruleId, out var year, out var month))
+            {
                 itemId = ForecastIds.Rule(ruleId, year, month);
+                if (!targets.ForecastItems.TryGetValue(itemId, out item) ||
+                    item.Kind != ForecastItemKind.RuleOccurrence || item.IsPaid)
+                    return false;
+            }
             else if (Guid.TryParse(action.TargetId, out var entryId))
+            {
                 itemId = entryId.ToString("D");
-            else
-                return false;
+                var entry = await _db.LedgerEntries
+                    .AsNoTracking()
+                    .Include(entry => entry.Concept)
+                    .Include(entry => entry.Period)
+                    .FirstOrDefaultAsync(entry => entry.Id == entryId && entry.UserId == userId, ct);
+                if (entry is null ||
+                    entry.Status is not (PersonalFinance.Domain.Ledger.Enums.EntryStatus.Planned or
+                        PersonalFinance.Domain.Ledger.Enums.EntryStatus.Pending) ||
+                    entry.Period?.Status == PersonalFinance.Domain.Ledger.Enums.PeriodStatus.Closed ||
+                    entry.SettlementAllocatedAmount > 0m)
+                    return false;
+                if (await _db.SettlementLines.AnyAsync(line =>
+                    line.Settlement!.UserId == userId && line.LedgerEntryId == entryId &&
+                    (line.Kind == PersonalFinance.Domain.Settlements.Entities.SettlementLineKind.Payment ||
+                     line.Kind == PersonalFinance.Domain.Settlements.Entities.SettlementLineKind.PaymentSent), ct))
+                    return false;
 
-            if (!targets.ForecastItems.TryGetValue(itemId, out var item) ||
-                item.Kind is not (ForecastItemKind.Entry or ForecastItemKind.RuleOccurrence) ||
-                item.IsPaid)
+                item = new ForecastItem(
+                    ForecastItemKind.Entry, itemId, entry.DueDate, entry.Direction,
+                    entry.CashForecastAmount, entry.Description ?? entry.Concept?.Name ?? "Movimiento",
+                    entry.ConceptId, entry.Concept?.Name, EntryId: entry.Id);
+            }
+            else
                 return false;
 
             action.TargetId = itemId;
@@ -1929,6 +2058,9 @@ namespace PersonalFinance.Api.Features.Chat
             public int? Month { get; set; }
             public Guid? ConceptId { get; set; }
             public Guid? AccountId { get; set; }
+            public Guid? SettlementId { get; set; }
+            public Guid? SettlementLineId { get; set; }
+            public Guid? LedgerEntryId { get; set; }
             public string? NormalizedDescription { get; set; }
             public string? Repeat { get; set; }
             public int? NotifyDaysBefore { get; set; }

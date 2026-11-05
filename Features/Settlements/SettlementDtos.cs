@@ -127,6 +127,7 @@ namespace PersonalFinance.Api.Features.Settlements
         bool IsPaid = true);
 
     public sealed record LinkSettlementPaymentDto(Guid LedgerEntryId);
+    public sealed record LinkSettlementLineEntryDto(Guid? LedgerEntryId);
 
     /// <summary>
     /// Imputa un movimiento del libro. Si se manda <see cref="SharePercent"/>

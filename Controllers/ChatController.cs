@@ -13,6 +13,7 @@ using PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Api.Features.Reminders;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Dtos.Income;
@@ -164,6 +165,15 @@ namespace PersonalFinance.Api.Controllers
                     return await DeleteReminder(action, userId.Value, ct);
                 case "skip_ledger_entry":
                     return await SkipLedgerEntry(action, userId.Value, ct);
+                case "link_settlement_line":
+                    if (action.SettlementId is not { } settlementId ||
+                        action.SettlementLineId is not { } settlementLineId ||
+                        action.LedgerEntryId is not { } ledgerEntryId)
+                        return BadRequest(new { message = "Falta la liquidación, su línea o el movimiento." });
+                    var settlementService = HttpContext.RequestServices.GetRequiredService<ISettlementService>();
+                    await settlementService.LinkLineEntryAsync(
+                        userId.Value, settlementId, settlementLineId, ledgerEntryId, ct);
+                    return Ok(new { action.Type, Id = settlementLineId });
                 case "api_call":
                     // The frontend calls the endpoint itself with the user's token.
                     return BadRequest("Esta acción la ejecuta la app directamente con tus permisos; no se confirma por aquí.");
