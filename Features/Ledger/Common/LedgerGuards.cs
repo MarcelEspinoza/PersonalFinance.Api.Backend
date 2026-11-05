@@ -35,6 +35,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 throw new BusinessRuleException(
                     "Este gasto está vinculado a un bono de Zeus. Retira primero el bono sin consumir en «Zeus» para modificar el gasto.");
 
+            if (await db.ZeusCareStays.AnyAsync(stay =>
+                stay.UserId == userId && stay.LedgerEntryId == entryId, ct))
+                throw new BusinessRuleException(
+                    "Este gasto paga cuidados de Zeus. Desvincula primero sus estancias en «Zeus» para modificarlo.");
+
             if (!allowSettlementAllocation && entry.SettlementAllocatedAmount > 0m)
                 throw new BusinessRuleException(
                     "Este movimiento está incluido en una liquidación. Quita su parte de allí antes de modificarlo.");

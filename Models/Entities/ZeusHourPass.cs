@@ -19,6 +19,8 @@ namespace PersonalFinance.Api.Models.Entities
         public Guid UserId { get; set; }
         public DateOnly Date { get; set; }
         public int Minutes { get; set; }
+        public TimeOnly? StartTime { get; set; }
+        public TimeOnly? EndTime { get; set; }
         public string? Note { get; set; }
         public DateTime CreatedAt { get; set; }
     }

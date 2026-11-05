@@ -8,7 +8,19 @@ The system SHALL store user-owned passes with purchased minutes, purchase date a
 - **THEN** available minutes equal all purchased minutes less recorded usage.
 
 ### Requirement: Dated FIFO attendance
-The system SHALL record attendance by civil date and positive integer minutes, consuming the oldest eligible pass first.
+The system SHALL record attendance by civil date and same-day entry and exit times, computing positive integer minutes on the server and consuming the oldest eligible pass first.
+
+#### Scenario: Automatic duration
+- **WHEN** a user records 09:00 to 13:30 on one day
+- **THEN** the system deducts 270 minutes and displays both the time range and duration.
+
+#### Scenario: Invalid or overlapping hours
+- **WHEN** a range is incomplete, ends at or before its start, contains sub-minute precision, or overlaps another timed record that day
+- **THEN** the mutation is rejected without deducting hours.
+
+#### Scenario: Duration-only history
+- **WHEN** an existing record has no entry or exit time
+- **THEN** its duration remains available, and correcting it through the new form requires an explicit time range.
 
 #### Scenario: Attendance spans passes
 - **WHEN** attendance exceeds the oldest pass's remaining hours
@@ -50,3 +62,36 @@ The frontend SHALL show available hours, pass balances, daily history and purcha
 #### Scenario: Quick purchase and usage
 - **WHEN** a user opens Zeus
 - **THEN** they can choose 60, 120 or custom hours, link a purchase expense and record hours and minutes without financial duplication.
+
+### Requirement: Brochure daytime prices
+The frontend SHALL offer daycare packages of 1/5/10/20 days at six hours per day for 13/55/100/160 euros and twelve hours per day for 21/95/180/320 euros, without the optional discount. Selecting a package SHALL prefill total hours and the price of an explicitly created expense. Existing expenses SHALL retain their actual price.
+
+### Requirement: Independent care providers and nights
+The system SHALL record daycare nights and Alessia nanny care without changing daycare hour balances.
+
+#### Scenario: Alessia daytime price
+- **WHEN** daytime care lasts less than or more than four hours
+- **THEN** the form suggests 20 or 25 euros respectively, while exactly four hours requires an explicit choice.
+
+#### Scenario: Overnight care
+- **WHEN** a user records a night stay
+- **THEN** its provider, first night, number of nights, agreed price and optional note are preserved separately from hour passes.
+
+#### Scenario: Unknown night-package portability
+- **WHEN** separate stays are recorded
+- **THEN** no shared night balance or cross-stay package discount is inferred.
+
+### Requirement: Shared care payments
+The system SHALL allow a paid owned expense or an explicitly created expense to cover one or several pending stays for the same provider, up to its actual amount.
+
+#### Scenario: One transfer covers several visits
+- **WHEN** multiple pending Alessia stays are linked to one paid expense
+- **THEN** each stay is marked paid for its agreed price, the expense is not duplicated and any unallocated amount remains explicit.
+
+#### Scenario: Unsafe or excessive allocation
+- **WHEN** a payment belongs to another user, is invalid, is already used by an hour pass, covers another provider, or has insufficient unallocated money
+- **THEN** the entire operation is rejected without changing care or financial records.
+
+#### Scenario: Correcting paid care
+- **WHEN** the user unlinks a payment or removes a care record
+- **THEN** the financial expense remains intact, and linked ledger entries cannot be edited until all care links are removed.

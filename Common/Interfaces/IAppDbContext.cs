@@ -37,6 +37,7 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<PersonalFinance.Api.Models.Entities.Reminder> Reminders { get; }
         DbSet<PersonalFinance.Api.Models.Entities.ZeusHourPass> ZeusHourPasses { get; }
         DbSet<PersonalFinance.Api.Models.Entities.ZeusHourUsage> ZeusHourUsages { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.ZeusCareStay> ZeusCareStays { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

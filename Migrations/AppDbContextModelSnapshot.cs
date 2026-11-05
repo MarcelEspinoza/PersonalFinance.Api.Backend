@@ -950,6 +950,60 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusCareStay", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<TimeOnly?>("EndTime")
+                        .HasColumnType("time(6)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<Guid?>("LedgerEntryId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<int>("Nights")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<TimeOnly?>("StartTime")
+                        .HasColumnType("time(6)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LedgerEntryId");
+
+                    b.HasIndex("UserId", "Provider", "Date");
+
+                    b.ToTable("ZeusCareStays", (string)null);
+                });
+
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusHourPass", b =>
                 {
                     b.Property<Guid>("Id")
@@ -993,12 +1047,18 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date");
 
+                    b.Property<TimeOnly?>("EndTime")
+                        .HasColumnType("time(6)");
+
                     b.Property<int>("Minutes")
                         .HasColumnType("int");
 
                     b.Property<string>("Note")
                         .HasMaxLength(300)
                         .HasColumnType("varchar(300)");
+
+                    b.Property<TimeOnly?>("StartTime")
+                        .HasColumnType("time(6)");
 
                     b.Property<Guid>("UserId")
                         .HasColumnType("char(36)");
@@ -2287,6 +2347,16 @@ namespace PersonalFinance.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("SavingAccount");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusCareStay", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.LedgerEntry", "LedgerEntry")
+                        .WithMany()
+                        .HasForeignKey("LedgerEntryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("LedgerEntry");
                 });
 
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusHourPass", b =>

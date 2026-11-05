@@ -20,11 +20,11 @@ namespace PersonalFinance.Api.Controllers
 
         [HttpGet("expenses")]
         public async Task<ActionResult<IReadOnlyList<ZeusExpenseDto>>> Expenses(
-            [FromQuery] int year, [FromQuery] int month, CancellationToken ct)
+            [FromQuery] int year, [FromQuery] int month, [FromQuery] string? provider, CancellationToken ct)
         {
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
-            return Ok(await service.ExpensesAsync(userId.Value, year, month, ct));
+            return Ok(await service.ExpensesAsync(userId.Value, year, month, provider, ct));
         }
 
         [HttpPost("passes")]
@@ -65,6 +65,46 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
             return Ok(await service.RemoveUsageAsync(userId.Value, id, ct));
+        }
+
+        [HttpPost("care")]
+        public async Task<ActionResult<ZeusSummaryDto>> AddCare(SaveZeusCareStayDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.SaveCareAsync(userId.Value, null, dto, ct));
+        }
+
+        [HttpPut("care/{id:guid}")]
+        public async Task<ActionResult<ZeusSummaryDto>> UpdateCare(Guid id, SaveZeusCareStayDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.SaveCareAsync(userId.Value, id, dto, ct));
+        }
+
+        [HttpDelete("care/{id:guid}")]
+        public async Task<ActionResult<ZeusSummaryDto>> RemoveCare(Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.RemoveCareAsync(userId.Value, id, ct));
+        }
+
+        [HttpPost("care/payments")]
+        public async Task<ActionResult<ZeusSummaryDto>> PayCare(PayZeusCareDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.PayCareAsync(userId.Value, dto, ct));
+        }
+
+        [HttpDelete("care/{id:guid}/payment")]
+        public async Task<ActionResult<ZeusSummaryDto>> UnlinkCarePayment(Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await service.UnlinkCarePaymentAsync(userId.Value, id, ct));
         }
     }
 }

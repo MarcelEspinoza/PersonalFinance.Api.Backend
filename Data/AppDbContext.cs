@@ -30,6 +30,7 @@ namespace PersonalFinance.Api.Data
         public DbSet<Budget> Budgets { get; set; }
         public DbSet<ZeusHourPass> ZeusHourPasses => Set<ZeusHourPass>();
         public DbSet<ZeusHourUsage> ZeusHourUsages => Set<ZeusHourUsage>();
+        public DbSet<ZeusCareStay> ZeusCareStays => Set<ZeusCareStay>();
 
         // Modelo de dominio nuevo (ledger). Convive con el anterior hasta que
         // se porten controladores y servicios. Se expone vía IAppDbContext
@@ -216,6 +217,18 @@ namespace PersonalFinance.Api.Data
                 entity.HasKey(usage => usage.Id);
                 entity.Property(usage => usage.Note).HasMaxLength(300);
                 entity.HasIndex(usage => new { usage.UserId, usage.Date });
+            });
+            modelBuilder.Entity<ZeusCareStay>(entity =>
+            {
+                entity.ToTable("ZeusCareStays");
+                entity.HasKey(stay => stay.Id);
+                entity.Property(stay => stay.Provider).HasMaxLength(20);
+                entity.Property(stay => stay.Kind).HasMaxLength(10);
+                entity.Property(stay => stay.Note).HasMaxLength(300);
+                entity.Property(stay => stay.Amount).HasPrecision(18, 2);
+                entity.HasIndex(stay => new { stay.UserId, stay.Provider, stay.Date });
+                entity.HasOne(stay => stay.LedgerEntry).WithMany()
+                    .HasForeignKey(stay => stay.LedgerEntryId).OnDelete(DeleteBehavior.Restrict);
             });
         }
 
