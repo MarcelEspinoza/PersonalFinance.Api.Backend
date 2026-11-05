@@ -26,6 +26,8 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<SettlementDetailDto> AddFromEntryAsync(Guid userId, Guid id, AddFromEntryDto dto, CancellationToken ct);
         Task<SettlementDetailDto> AssignEntryAsync(Guid userId, AssignEntryDto dto, CancellationToken ct);
         Task<IReadOnlyList<SettlementCandidateDto>> GetCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<IReadOnlyList<SettlementCandidateDto>> GetPaymentCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<SettlementDetailDto> LinkPaymentAsync(Guid userId, Guid id, Guid entryId, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct);
         Task<SettlementDetailDto> MarkPaidAsync(Guid userId, Guid id, CancellationToken ct);
@@ -279,6 +281,12 @@ namespace PersonalFinance.Api.Features.Settlements
         public async Task DeleteAsync(Guid userId, Guid id, CancellationToken ct)
         {
             var settlement = await LoadAsync(userId, id, ct);
+            var entryIds = settlement.Lines
+                .Where(line => line.LedgerEntryId != null)
+                .Select(line => line.LedgerEntryId!.Value)
+                .ToList();
+            settlement.Lines.Clear();
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct, entryIds);
             _db.Settlements.Remove(settlement);
             await _db.SaveChangesAsync(ct);
         }
@@ -289,9 +297,11 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadEditableAsync(userId, id, ct);
             await EnsureOwnEntryAsync(userId, dto.LedgerEntryId, ct);
             var line = BuildLine(settlement, dto);
+            await SettlementEntryCoverage.AllocateAsync(_db, userId, line, ct);
             settlement.Lines.Add(line);
             _db.SettlementLines.Add(line);
             settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -303,6 +313,9 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadEditableAsync(userId, id, ct);
             var line = settlement.Lines.FirstOrDefault(l => l.Id == lineId)
                 ?? throw new NotFoundException("No encuentro esa línea.");
+            var previousEntryIds = line.LedgerEntryId is { } previousId
+                ? new[] { previousId }
+                : Array.Empty<Guid>();
             if (dto.LedgerEntryId != line.LedgerEntryId)
                 await EnsureOwnEntryAsync(userId, dto.LedgerEntryId, ct);
 
@@ -311,8 +324,12 @@ namespace PersonalFinance.Api.Features.Settlements
             line.Amount = Round(Math.Abs(dto.Amount));
             line.FullAmount = dto.FullAmount is { } full ? Round(Math.Abs(full)) : null;
             line.LedgerEntryId = dto.LedgerEntryId;
+            if (previousEntryIds.FirstOrDefault() != dto.LedgerEntryId)
+                line.AllocatesPendingEntry = false;
+            await SettlementEntryCoverage.AllocateAsync(_db, userId, line, ct);
 
             settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct, previousEntryIds);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -324,10 +341,12 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadEditableAsync(userId, id, ct);
             var line = settlement.Lines.FirstOrDefault(l => l.Id == lineId)
                 ?? throw new NotFoundException("No encuentro esa línea.");
+            var entryIds = line.LedgerEntryId is { } entryId ? new[] { entryId } : Array.Empty<Guid>();
 
             settlement.Lines.Remove(line);
             _db.SettlementLines.Remove(line);
             settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct, entryIds);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -338,6 +357,7 @@ namespace PersonalFinance.Api.Features.Settlements
         {
             var settlement = await LoadEditableAsync(userId, id, ct);
             await AddEntryLineAsync(userId, settlement, dto.LedgerEntryId, dto.Kind, dto.SharePercent, dto.Amount, ct);
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -379,6 +399,7 @@ namespace PersonalFinance.Api.Features.Settlements
             }
 
             await AddEntryLineAsync(userId, settlement, dto.LedgerEntryId, dto.Kind, dto.SharePercent, dto.Amount, ct);
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -402,7 +423,7 @@ namespace PersonalFinance.Api.Features.Settlements
                 .ToListAsync(ct);
 
             return entries
-                .Where(e => InPeriod(e, settlement))
+                .Where(e => InPeriod(e, settlement) && e.EffectiveAmount > 0m)
                 .OrderBy(e => EffectiveDate(e))
                 .Select(e => new SettlementCandidateDto(
                     e.Id,
@@ -413,8 +434,78 @@ namespace PersonalFinance.Api.Features.Settlements
                     e.Concept?.Name ?? "Sin concepto",
                     Round(e.EffectiveAmount),
                     e.Direction == EntryDirection.In ? "In" : "Out",
-                    used.Contains(e.Id)))
+                    e.Status == EntryStatus.Paid
+                        ? used.Contains(e.Id)
+                        : settlement.Lines.Any(line => line.LedgerEntryId == e.Id),
+                    e.Status == EntryStatus.Paid))
                 .ToList();
+        }
+
+        public async Task<IReadOnlyList<SettlementCandidateDto>> GetPaymentCandidatesAsync(
+            Guid userId, Guid id, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            if (settlement.Status == SettlementStatus.Closed)
+                return Array.Empty<SettlementCandidateDto>();
+            var remaining = SettlementForecast.Remaining(settlement);
+            if (remaining == 0m) return Array.Empty<SettlementCandidateDto>();
+
+            var direction = remaining > 0m ? EntryDirection.In : EntryDirection.Out;
+            var used = _db.SettlementLines
+                .Where(line => line.Settlement!.UserId == userId && line.LedgerEntryId != null)
+                .Select(line => line.LedgerEntryId!.Value);
+            var entries = await _db.LedgerEntries
+                .AsNoTracking()
+                .Include(entry => entry.Concept)
+                .Where(entry => entry.UserId == userId
+                    && entry.Status == EntryStatus.Paid && !entry.IsTransfer && entry.AccountId != null
+                    && entry.Direction == direction && entry.ActualAmount > 0m
+                    && entry.ActualAmount <= Math.Abs(remaining)
+                    && (entry.ValueDate ?? entry.DueDate) >= settlement.PeriodStart
+                    && !used.Contains(entry.Id))
+                .OrderByDescending(entry => entry.ActualAmount == Math.Abs(remaining))
+                .ThenByDescending(entry => entry.ValueDate ?? entry.DueDate)
+                .Take(100)
+                .ToListAsync(ct);
+
+            return entries
+                .OrderBy(entry => Math.Abs(entry.ActualAmount!.Value - Math.Abs(remaining)))
+                .ThenByDescending(EffectiveDate)
+                .Select(entry => new SettlementCandidateDto(
+                    entry.Id, EffectiveDate(entry),
+                    entry.Description ?? entry.Concept?.Name ?? "Movimiento",
+                    entry.Concept?.Name ?? "Sin categoría",
+                    entry.ActualAmount!.Value, direction == EntryDirection.In ? "In" : "Out", false))
+                .ToList();
+        }
+
+        public async Task<SettlementDetailDto> LinkPaymentAsync(
+            Guid userId, Guid id, Guid entryId, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            if (settlement.Status == SettlementStatus.Closed)
+                throw new BusinessRuleException("La liquidación ya está pagada.");
+            var entry = await _db.LedgerEntries.AsNoTracking()
+                .FirstOrDefaultAsync(entry => entry.UserId == userId && entry.Id == entryId, ct)
+                ?? throw new NotFoundException("No encuentro ese movimiento.");
+            if (entry.Status != EntryStatus.Paid || entry.IsTransfer
+                || entry.AccountId is null || entry.ActualAmount is null or <= 0m)
+                throw new BusinessRuleException("Elige un cobro o pago real del banco.");
+            if (await _db.SettlementLines.AnyAsync(line =>
+                line.Settlement!.UserId == userId && line.LedgerEntryId == entryId, ct))
+                throw new BusinessRuleException("Ese movimiento ya está incluido en una liquidación.");
+
+            var signed = entry.Direction == EntryDirection.In ? entry.ActualAmount.Value : -entry.ActualAmount.Value;
+            var remaining = SettlementForecast.Remaining(settlement);
+            if (Math.Sign(signed) != Math.Sign(remaining) || Math.Abs(signed) > Math.Abs(remaining))
+                throw new BusinessRuleException("La dirección o el importe no corresponde al neto pendiente de esta liquidación.");
+            SettlementPaymentLinker.ApplyPayment(
+                _db, settlement,
+                new SettlementPaymentCandidate(entry.Id, entry.Description ?? string.Empty, signed, EffectiveDate(entry)),
+                _clock.UtcNow);
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
+            await _db.SaveChangesAsync(ct);
+            return await ToDetailAsync(userId, settlement, ct);
         }
 
         public Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct) =>
@@ -458,6 +549,7 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadAsync(userId, id, ct);
             settlement.Status = SettlementStatus.Closed;
             settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -469,6 +561,7 @@ namespace PersonalFinance.Api.Features.Settlements
             settlement.Status = SettlementStatus.Draft;
             settlement.SentAt = null;
             settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
@@ -495,9 +588,13 @@ namespace PersonalFinance.Api.Features.Settlements
             var share = ResolveShare(full, sharePercent, amount);
 
             var resolvedKind = kind is null
-                ? (entry.Direction == EntryDirection.In
-                    ? SettlementLineKind.Payment
-                    : SettlementLineKind.Charge)
+                ? entry.Status == EntryStatus.Paid
+                    ? entry.Direction == EntryDirection.In
+                        ? SettlementLineKind.Payment
+                        : SettlementLineKind.Charge
+                    : entry.Direction == EntryDirection.In
+                        ? SettlementLineKind.Charge
+                        : SettlementLineKind.Deduction
                 : ParseKind(kind);
 
             var line = new SettlementLine
@@ -515,6 +612,7 @@ namespace PersonalFinance.Api.Features.Settlements
                 CreatedAt = _clock.UtcNow
             };
 
+            await SettlementEntryCoverage.AllocateAsync(_db, userId, line, ct);
             settlement.Lines.Add(line);
             _db.SettlementLines.Add(line);
             settlement.UpdatedAt = _clock.UtcNow;
@@ -703,7 +801,8 @@ namespace PersonalFinance.Api.Features.Settlements
                     .OrderBy(l => l.SortOrder)
                     .ThenBy(l => l.CreatedAt)
                     .Select(l => new SettlementLineDto(
-                        l.Id, l.Kind.ToString(), l.Description, l.Amount, l.FullAmount, l.LedgerEntryId, l.SortOrder))
+                        l.Id, l.Kind.ToString(), l.Description, l.Amount, l.FullAmount, l.LedgerEntryId, l.SortOrder,
+                        l.AllocatesPendingEntry))
                     .ToList(),
                 message,
                 WhatsAppLink.Build(person?.PhoneNumber, message),

@@ -97,6 +97,8 @@ namespace PersonalFinance.Api.Data.Configuration
             e.ToTable("LedgerEntries");
             e.HasKey(x => x.Id);
             e.Property(x => x.ForecastAmount).HasColumnType(Money);
+            e.Property(x => x.SettlementAllocatedAmount).HasColumnType(Money).HasDefaultValue(0m);
+            e.Property(x => x.SettlementSettledAmount).HasColumnType(Money).HasDefaultValue(0m);
             e.Property(x => x.ActualAmount).HasColumnType(Money);
             e.Property(x => x.Description).HasMaxLength(300);
             e.Property(x => x.Notes).HasMaxLength(500);
@@ -105,6 +107,8 @@ namespace PersonalFinance.Api.Data.Configuration
             e.Ignore(x => x.Remaining);
             e.Ignore(x => x.EffectiveAmount);
             e.Ignore(x => x.SignedEffectiveAmount);
+            e.Ignore(x => x.CashForecastAmount);
+            e.Ignore(x => x.IsSettled);
 
             e.HasOne(x => x.Period)
                 .WithMany(p => p.Entries)

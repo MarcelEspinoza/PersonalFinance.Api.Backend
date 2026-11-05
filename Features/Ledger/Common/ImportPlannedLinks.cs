@@ -24,11 +24,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public static readonly Expression<Func<LedgerEntry, bool>> IsOpenExpression = entry =>
             (entry.Status == EntryStatus.Planned || entry.Status == EntryStatus.Pending) &&
             entry.ImportRowId == null &&
+            entry.SettlementAllocatedAmount == 0m &&
             !entry.IsTransfer;
 
         public static bool IsOpen(LedgerEntry entry) =>
             entry.Status is EntryStatus.Planned or EntryStatus.Pending &&
             entry.ImportRowId == null &&
+            entry.SettlementAllocatedAmount == 0m &&
             !entry.IsTransfer;
 
         public static EntryDirection DirectionOf(decimal amount) =>

@@ -293,6 +293,11 @@ namespace PersonalFinance.Api.Controllers
                 .ToListAsync(ct);
             var monthStart = new DateOnly(_clock.Today.Year, _clock.Today.Month, 1);
 
+            if (await _db.LedgerEntries.AnyAsync(entry =>
+                entry.UserId == userId.Value && entry.ConceptId == conceptId
+                && entry.DueDate >= monthStart && entry.SettlementAllocatedAmount > 0m, ct))
+                return BadRequest("Hay movimientos de esta categoría incluidos en una liquidación. Revísalos allí antes de cambiar su regla.");
+
             concept.Nature = dto.Nature;
 
             // Un fijo sin importe, día ni cuenta no lleva regla: sus cuotas se apuntan a mano

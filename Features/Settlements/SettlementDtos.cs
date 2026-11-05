@@ -18,7 +18,8 @@ namespace PersonalFinance.Api.Features.Settlements
         decimal Amount,
         decimal? FullAmount,
         Guid? LedgerEntryId,
-        int SortOrder);
+        int SortOrder,
+        bool AllocatesPendingEntry = false);
 
     public sealed record SettlementTotalsDto(
         decimal Charges,
@@ -122,7 +123,10 @@ namespace PersonalFinance.Api.Features.Settlements
         string ConceptName,
         decimal Amount,
         string Direction,
-        bool AlreadyAdded);
+        bool AlreadyAdded,
+        bool IsPaid = true);
+
+    public sealed record LinkSettlementPaymentDto(Guid LedgerEntryId);
 
     /// <summary>
     /// Imputa un movimiento del libro. Si se manda <see cref="SharePercent"/>

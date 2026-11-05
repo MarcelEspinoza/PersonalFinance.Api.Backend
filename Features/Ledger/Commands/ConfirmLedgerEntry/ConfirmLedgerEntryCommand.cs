@@ -24,10 +24,15 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry
 
         public async Task<MonthlyEntryDto> Handle(ConfirmLedgerEntryCommand request, CancellationToken ct)
         {
-            var entry = await LedgerGuards.LoadEditableEntryAsync(_db, request.UserId, request.EntryId, ct);
+            var entry = await LedgerGuards.LoadEditableEntryAsync(
+                _db, request.UserId, request.EntryId, ct, allowSettlementAllocation: true);
 
             if (entry.Status == EntryStatus.Skipped)
                 throw new BusinessRuleException("El asiento está descartado. Reactívalo antes de confirmarlo.");
+            if (entry.SettlementAllocatedAmount > 0m
+                && (entry.Status == EntryStatus.Paid || entry.Remaining <= 0m
+                    || request.Payload.ActualAmount > entry.Remaining))
+                throw new BusinessRuleException("Solo puedes confirmar la parte que no está incluida en la liquidación.");
 
             await LedgerGuards.EnsureAccountBelongsToUserAsync(_db, request.UserId, request.Payload.AccountId, ct);
 

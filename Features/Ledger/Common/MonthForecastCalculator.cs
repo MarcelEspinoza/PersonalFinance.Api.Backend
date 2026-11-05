@@ -182,6 +182,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     // Any entry of the rule in the month (even skipped) means the rule is already written.
                     if (entry.RecurringRuleId is { } entryRuleId) materializedRuleIds.Add(entryRuleId);
                     if (entry.Status == EntryStatus.Skipped || entry.IsTransfer) continue;
+                    if (entry.Status != EntryStatus.Paid && entry.CashForecastAmount <= 0m) continue;
 
                     var isPaid = entry.Status == EntryStatus.Paid;
                     items.Add(new ForecastItem(
@@ -189,7 +190,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         entry.Id.ToString(),
                         entry.DueDate,
                         entry.Direction,
-                        isPaid ? entry.ActualAmount ?? entry.ForecastAmount : entry.ForecastAmount,
+                        isPaid ? entry.ActualAmount ?? entry.CashForecastAmount : entry.CashForecastAmount,
                         Describe(entry.Description, entry.ConceptId),
                         entry.ConceptId,
                         ConceptName(entry.ConceptId),
@@ -231,7 +232,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             item.Direction == direction &&
                             item.Kind is ForecastItemKind.Entry or ForecastItemKind.RuleOccurrence)
                         .ToList();
-                    var used = conceptItems.Sum(item => item.Amount);
+                    var used = conceptItems.Sum(item => item.Amount) + input.Entries
+                        .Where(entry => entry.ConceptId == concept.Id
+                            && entry.Status != EntryStatus.Skipped
+                            && entry.DueDate >= monthStart && entry.DueDate <= monthEnd)
+                        .Sum(entry => entry.SettlementAllocatedAmount);
                     var spent = conceptItems.Where(item => item.IsPaid).Sum(item => item.Amount);
                     var reserve = Math.Max(0m, (limit ?? 0m) - used);
                     variables.Add(new ForecastVariableLine(

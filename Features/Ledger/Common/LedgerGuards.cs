@@ -3,6 +3,7 @@ using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
+using PersonalFinance.Domain.Settlements.Entities;
 
 namespace PersonalFinance.Api.Features.Ledger.Common
 {
@@ -17,7 +18,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// lo mismo (no encontrado) para no revelar qué identificadores existen.
         /// </summary>
         public static async Task<LedgerEntry> LoadEditableEntryAsync(
-            IAppDbContext db, Guid userId, Guid entryId, CancellationToken ct)
+            IAppDbContext db, Guid userId, Guid entryId, CancellationToken ct, bool allowSettlementAllocation = false)
         {
             var entry = await db.LedgerEntries
                 .Include(e => e.Period)
@@ -28,6 +29,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (entry.Period is not null && entry.Period.Status == PeriodStatus.Closed)
                 throw new BusinessRuleException(
                     $"El periodo {entry.Period.Year}-{entry.Period.Month:D2} está cerrado. Reábrelo para modificarlo.");
+
+            if (!allowSettlementAllocation && entry.SettlementAllocatedAmount > 0m)
+                throw new BusinessRuleException(
+                    "Este movimiento está incluido en una liquidación. Quita su parte de allí antes de modificarlo.");
+            if (await db.SettlementLines.AnyAsync(line =>
+                line.Settlement!.UserId == userId && line.LedgerEntryId == entryId
+                && (line.Kind == SettlementLineKind.Payment || line.Kind == SettlementLineKind.PaymentSent), ct))
+                throw new BusinessRuleException(
+                    "Este movimiento paga una liquidación. Desvincúlalo allí antes de modificarlo.");
 
             return entry;
         }

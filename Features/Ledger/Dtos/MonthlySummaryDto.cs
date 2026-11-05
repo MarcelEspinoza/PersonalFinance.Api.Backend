@@ -71,6 +71,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public DateOnly? ValueDate { get; set; }
         public decimal ForecastAmount { get; set; }
         public decimal? ActualAmount { get; set; }
+        public decimal SettlementAllocatedAmount { get; set; }
+        public decimal SettlementSettledAmount { get; set; }
         public decimal Remaining { get; set; }
         public string? Description { get; set; }
         /// <summary>Nota libre del usuario (por qué se pagó así, a quién se debe, etc.).</summary>

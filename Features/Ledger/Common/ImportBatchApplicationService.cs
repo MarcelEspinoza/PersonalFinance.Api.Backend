@@ -607,6 +607,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Where(row => row.ConfirmedConceptId.HasValue || row.SuggestedConceptId.HasValue)
                 .ToList();
             if (candidates.Count == 0) return new();
+            var settlementRowIds = await SettlementPaymentLinker.FindCandidateIdsAsync(
+                _db,
+                userId,
+                candidates.Select(row => new SettlementPaymentCandidate(
+                    row.Id, row.RawDescription, row.Amount, row.ValueDate)).ToList(),
+                ct);
+            candidates = candidates.Where(row => !settlementRowIds.Contains(row.Id)).ToList();
+            if (candidates.Count == 0) return new();
 
             var firstDate = candidates.Min(row => row.ValueDate).AddDays(-ForecastMatchWindowDays);
             var lastDate = candidates.Max(row => row.ValueDate).AddDays(ForecastMatchWindowDays);
@@ -628,6 +636,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var availableEntries = existingEntries
                 .Where(entry =>
                     entry.Status is not (EntryStatus.Paid or EntryStatus.Skipped) &&
+                    entry.CashForecastAmount > 0m &&
                     !excludedEntryIds.Contains(entry.Id))
                 .ToList();
             var rules = await _db.RecurringRules
@@ -671,9 +680,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         entry.Direction == direction &&
                         Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays &&
                         InAllowedMonth(entry.DueDate) &&
-                        IsPlausibleAmount(amount, entry.ForecastAmount))
+                        IsPlausibleAmount(amount, entry.CashForecastAmount) &&
+                        (entry.SettlementAllocatedAmount == 0m || amount <= entry.CashForecastAmount))
                     .Select(entry => new ForecastMatch(
-                        row, conceptId, direction, entry.DueDate, entry.ForecastAmount, entry, null)));
+                        row, conceptId, direction, entry.DueDate, entry.CashForecastAmount, entry, null)));
 
                 foreach (var rule in rules.Where(rule =>
                              rule.ConceptId == conceptId &&
@@ -705,11 +715,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                  !excludedEntryIds.Contains(occurrence.Id) &&
                                  occurrence.ConceptId == conceptId &&
                                  occurrence.Direction == direction &&
-                                 IsPlausibleAmount(amount, occurrence.ForecastAmount) &&
+                                 occurrence.CashForecastAmount > 0m &&
+                                 IsPlausibleAmount(amount, occurrence.CashForecastAmount) &&
+                                 (occurrence.SettlementAllocatedAmount == 0m || amount <= occurrence.CashForecastAmount) &&
                                  !options.Any(option => option.Row.Id == row.Id && option.Entry?.Id == occurrence.Id))
                         {
                             options.Add(new ForecastMatch(
-                                row, conceptId, direction, occurrence.DueDate, occurrence.ForecastAmount, occurrence, null));
+                                row, conceptId, direction, occurrence.DueDate, occurrence.CashForecastAmount, occurrence, null));
                         }
                     }
                 }

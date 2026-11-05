@@ -235,6 +235,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                 item.DueDate >= monthStart &&
                                 item.DueDate <= currentMonthEnd)
                             .Sum(item => item.Amount);
+                    used += input.Entries
+                        .Where(entry => entry.ConceptId == concept.Id
+                            && entry.Status != EntryStatus.Skipped
+                            && entry.DueDate >= monthStart && entry.DueDate <= currentMonthEnd)
+                        .Sum(entry => entry.SettlementAllocatedAmount);
                     var remainder = Math.Max(0m, limit - used);
                     if (remainder <= 0m) continue;
 
@@ -279,7 +284,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     ConceptName(conceptById, entry.ConceptId),
                     entry.AccountId,
                     entry.Direction,
-                    entry.Remaining > 0m ? entry.Remaining : entry.ForecastAmount,
+                    entry.Remaining > 0m ? entry.Remaining : entry.CashForecastAmount,
                     entry.IsTransfer,
                     EntryId: entry.Id))
                 .ToList();
@@ -400,6 +405,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         .Where(item => item.ConceptId == concept.Id && item.DueDate >= monthStart)
                         .Sum(item => item.Amount);
 
+                used += input.Entries
+                    .Where(entry => entry.ConceptId == concept.Id
+                        && entry.Status != EntryStatus.Skipped
+                        && entry.DueDate >= monthStart && entry.DueDate <= monthEnd)
+                    .Sum(entry => entry.SettlementAllocatedAmount);
                 var remainder = Math.Max(0m, limit - used);
                 if (concept.Kind == ConceptKind.Income) incomeExpected += remainder;
                 else if (concept.Kind == ConceptKind.Expense) expenseReserve += remainder;
@@ -488,7 +498,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
                 else
                 {
-                    planned = entries.Sum(entry => entry.ForecastAmount)
+                    planned = entries.Sum(entry => entry.CashForecastAmount)
                         + ruleItems.Where(item => item.ConceptId == concept.Id).Sum(item => item.Amount);
                 }
 

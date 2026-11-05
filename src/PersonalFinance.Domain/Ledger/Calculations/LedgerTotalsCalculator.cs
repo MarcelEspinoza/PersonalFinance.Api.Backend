@@ -48,13 +48,13 @@ namespace PersonalFinance.Domain.Ledger.Calculations
 
             return new MonthlyTotals(
                 CarryOver: carryOver,
-                IncomeForecast: incoming.Sum(e => e.ForecastAmount),
+                IncomeForecast: incoming.Sum(e => e.CashForecastAmount),
                 IncomeActual: incoming.Sum(e => e.ActualAmount ?? 0m),
-                ExpenseForecast: outgoing.Sum(e => e.ForecastAmount),
+                ExpenseForecast: outgoing.Sum(e => e.CashForecastAmount),
                 ExpenseActual: outgoing.Sum(e => e.ActualAmount ?? 0m),
-                PendingIncome: incoming.Where(e => e.Status != EntryStatus.Paid).Sum(e => e.ForecastAmount),
-                PendingExpense: outgoing.Where(e => e.Status != EntryStatus.Paid).Sum(e => e.ForecastAmount),
-                TransferForecast: transfers.Sum(e => Signed(e.Direction, e.ForecastAmount)),
+                PendingIncome: incoming.Where(e => e.Status != EntryStatus.Paid).Sum(e => e.CashForecastAmount),
+                PendingExpense: outgoing.Where(e => e.Status != EntryStatus.Paid).Sum(e => e.CashForecastAmount),
+                TransferForecast: transfers.Sum(e => Signed(e.Direction, e.CashForecastAmount)),
                 TransferActual: transfers.Sum(e => Signed(e.Direction, e.ActualAmount ?? 0m)));
         }
 

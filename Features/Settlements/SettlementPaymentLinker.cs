@@ -15,13 +15,22 @@ namespace PersonalFinance.Api.Features.Settlements
 
     /// <summary>
     /// When a bank file is applied, a movement whose text contains a person's bank name is
-    /// booked in her open settlements: money in pays what she owes me, money out pays what I
-    /// owe her. The oldest settlement is paid first and the newest one keeps any excess. A
-    /// sent settlement that reaches 0 is marked as paid (closed).
+    /// booked against a single open settlement with the exact signed remaining amount.
+    /// Ambiguous matches and differing amounts are left for explicit review.
     /// </summary>
     public static class SettlementPaymentLinker
     {
         private const int MinBankNameLength = 4;
+
+        public static async Task<HashSet<Guid>> FindCandidateIdsAsync(
+            IAppDbContext db,
+            Guid userId,
+            IReadOnlyCollection<SettlementPaymentCandidate> candidates,
+            CancellationToken ct)
+        {
+            var targets = await FindTargetsAsync(db, userId, candidates, ct);
+            return targets.Keys.ToHashSet();
+        }
 
         /// <returns>How many bank movements were booked in a settlement.</returns>
         public static async Task<int> LinkAsync(
@@ -33,27 +42,11 @@ namespace PersonalFinance.Api.Features.Settlements
         {
             if (candidates.Count == 0) return 0;
 
-            var people = (await db.Counterparties
-                    .AsNoTracking()
-                    .Where(person => person.UserId == userId && person.BankName != null)
-                    .Select(person => new { person.Id, person.BankName })
-                    .ToListAsync(ct))
-                .Select(person => (person.Id, BankName: Normalize(person.BankName)))
-                .Where(person => person.BankName.Length >= MinBankNameLength)
-                .OrderByDescending(person => person.BankName.Length)
-                .ToList();
-            if (people.Count == 0) return 0;
-
-            var personIds = people.Select(person => person.Id).ToList();
-            var settlements = await db.Settlements
-                .Include(settlement => settlement.Lines)
-                .Where(settlement => settlement.UserId == userId && personIds.Contains(settlement.CounterpartyId))
-                .ToListAsync(ct);
-            if (settlements.Count == 0) return 0;
-
+            var targetsByCandidate = await FindTargetsAsync(db, userId, candidates, ct);
             var entryIds = candidates.Select(candidate => candidate.LedgerEntryId).ToList();
             var used = (await db.SettlementLines
-                    .Where(line => line.LedgerEntryId != null && entryIds.Contains(line.LedgerEntryId.Value))
+                    .Where(line => line.Settlement!.UserId == userId
+                        && line.LedgerEntryId != null && entryIds.Contains(line.LedgerEntryId.Value))
                     .Select(line => line.LedgerEntryId!.Value)
                     .ToListAsync(ct))
                 .ToHashSet();
@@ -61,48 +54,74 @@ namespace PersonalFinance.Api.Features.Settlements
             var linked = 0;
             foreach (var candidate in candidates.OrderBy(candidate => candidate.Date))
             {
-                if (candidate.SignedAmount == 0m || !used.Add(candidate.LedgerEntryId)) continue;
+                if (!used.Add(candidate.LedgerEntryId)
+                    || !targetsByCandidate.TryGetValue(candidate.LedgerEntryId, out var targets))
+                    continue;
+
+                var matching = targets
+                    .Where(settlement => settlement.Status != SettlementStatus.Closed
+                        && SettlementForecast.Remaining(settlement) == candidate.SignedAmount)
+                    .ToList();
+                if (matching.Count != 1) continue;
+
+                var settlement = matching[0];
+                ApplyPayment(db, settlement, candidate, now);
+                await SettlementEntryCoverage.RefreshAsync(db, settlement, ct);
+                linked++;
+            }
+
+            return linked;
+        }
+
+        private static async Task<Dictionary<Guid, List<Settlement>>> FindTargetsAsync(
+            IAppDbContext db,
+            Guid userId,
+            IReadOnlyCollection<SettlementPaymentCandidate> candidates,
+            CancellationToken ct)
+        {
+            var result = new Dictionary<Guid, List<Settlement>>();
+            if (candidates.Count == 0) return result;
+            var people = (await db.Counterparties
+                    .AsNoTracking()
+                    .Where(person => person.UserId == userId && person.IsActive && person.BankName != null)
+                    .Select(person => new { person.Id, person.BankName })
+                    .ToListAsync(ct))
+                .Select(person => (person.Id, BankName: Normalize(person.BankName)))
+                .Where(person => person.BankName.Length >= MinBankNameLength)
+                .OrderByDescending(person => person.BankName.Length)
+                .ToList();
+            if (people.Count == 0) return result;
+
+            var personIds = people.Select(person => person.Id).ToList();
+            var settlements = await db.Settlements
+                .Include(settlement => settlement.Lines)
+                .Where(settlement => settlement.UserId == userId && personIds.Contains(settlement.CounterpartyId))
+                .ToListAsync(ct);
+            if (settlements.Count == 0) return result;
+
+            foreach (var candidate in candidates.OrderBy(candidate => candidate.Date))
+            {
+                if (candidate.SignedAmount == 0m) continue;
 
                 var text = $" {Normalize(candidate.BankText)} ";
-                var personId = people
+                var matchingPeople = people
                     .Where(person => text.Contains($" {person.BankName} ", StringComparison.Ordinal))
-                    .Select(person => (Guid?)person.Id)
-                    .FirstOrDefault();
-                if (personId is null) continue;
+                    .ToList();
+                if (matchingPeople.Count != 1) continue;
 
                 var isIncoming = candidate.SignedAmount > 0m;
                 var targets = SettlementForecast
-                    .Open(settlements.Where(settlement => settlement.CounterpartyId == personId.Value))
+                    .Open(settlements.Where(settlement => settlement.CounterpartyId == matchingPeople[0].Id))
                     .Where(settlement => settlement.PeriodStart <= candidate.Date)
                     .Where(settlement => isIncoming
                         ? SettlementForecast.Remaining(settlement) > 0m
                         : SettlementForecast.Remaining(settlement) < 0m)
                     .ToList();
                 if (targets.Count == 0) continue;
-
-                var full = Math.Abs(candidate.SignedAmount);
-                var left = full;
-                for (var index = 0; index < targets.Count && left > 0m; index++)
-                {
-                    var settlement = targets[index];
-                    var take = index == targets.Count - 1
-                        ? left
-                        : Math.Min(left, Math.Abs(SettlementForecast.Remaining(settlement)));
-                    AddLine(db, settlement, isIncoming, take, full, candidate, now);
-                    left -= take;
-
-                    if (settlement.Status == SettlementStatus.Sent
-                        && Math.Abs(SettlementForecast.Remaining(settlement)) < 0.01m)
-                    {
-                        settlement.Status = SettlementStatus.Closed;
-                    }
-                    settlement.UpdatedAt = now;
-                }
-
-                linked++;
+                result[candidate.LedgerEntryId] = targets;
             }
 
-            return linked;
+            return result;
         }
 
         private static void AddLine(
@@ -130,6 +149,19 @@ namespace PersonalFinance.Api.Features.Settlements
 
             settlement.Lines.Add(line);
             db.SettlementLines.Add(line);
+        }
+
+        public static void ApplyPayment(
+            IAppDbContext db,
+            Settlement settlement,
+            SettlementPaymentCandidate candidate,
+            DateTime now)
+        {
+            var amount = Math.Abs(candidate.SignedAmount);
+            AddLine(db, settlement, candidate.SignedAmount > 0m, amount, amount, candidate, now);
+            if (SettlementForecast.Remaining(settlement) == 0m)
+                settlement.Status = SettlementStatus.Closed;
+            settlement.UpdatedAt = now;
         }
 
         /// <summary>Upper case, no accents, only letters and digits split by single spaces.</summary>

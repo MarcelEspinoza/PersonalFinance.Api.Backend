@@ -107,7 +107,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                     var counted = LedgerTotalsCalculator.Live(conceptEntries).ToList();
 
-                    var forecast = counted.Sum(e => e.ForecastAmount);
+                    var forecast = counted.Sum(e => e.CashForecastAmount);
                     var actual = counted.Sum(e => e.ActualAmount ?? 0m);
                     var hasBudget = budgets.TryGetValue(concept.Id, out var limit);
 
@@ -146,12 +146,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         {
             Id = e.Id,
             Direction = e.Direction,
-            Status = e.Status,
+            Status = e.IsSettled ? EntryStatus.Paid
+                : e.Status == EntryStatus.Paid ? EntryStatus.Pending : e.Status,
             DueDate = e.DueDate,
             ValueDate = e.ValueDate,
             ForecastAmount = e.ForecastAmount,
             ActualAmount = e.ActualAmount,
-            Remaining = e.ForecastAmount - (e.ActualAmount ?? 0m),
+            SettlementAllocatedAmount = e.SettlementAllocatedAmount,
+            SettlementSettledAmount = e.SettlementSettledAmount,
+            Remaining = e.Status == EntryStatus.Paid && e.SettlementAllocatedAmount > 0m ? 0m : e.Remaining,
             Description = e.Description,
             Notes = e.Notes,
             AccountId = e.AccountId,

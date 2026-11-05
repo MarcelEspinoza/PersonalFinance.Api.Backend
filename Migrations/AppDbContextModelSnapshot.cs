@@ -1646,6 +1646,16 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<Guid?>("SavingsGoalId")
                         .HasColumnType("char(36)");
 
+                    b.Property<decimal>("SettlementAllocatedAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("decimal(18,2)")
+                        .HasDefaultValue(0m);
+
+                    b.Property<decimal>("SettlementSettledAmount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("decimal(18,2)")
+                        .HasDefaultValue(0m);
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -1975,6 +1985,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)");
+
+                    b.Property<bool>("AllocatesPendingEntry")
+                        .HasColumnType("tinyint(1)");
 
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");

@@ -26,16 +26,16 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             return new DashboardMonthAmounts(
                 counted
                     .Where(entry => entry.Direction == EntryDirection.In && entry.Status == EntryStatus.Paid)
-                    .Sum(entry => entry.ActualAmount ?? entry.ForecastAmount),
+                    .Sum(entry => entry.ActualAmount ?? entry.CashForecastAmount),
                 counted
                     .Where(entry => entry.Direction == EntryDirection.Out && entry.Status == EntryStatus.Paid)
-                    .Sum(entry => entry.ActualAmount ?? entry.ForecastAmount),
+                    .Sum(entry => entry.ActualAmount ?? entry.CashForecastAmount),
                 counted
                     .Where(entry => entry.Direction == EntryDirection.In && entry.Status != EntryStatus.Paid)
-                    .Sum(entry => entry.ForecastAmount),
+                    .Sum(entry => entry.CashForecastAmount),
                 counted
                     .Where(entry => entry.Direction == EntryDirection.Out && entry.Status != EntryStatus.Paid)
-                    .Sum(entry => entry.ForecastAmount));
+                    .Sum(entry => entry.CashForecastAmount));
         }
 
         public static (decimal Income, decimal Expense) ForMonth(

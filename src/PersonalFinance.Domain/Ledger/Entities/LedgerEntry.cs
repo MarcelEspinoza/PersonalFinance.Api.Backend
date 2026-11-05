@@ -47,6 +47,16 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// <summary>Importe real. Null mientras Status no sea Paid.</summary>
         public decimal? ActualAmount { get; set; }
 
+        public decimal SettlementAllocatedAmount { get; set; }
+
+        public decimal SettlementSettledAmount { get; set; }
+
+        public decimal CashForecastAmount => ForecastAmount - SettlementAllocatedAmount;
+
+        public bool IsSettled => Status == EntryStatus.Paid
+            ? SettlementSettledAmount >= SettlementAllocatedAmount
+            : SettlementSettledAmount >= ForecastAmount && SettlementSettledAmount > 0m;
+
         public string? Description { get; set; }
 
         public string? Notes { get; set; }
@@ -74,10 +84,10 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public DateTime? UpdatedAt { get; set; }
 
         /// <summary>Lo que aún falta por ejecutar de esta línea.</summary>
-        public decimal Remaining => ForecastAmount - (ActualAmount ?? 0m);
+        public decimal Remaining => CashForecastAmount - (ActualAmount ?? 0m);
 
         /// <summary>Importe que cuenta en el saldo: el real si existe, si no el previsto.</summary>
-        public decimal EffectiveAmount => ActualAmount ?? ForecastAmount;
+        public decimal EffectiveAmount => ActualAmount ?? CashForecastAmount;
 
         /// <summary>Importe con signo para sumar directamente al saldo del periodo.</summary>
         public decimal SignedEffectiveAmount =>
