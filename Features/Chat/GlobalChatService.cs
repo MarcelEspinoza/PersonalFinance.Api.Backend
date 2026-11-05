@@ -200,6 +200,17 @@ namespace PersonalFinance.Api.Features.Chat
                 "upcomingMonths": la nómina y los recibos fijos suelen vivir en las reglas
                 recurrentes y no como movimientos sueltos.
 
+                "recentLedgerEntries" incluye TODOS los movimientos del mes actual, también
+                las compras ya pagadas, con su id, concepto, descripción, importe y cuenta.
+                Los previstos futuros van en "upcomingMonths", no desplazan esas compras.
+                Si el usuario pide reclasificar compras (por ejemplo, de Supermercado a Compras
+                personales), busca los movimientos concretos en "recentLedgerEntries" y prepara
+                un update_ledger_entry por cada uno con targetId = su id y conceptId = el
+                concepto de destino. Deja amount, date, description y accountId a null: cambiar
+                el concepto no cambia el importe, la fecha, la cuenta ni su estado de pago.
+                Si hay varias compras posibles y no puedes distinguir cuáles pide, pregunta
+                antes de proponer cambios; nunca inventes ids ni crees gastos nuevos para sustituirlas.
+
                 Puedes preparar estas acciones, pero nunca ejecutarlas directamente:
                 - create_expense / create_income: anotan un gasto/ingreso en «Mes» con amount,
                   description, date, conceptId (obligatorio: un concepto del usuario de gasto o de
@@ -551,10 +562,12 @@ namespace PersonalFinance.Api.Features.Chat
             // Lo previsto o pendiente hasta fin de este mes (incluido lo vencido)
             // va siempre, con su id, aunque haya muchas previsiones futuras.
             var localToday = ReminderRules.LocalToday(now);
-            var nextMonthStart = new DateOnly(localToday.Year, localToday.Month, 1).AddMonths(1);
-            var ledgerEntryRows = await _db.LedgerEntries
+            var monthStart = new DateOnly(localToday.Year, localToday.Month, 1);
+            var nextMonthStart = monthStart.AddMonths(1);
+            var additionalEntryIds = await _db.LedgerEntries
                 .AsNoTracking()
                 .Where(entry => entry.UserId == userId &&
+                    (entry.DueDate < monthStart || entry.DueDate >= nextMonthStart) &&
                     (entry.DueDate >= DateOnly.FromDateTime(since) ||
                      ((entry.Status == PersonalFinance.Domain.Ledger.Enums.EntryStatus.Planned ||
                        entry.Status == PersonalFinance.Domain.Ledger.Enums.EntryStatus.Pending) &&
@@ -565,6 +578,16 @@ namespace PersonalFinance.Api.Features.Chat
                     entry.DueDate < nextMonthStart ? 0 : 1)
                 .ThenByDescending(entry => entry.DueDate)
                 .Take(200)
+                .Select(entry => entry.Id)
+                .ToListAsync(ct);
+            var ledgerEntryRows = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.UserId == userId &&
+                    (entry.DueDate >= monthStart && entry.DueDate < nextMonthStart ||
+                     additionalEntryIds.Contains(entry.Id)))
+                .OrderBy(entry => entry.DueDate >= monthStart && entry.DueDate < nextMonthStart ? 0 : 1)
+                .ThenByDescending(entry => entry.DueDate)
+                .ThenBy(entry => entry.Id)
                 .Select(entry => new
                 {
                     entry.Id,
