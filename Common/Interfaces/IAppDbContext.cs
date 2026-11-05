@@ -35,6 +35,8 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<PersonalFinance.Domain.Settlements.Entities.Settlement> Settlements { get; }
         DbSet<PersonalFinance.Domain.Settlements.Entities.SettlementLine> SettlementLines { get; }
         DbSet<PersonalFinance.Api.Models.Entities.Reminder> Reminders { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.ZeusHourPass> ZeusHourPasses { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.ZeusHourUsage> ZeusHourUsages { get; }
 
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
     }

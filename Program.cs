@@ -182,6 +182,7 @@ builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementS
     PersonalFinance.Api.Features.Settlements.SettlementService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.IReminderService,
     PersonalFinance.Api.Features.Reminders.ReminderService>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Zeus.ZeusService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.ReminderEmailDispatcher>();
 // Reminder emails; turn off with Reminders:EmailJobEnabled=false.
 builder.Services.AddHostedService<PersonalFinance.Api.Features.Reminders.ReminderEmailJob>();

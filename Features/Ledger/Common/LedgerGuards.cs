@@ -30,6 +30,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 throw new BusinessRuleException(
                     $"El periodo {entry.Period.Year}-{entry.Period.Month:D2} está cerrado. Reábrelo para modificarlo.");
 
+            if (await db.ZeusHourPasses.AnyAsync(pass =>
+                pass.UserId == userId && pass.LedgerEntryId == entryId, ct))
+                throw new BusinessRuleException(
+                    "Este gasto está vinculado a un bono de Zeus. Retira primero el bono sin consumir en «Zeus» para modificar el gasto.");
+
             if (!allowSettlementAllocation && entry.SettlementAllocatedAmount > 0m)
                 throw new BusinessRuleException(
                     "Este movimiento está incluido en una liquidación. Quita su parte de allí antes de modificarlo.");

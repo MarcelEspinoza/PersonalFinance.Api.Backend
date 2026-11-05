@@ -950,6 +950,66 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusHourPass", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("LedgerEntryId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<int>("Minutes")
+                        .HasColumnType("int");
+
+                    b.Property<DateOnly>("PurchasedOn")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LedgerEntryId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "PurchasedOn");
+
+                    b.ToTable("ZeusHourPasses", (string)null);
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusHourUsage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<int>("Minutes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(300)
+                        .HasColumnType("varchar(300)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Date");
+
+                    b.ToTable("ZeusHourUsages", (string)null);
+                });
+
             modelBuilder.Entity("PersonalFinance.Domain.Advice.Entities.AdviceNote", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2227,6 +2287,17 @@ namespace PersonalFinance.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("SavingAccount");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.ZeusHourPass", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.LedgerEntry", "LedgerEntry")
+                        .WithMany()
+                        .HasForeignKey("LedgerEntryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("LedgerEntry");
                 });
 
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.Account", b =>
