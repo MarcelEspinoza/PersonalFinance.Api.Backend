@@ -223,7 +223,10 @@ namespace PersonalFinance.Api.Data
                 entity.ToTable("ZeusCareStays");
                 entity.HasKey(stay => stay.Id);
                 entity.Property(stay => stay.Provider).HasMaxLength(20);
-                entity.Property(stay => stay.Kind).HasMaxLength(10);
+                entity.Property(stay => stay.Kind).HasMaxLength(10)
+                    .HasConversion(
+                        kind => kind == "cancellation" ? "cancel" : kind,
+                        kind => kind == "cancel" ? "cancellation" : kind);
                 entity.Property(stay => stay.Note).HasMaxLength(300);
                 entity.Property(stay => stay.Amount).HasPrecision(18, 2);
                 entity.HasIndex(stay => new { stay.UserId, stay.Provider, stay.Date });

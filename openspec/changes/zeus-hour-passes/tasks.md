@@ -43,3 +43,14 @@ The user explicitly approved the listed backend/frontend commits, push and deplo
 - [x] 6.5 Obtain separate approval for the exact commits and push before publication.
 
 The user approved commit and push of the previously presented forecast/cancellation follow-up files and messages. This follow-up requires no migration and includes no live care records or expenses.
+
+## 7. Cancellation persistence repair
+
+- [x] 7.1 Diagnose the production save error and map cancellation kinds within the existing database length without changing the public contract.
+- [x] 7.2 Build and verify offline model consistency without tests, migrations or live financial writes.
+- [x] 7.3 Capture the unchanged cancellation form using synthetic data before publication.
+- [x] 7.4 Obtain separate approval for the repair commit and push.
+
+Production logs reported a value too long for `ZeusCareStays.Kind`. The repair stores `cancel` while preserving `cancellation` in the domain/API; `day` and `night` remain unchanged. No schema or live data change is required.
+
+The user explicitly approved the listed repair files, commit message and push after reviewing the synthetic cancellation form.
