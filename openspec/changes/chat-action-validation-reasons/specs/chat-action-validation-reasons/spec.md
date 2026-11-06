@@ -28,3 +28,14 @@ The assistant SHALL log safe movement rejection reasons and SHALL NOT attribute 
 #### Scenario: Unsupported or unrelated proposal failure
 - **WHEN** a rejected action has no specific available validation reason
 - **THEN** the fallback acknowledges that limitation and does not claim that a period is closed or a movement already paid.
+
+### Requirement: Bounded correction of movement references
+The assistant SHALL attempt at most one correction round for invalid category/account references using the current authoritative snapshot, preserve all valid sibling actions, and revalidate every resulting proposal.
+
+#### Scenario: Repeat an existing November expense in December
+- **WHEN** the user asks to keep November's expense and add the same expense in December and the model supplies an invalid category reference
+- **THEN** a correction can reuse the existing movement's active category/account identifiers, preserve the original proposed amount, date and description, and return a December confirmation card without writing or moving either expense.
+
+#### Scenario: Failed or unsafe correction
+- **WHEN** the correction remains invalid, changes non-reference fields, has an unexpected action count or fails at the provider
+- **THEN** no further correction is attempted, valid sibling cards survive, and unresolved proposals retain a specific rejection rather than being executed.

@@ -8,6 +8,8 @@ The assistant rejects a December driving-school expense proposal with a generic 
 - Log a safe rejection reason without exposing raw model responses or financial identifiers.
 - Preserve valid confirmation cards and explain partial rejection without claiming writes occurred.
 - Keep negative projected balances allowed and require explicit confirmation before financial writes.
+- Repair invalid category/account identifiers with one bounded model round using current authoritative identifiers, without altering other proposed fields or valid sibling actions.
+- Clarify that repeating an existing movement in a second month creates a new proposal rather than moving the source.
 
 ## Capabilities
 
