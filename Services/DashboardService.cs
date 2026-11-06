@@ -208,6 +208,7 @@ namespace PersonalFinance.Api.Services
                     ProjectionSource = source,
                     PendingIncome = ledgerTotals.PendingIncome + forecast.RuleIncome + forecast.ReminderIncome + forecast.SettlementIncome,
                     PendingExpense = ledgerTotals.PendingExpense + forecast.RuleExpense + forecast.Reminders + forecast.SettlementExpense,
+                    PassingAdjustment = DashboardLedgerCalculator.PassingAdjustmentForMonth(ledgerEntries, year, month),
                     VariableExpenseReserve = forecast.VariableExpenseReserve,
                     Reminders = forecast.Reminders,
                     ReminderIncome = forecast.ReminderIncome,

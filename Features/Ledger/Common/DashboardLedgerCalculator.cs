@@ -46,5 +46,24 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var totals = BreakdownForMonth(entries, year, month);
             return (totals.ActualIncome + totals.PendingIncome, totals.ActualExpense + totals.PendingExpense);
         }
+
+        public static decimal PassingAdjustmentForMonth(
+            IEnumerable<LedgerEntry> entries,
+            int year,
+            int month)
+        {
+            return entries
+                .Where(entry =>
+                    entry.IsTransfer &&
+                    entry.Status != EntryStatus.Paid &&
+                    entry.Status != EntryStatus.Skipped &&
+                    entry.DueDate.Year == year &&
+                    entry.DueDate.Month == month)
+                .Sum(entry =>
+                {
+                    var amount = entry.Remaining > 0m ? entry.Remaining : entry.CashForecastAmount;
+                    return entry.Direction == EntryDirection.In ? amount : -amount;
+                });
+        }
     }
 }

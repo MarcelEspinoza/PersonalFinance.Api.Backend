@@ -36,6 +36,7 @@ namespace PersonalFinance.Api.Models.Dtos.Dashboard
         public string ProjectionSource { get; set; } = string.Empty;
         public decimal PendingIncome { get; set; }
         public decimal PendingExpense { get; set; }
+        public decimal PassingAdjustment { get; set; }
 
         /// <summary>Part of Expense kept for what is left of the variable expense limits.</summary>
         public decimal VariableExpenseReserve { get; set; }
