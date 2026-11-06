@@ -49,6 +49,7 @@ namespace PersonalFinance.Api.Features.Chat
         private const int MaxApiCallSummaryLength = 300;
         // This calendar month and the next 6, as the dashboard month boxes.
         private const int UpcomingMonthCount = 7;
+        private const int MaxMentionedEntriesPerTerm = 20;
 
         private static readonly JsonSerializerOptions PromptJson = new()
         {
@@ -147,7 +148,13 @@ namespace PersonalFinance.Api.Features.Chat
             var forecasts = await MonthForecastLoader.LoadAsync(
                 _db, userId, new DateOnly(forecastToday.Year, forecastToday.Month, 1), UpcomingMonthCount, forecastToday, ct);
 
-            var snapshot = await BuildSnapshotAsync(userId, ledgerConcepts, forecasts, data, importGroups, adminTargets, ct);
+            var searchTerms = MovementSearchTerms.From(
+                (request.History ?? new())
+                    .Where(h => h?.Role == "user")
+                    .TakeLast(2)
+                    .Select(h => h!.Content)
+                    .Append(request.Message));
+            var snapshot = await BuildSnapshotAsync(userId, ledgerConcepts, forecasts, data, importGroups, adminTargets, searchTerms, ct);
             var snapshotJson = JsonSerializer.Serialize(snapshot, PromptJson);
             var categoriesJson = JsonSerializer.Serialize(categories, PromptJson);
             var conceptsJson = JsonSerializer.Serialize(ledgerConcepts, PromptJson);
@@ -209,6 +216,10 @@ namespace PersonalFinance.Api.Features.Chat
                 "recentLedgerEntries" incluye TODOS los movimientos del mes actual, también
                 las compras ya pagadas, con su id, concepto, descripción, importe y cuenta.
                 Los previstos futuros van en "upcomingMonths", no desplazan esas compras.
+                También incluye, sea de la fecha que sea, los movimientos cuyo importe,
+                descripción o concepto coincide con lo que el usuario menciona (por ejemplo
+                un importe como 176,01 o el nombre de una persona). Antes de decir que no
+                encuentras un movimiento concreto, búscalo ahí por importe y por fecha.
                 Si el usuario pide reclasificar compras (por ejemplo, de Supermercado a Compras
                 personales), busca los movimientos concretos en "recentLedgerEntries" y prepara
                 un update_ledger_entry por cada uno con targetId = su id y conceptId = el
@@ -688,6 +699,7 @@ namespace PersonalFinance.Api.Features.Chat
             PromptValues data,
             PromptValues importGroups,
             AdminTargets? targets,
+            MovementSearchTerms searchTerms,
             CancellationToken ct)
         {
             var now = DateTime.UtcNow;
@@ -806,6 +818,7 @@ namespace PersonalFinance.Api.Features.Chat
                 .Take(200)
                 .Select(entry => entry.Id)
                 .ToListAsync(ct);
+            additionalEntryIds.AddRange(await FindMentionedEntryIdsAsync(userId, searchTerms, ct));
             var ledgerEntryRows = await _db.LedgerEntries
                 .AsNoTracking()
                 .Where(entry => entry.UserId == userId &&
@@ -1015,6 +1028,43 @@ namespace PersonalFinance.Api.Features.Chat
             var withAdmin = JsonSerializer.SerializeToNode(snapshot, PromptJson)!.AsObject();
             withAdmin["admin"] = await BuildAdminSnapshotAsync(userId, data, targets, ct);
             return withAdmin;
+        }
+
+        /// <summary>
+        /// Movimientos de cualquier fecha cuyo importe o texto coincide con lo que
+        /// menciona el usuario, para que la IA los encuentre aunque sean antiguos.
+        /// </summary>
+        private async Task<List<Guid>> FindMentionedEntryIdsAsync(Guid userId, MovementSearchTerms terms, CancellationToken ct)
+        {
+            var ids = new List<Guid>();
+            if (terms.IsEmpty) return ids;
+
+            var entries = _db.LedgerEntries.AsNoTracking().Where(entry => entry.UserId == userId);
+            foreach (var (min, max) in terms.Amounts)
+            {
+                ids.AddRange(await entries
+                    .Where(entry => (entry.ActualAmount ?? entry.ForecastAmount) >= min &&
+                        (entry.ActualAmount ?? entry.ForecastAmount) <= max)
+                    .OrderByDescending(entry => entry.DueDate)
+                    .Take(MaxMentionedEntriesPerTerm)
+                    .Select(entry => entry.Id)
+                    .ToListAsync(ct));
+            }
+
+            foreach (var word in terms.Words)
+            {
+                ids.AddRange(await entries
+                    .Where(entry =>
+                        (entry.Description != null && entry.Description.Contains(word)) ||
+                        (entry.Notes != null && entry.Notes.Contains(word)) ||
+                        (entry.Concept != null && entry.Concept.Name.Contains(word)))
+                    .OrderByDescending(entry => entry.DueDate)
+                    .Take(MaxMentionedEntriesPerTerm)
+                    .Select(entry => entry.Id)
+                    .ToListAsync(ct));
+            }
+
+            return ids.Distinct().ToList();
         }
 
         /// <summary>
