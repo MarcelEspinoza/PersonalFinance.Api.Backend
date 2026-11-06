@@ -225,6 +225,8 @@ namespace PersonalFinance.Api.Features.Chat
                   sólo en una cuenta con "IsCash": true y con fecha de hoy o anterior queda pagado
                   al momento. El summary nombra concepto, cuenta y fecha, por ejemplo "Anotar en
                   «Mes»: gasto de 20 € en Supermercado (Revolut), 23/10".
+                  Un saldo previsto negativo no impide preparar la tarjeta: advierte del saldo,
+                  pero si el usuario pide anotarlo igualmente, no rechaces el gasto por ese motivo.
                 - update_expense / update_income: targetId y sólo los campos que cambian. Sólo
                   tocan anotaciones antiguas y únicamente si el usuario las pide de forma
                   explícita; lo que está en «Mes» se cambia con update_ledger_entry. Los gastos e
@@ -421,6 +423,7 @@ namespace PersonalFinance.Api.Features.Chat
 
                 // Two passes: a reminder amount is checked against the rest of the reply.
                 var proposals = new List<(RawProposedAction? Valid, RawProposedAction? Original, ProposedActionDto? ApiCall)>();
+                var rejectionReasons = new List<string>();
                 foreach (var action in parsed.ProposedActions ?? new())
                 {
                     if (action is null) continue;
@@ -435,7 +438,10 @@ namespace PersonalFinance.Api.Features.Chat
 
                     var restored = RestoreOriginals(action, data, importGroups);
                     var original = restored.Copy();
-                    var valid = restored.Type == "link_settlement_line"
+                    string? rejectionReason = null;
+                    var valid = restored.Type is "create_expense" or "create_income"
+                        ? TryNormalizeLedgerMovement(restored, reminderToday, movementTargets, out rejectionReason)
+                        : restored.Type == "link_settlement_line"
                         ? await TryNormalizeSettlementLineLinkAsync(restored, userId, ct)
                         : restored.Type == "skip_ledger_entry"
                         ? await TryNormalizeLedgerSkipAsync(restored, movementTargets, userId, ct)
@@ -443,7 +449,12 @@ namespace PersonalFinance.Api.Features.Chat
                     if (valid)
                         proposals.Add((restored, original, null));
                     else
-                        _logger.LogWarning("La propuesta del chat de tipo {ActionType} no superó la validación.", restored.Type);
+                    {
+                        rejectionReason ??= "No pude validar los datos de una de las acciones propuestas. No dispongo de un motivo más concreto; indica qué cambio quieres hacer y sobre qué registro.";
+                        rejectionReasons.Add(rejectionReason);
+                        _logger.LogWarning("La propuesta del chat de tipo {ActionType} no superó la validación: {Reason}",
+                            restored.Type, rejectionReason);
+                    }
                 }
 
                 var validActions = proposals
@@ -467,9 +478,16 @@ namespace PersonalFinance.Api.Features.Chat
                 if (actions.Count == 0 && parsed.ProposedActions?.Count > 0)
                 {
                     _logger.LogWarning("Ninguna de las propuestas del chat pudo convertirse en una tarjeta de confirmación.");
-                    reply = "No he podido preparar ninguna tarjeta de confirmación: las propuestas no superaron la validación. " +
-                        "No se ha aplicado ningún cambio. Revisa si el movimiento sigue pendiente y si su mes está abierto.";
+                    reply = "No he podido preparar ninguna tarjeta de confirmación. " +
+                        (rejectionReasons.Count > 0
+                            ? string.Join(" ", rejectionReasons.Distinct())
+                            : "No pude validar las acciones propuestas y no dispongo de un motivo más concreto. Indica qué cambio quieres hacer y sobre qué registro.") +
+                        " No se ha aplicado ningún cambio.";
                 }
+                else if (rejectionReasons.Count > 0)
+                    reply += "\n\nNo pude preparar todas las tarjetas. " +
+                        string.Join(" ", rejectionReasons.Distinct()) +
+                        " No se ha aplicado ningún cambio; las tarjetas válidas siguen pendientes de tu confirmación.";
 
                 return new ChatResponseDto
                 {
@@ -1599,27 +1617,54 @@ namespace PersonalFinance.Api.Features.Chat
         /// se usa hoy (Madrid); el resumen se escribe con los nombres reales.
         /// </summary>
         private static bool TryNormalizeLedgerMovement(
-            RawProposedAction action, DateOnly today, LedgerMovementTargets targets)
+            RawProposedAction action, DateOnly today, LedgerMovementTargets targets) =>
+            TryNormalizeLedgerMovement(action, today, targets, out _);
+
+        private static bool TryNormalizeLedgerMovement(
+            RawProposedAction action, DateOnly today, LedgerMovementTargets targets, out string? rejectionReason)
         {
+            rejectionReason = null;
             var isExpense = action.Type == "create_expense";
+            var movementName = isExpense ? "gasto" : "ingreso";
             var kind = isExpense
                 ? PersonalFinance.Domain.Ledger.Enums.ConceptKind.Expense
                 : PersonalFinance.Domain.Ledger.Enums.ConceptKind.Income;
-            if (action.Amount is not > 0m ||
-                action.ConceptId is not Guid conceptId ||
-                !targets.Concepts.TryGetValue(conceptId, out var concept) ||
-                concept.Kind != kind)
+            if (action.Amount is not > 0m)
+            {
+                rejectionReason = $"Falta un importe positivo para el {movementName}. Indica cuánto quieres anotar.";
                 return false;
+            }
+            if (action.ConceptId is not Guid conceptId)
+            {
+                rejectionReason = $"La propuesta no incluyó una categoría para el {movementName}. Indica qué categoría quieres usar.";
+                return false;
+            }
+            if (!targets.Concepts.TryGetValue(conceptId, out var concept))
+            {
+                rejectionReason = $"La categoría propuesta para el {movementName} no está disponible entre tus categorías activas. Elige una categoría activa.";
+                return false;
+            }
+            if (concept.Kind != kind)
+            {
+                rejectionReason = $"La categoría propuesta no es de {movementName}. Elige una categoría de {movementName}.";
+                return false;
+            }
 
             string? accountName = null;
             if (action.AccountId is Guid accountId && !targets.Accounts.TryGetValue(accountId, out accountName))
+            {
+                rejectionReason = "La cuenta propuesta no está disponible entre tus cuentas activas. Indica en qué cuenta quieres anotarlo.";
                 return false;
+            }
 
             var date = today;
             if (!string.IsNullOrWhiteSpace(action.Date))
             {
                 if (!DateTime.TryParse(action.Date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                {
+                    rejectionReason = "La fecha propuesta no es válida. Indica el día, mes y año del movimiento.";
                     return false;
+                }
                 date = DateOnly.FromDateTime(parsed);
             }
 
