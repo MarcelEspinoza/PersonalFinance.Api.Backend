@@ -220,8 +220,10 @@ namespace PersonalFinance.Api.Features.Chat
                 Puedes preparar estas acciones, pero nunca ejecutarlas directamente:
                 Si pide mantener un movimiento y repetirlo en otro mes, prepara
                 create_expense/create_income con el ConceptId y AccountId EXACTOS del original,
-                el mismo importe y descripción y la fecha solicitada del nuevo mes. No muevas
-                ni modifiques el original. Los nombres de categoría no son identificadores.
+                el mismo importe y descripción y la fecha solicitada del nuevo mes, y pon en
+                "sourceEntryId" el id de ese asiento original (el "Id" de "recentLedgerEntries"
+                o un GUID de "pending"); el servidor toma de ese asiento la categoría y la cuenta.
+                No muevas ni modifiques el original. Los nombres de categoría no son identificadores.
                 conceptId debe ser un Id de ledgerConcepts o el ConceptId de un asiento,
                 nunca un categoryId del sistema de categorías antiguo. Si el historial afirma
                 que una categoría no existe, comprueba los datos actuales antes de repetirlo.
@@ -345,7 +347,7 @@ namespace PersonalFinance.Api.Features.Chat
                 </datos>
 
                 Responde EXCLUSIVAMENTE JSON válido, sin markdown, con esta forma exacta:
-                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"settlementId":null,"settlementLineId":null,"ledgerEntryId":null,"normalizedDescription":null,"repeat":null,"notifyDaysBefore":null,"isIncome":null{{adminOutputFields}}}]}
+                {"reply":"texto para el usuario","proposedActions":[{"type":"tipo_de_accion","summary":"resumen corto para confirmar","amount":0,"description":"","date":"YYYY-MM-DD","categoryId":0,"categoryName":"","expenseType":"Fixed|Temporary","targetId":null,"name":null,"notes":null,"year":null,"month":null,"conceptId":null,"accountId":null,"sourceEntryId":null,"settlementId":null,"settlementLineId":null,"ledgerEntryId":null,"normalizedDescription":null,"repeat":null,"notifyDaysBefore":null,"isIncome":null{{adminOutputFields}}}]}
 
                 Deja "proposedActions" como lista vacía si no corresponde ninguna acción.
                 Si dices que preparaste una tarjeta para confirmar, incluye obligatoriamente
@@ -428,6 +430,7 @@ namespace PersonalFinance.Api.Features.Chat
                         .Where(r => r.UserId == userId && !r.IsDone)
                         .ToDictionaryAsync(r => r.Id, ct));
 
+                await ApplyMovementSourcesAsync(parsed, movementTargets, userId, ct);
                 await RepairMovementReferencesAsync(
                     parsed, movementTargets, system, messages, raw, apiKey, ct);
 
@@ -509,6 +512,63 @@ namespace PersonalFinance.Api.Features.Chat
             {
                 _logger.LogWarning(ex, "La respuesta del chat global no tenía el JSON esperado.");
                 return new ChatResponseDto { Reply = ModelJson.PlainText(raw) };
+            }
+        }
+
+        /// <summary>
+        /// The model can garble a long id it copies from the data (for instance, joining the start of
+        /// one concept id with the end of another that shares a group). When a new expense/income
+        /// repeats an existing movement, its <c>sourceEntryId</c> points to that movement and the
+        /// server takes the category and account from it instead of trusting the copied ids. Only
+        /// missing or invalid references are filled, the source must be the user's own movement in
+        /// the same direction, and the source itself is never changed.
+        /// </summary>
+        private async Task ApplyMovementSourcesAsync(
+            RawChatResponse parsed, LedgerMovementTargets targets, Guid userId, CancellationToken ct)
+        {
+            var copies = (parsed.ProposedActions ?? [])
+                .Where(action => action is not null && action.Type is ("create_expense" or "create_income")
+                    && action.SourceEntryId is not null)
+                .ToList();
+            if (copies.Count == 0) return;
+
+            var sourceIds = copies.Select(action => action.SourceEntryId!.Value).Distinct().ToList();
+            var sources = await _db.LedgerEntries
+                .AsNoTracking()
+                .Where(entry => entry.UserId == userId && sourceIds.Contains(entry.Id))
+                .Select(entry => new { entry.Id, entry.ConceptId, entry.AccountId, entry.Direction, entry.DueDate })
+                .ToDictionaryAsync(entry => entry.Id, ct);
+
+            foreach (var action in copies)
+            {
+                var isExpense = action.Type == "create_expense";
+                if (!sources.TryGetValue(action.SourceEntryId!.Value, out var source)
+                    || source.Direction != (isExpense ? EntryDirection.Out : EntryDirection.In))
+                {
+                    _logger.LogWarning("El movimiento de origen de una propuesta del chat no es válido.");
+                    continue;
+                }
+
+                var kind = isExpense
+                    ? PersonalFinance.Domain.Ledger.Enums.ConceptKind.Expense
+                    : PersonalFinance.Domain.Ledger.Enums.ConceptKind.Income;
+                var conceptUsable = action.ConceptId is Guid conceptId
+                    && targets.Concepts.TryGetValue(conceptId, out var concept) && concept.Kind == kind;
+                if (!conceptUsable
+                    && targets.Concepts.TryGetValue(source.ConceptId, out var sourceConcept) && sourceConcept.Kind == kind)
+                {
+                    action.ConceptId = source.ConceptId;
+                    _logger.LogInformation("Se tomó la categoría del movimiento de origen de una propuesta del chat.");
+                }
+
+                if ((action.AccountId is not Guid accountId || !targets.Accounts.ContainsKey(accountId))
+                    && source.AccountId is Guid sourceAccountId && targets.Accounts.ContainsKey(sourceAccountId))
+                {
+                    action.AccountId = sourceAccountId;
+                    _logger.LogInformation("Se tomó la cuenta del movimiento de origen de una propuesta del chat.");
+                }
+
+                action.SourceDueDate = source.DueDate;
             }
         }
 
@@ -1785,7 +1845,10 @@ namespace PersonalFinance.Api.Features.Chat
                     : "; queda pendiente hasta que llegue en el extracto del banco";
             action.Summary = $"Anotar en «Mes»: {(isExpense ? "gasto" : "ingreso")} de " +
                 $"{ReminderRules.FormatAmount(action.Amount.Value)} en {concept.Name} " +
-                $"({accountName ?? "sin cuenta"}), {date.ToString("dd/MM", CultureInfo.InvariantCulture)}{status}";
+                $"({accountName ?? "sin cuenta"}), {date.ToString("dd/MM", CultureInfo.InvariantCulture)}{status}" +
+                (action.SourceDueDate is DateOnly sourceDate
+                    ? $"; repite el del {sourceDate.ToString("dd/MM", CultureInfo.InvariantCulture)}, que no cambia"
+                    : string.Empty);
             return true;
         }
 
@@ -2211,6 +2274,9 @@ namespace PersonalFinance.Api.Features.Chat
             public int? Month { get; set; }
             public Guid? ConceptId { get; set; }
             public Guid? AccountId { get; set; }
+            public Guid? SourceEntryId { get; set; }
+            [System.Text.Json.Serialization.JsonIgnore]
+            public DateOnly? SourceDueDate { get; set; }
             public Guid? SettlementId { get; set; }
             public Guid? SettlementLineId { get; set; }
             public Guid? LedgerEntryId { get; set; }

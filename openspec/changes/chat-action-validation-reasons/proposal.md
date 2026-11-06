@@ -10,6 +10,7 @@ The assistant rejects a December driving-school expense proposal with a generic 
 - Keep negative projected balances allowed and require explicit confirmation before financial writes.
 - Repair invalid category/account identifiers with one bounded model round using current authoritative identifiers, without altering other proposed fields or valid sibling actions.
 - Clarify that repeating an existing movement in a second month creates a new proposal rather than moving the source.
+- Let a repeated movement reference its source entry so the server takes the category and account from it when the model garbles the copied identifiers.
 
 ## Capabilities
 
