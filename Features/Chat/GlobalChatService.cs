@@ -50,6 +50,7 @@ namespace PersonalFinance.Api.Features.Chat
         // This calendar month and the next 6, as the dashboard month boxes.
         private const int UpcomingMonthCount = 7;
         private const int MaxMentionedEntriesPerTerm = 20;
+        private const int MaxToolRounds = 4;
 
         private static readonly JsonSerializerOptions PromptJson = new()
         {
@@ -220,6 +221,13 @@ namespace PersonalFinance.Api.Features.Chat
                 descripción o concepto coincide con lo que el usuario menciona (por ejemplo
                 un importe como 176,01 o el nombre de una persona). Antes de decir que no
                 encuentras un movimiento concreto, búscalo ahí por importe y por fecha.
+
+                Además tienes la herramienta search_movements, que busca en TODO el historial del
+                usuario sin límite de fechas (por texto, importe, rango de fechas o dirección).
+                Úsala siempre que necesites un movimiento que no veas en "recentLedgerEntries"
+                (meses anteriores, otro año, todos los pagos a una persona…), antes de decir que
+                no existe o de proponer una acción sobre él. Puedes llamarla varias veces. Los
+                ids que devuelve valen igual que los de "recentLedgerEntries".
                 Si el usuario pide reclasificar compras (por ejemplo, de Supermercado a Compras
                 personales), busca los movimientos concretos en "recentLedgerEntries" y prepara
                 un update_ledger_entry por cada uno con targetId = su id y conceptId = el
@@ -366,50 +374,75 @@ namespace PersonalFinance.Api.Features.Chat
                 Mantén "reply" por debajo de 1200 caracteres para que la respuesta no se corte.
                 """;
 
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            httpRequest.Headers.Add("x-api-key", apiKey);
-            httpRequest.Headers.Add("anthropic-version", "2023-06-01");
-            httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            httpRequest.Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    model = AnthropicMessages.ResolveModel(_configuration),
-                    max_tokens = 4096,
-                    system,
-                    messages
-                }),
-                Encoding.UTF8,
-                "application/json");
-
-            using var response = await _http.SendAsync(httpRequest, ct);
-            if (!response.IsSuccessStatusCode)
+            var conversation = new List<object>(messages);
+            string raw = string.Empty;
+            for (var round = 0; ; round++)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
-                _logger.LogWarning(
-                    "Anthropic devolvió HTTP {StatusCode} en el chat global: {Body}",
-                    (int)response.StatusCode,
-                    errorBody.Length > 300 ? errorBody[..300] : errorBody);
-                return new ChatResponseDto { Reply = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento." };
-            }
+                var allowTools = round < MaxToolRounds;
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+                httpRequest.Headers.Add("x-api-key", apiKey);
+                httpRequest.Headers.Add("anthropic-version", "2023-06-01");
+                httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                httpRequest.Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        model = AnthropicMessages.ResolveModel(_configuration),
+                        max_tokens = 4096,
+                        system,
+                        messages = conversation,
+                        tools = new[] { MovementSearchTool.Definition },
+                        tool_choice = new { type = allowTools ? "auto" : "none" }
+                    }),
+                    Encoding.UTF8,
+                    "application/json");
 
-            var body = await response.Content.ReadAsStringAsync(ct);
-            string raw;
-            try
-            {
-                using var document = JsonDocument.Parse(body);
-                if (!AnthropicMessages.TryGetText(document.RootElement, out raw))
-                    return new ChatResponseDto { Reply = "No he podido leer la respuesta del modelo." };
-
-                if (document.RootElement.TryGetProperty("stop_reason", out var stopReason) &&
-                    stopReason.ValueKind == JsonValueKind.String &&
-                    stopReason.GetString() == "max_tokens")
+                using var response = await _http.SendAsync(httpRequest, ct);
+                if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("La respuesta del chat global llegó truncada por max_tokens.");
+                    var errorBody = await response.Content.ReadAsStringAsync(ct);
+                    _logger.LogWarning(
+                        "Anthropic devolvió HTTP {StatusCode} en el chat global: {Body}",
+                        (int)response.StatusCode,
+                        errorBody.Length > 300 ? errorBody[..300] : errorBody);
+                    return new ChatResponseDto { Reply = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento." };
                 }
-            }
-            catch (JsonException)
-            {
-                return new ChatResponseDto { Reply = "No he podido leer la respuesta del modelo." };
+
+                var body = await response.Content.ReadAsStringAsync(ct);
+                try
+                {
+                    using var document = JsonDocument.Parse(body);
+                    var root = document.RootElement;
+                    var stop = root.TryGetProperty("stop_reason", out var stopReason) &&
+                        stopReason.ValueKind == JsonValueKind.String
+                            ? stopReason.GetString()
+                            : null;
+
+                    if (stop == "tool_use" && allowTools &&
+                        root.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+                    {
+                        conversation.Add(new { role = "assistant", content = content.Clone() });
+                        conversation.Add(new
+                        {
+                            role = "user",
+                            content = await RunToolCallsAsync(content, userId, data, adminTargets, ct)
+                        });
+                        continue;
+                    }
+
+                    if (!AnthropicMessages.TryGetText(root, out raw))
+                        return new ChatResponseDto { Reply = "No he podido leer la respuesta del modelo." };
+
+                    if (stop == "max_tokens")
+                    {
+                        _logger.LogWarning("La respuesta del chat global llegó truncada por max_tokens.");
+                    }
+                }
+                catch (JsonException)
+                {
+                    return new ChatResponseDto { Reply = "No he podido leer la respuesta del modelo." };
+                }
+
+                break;
             }
 
             var json = ModelJson.Extract(raw);
@@ -581,6 +614,74 @@ namespace PersonalFinance.Api.Features.Chat
 
                 action.SourceDueDate = source.DueDate;
             }
+        }
+
+        /// <summary>
+        /// Ejecuta las búsquedas que pide la IA y devuelve los bloques "tool_result".
+        /// Los textos van tapados con <paramref name="data"/> como el resto del prompt.
+        /// </summary>
+        private async Task<List<object>> RunToolCallsAsync(
+            JsonElement content, Guid userId, PromptValues data, AdminTargets? targets, CancellationToken ct)
+        {
+            var results = new List<object>();
+            foreach (var block in content.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object ||
+                    !block.TryGetProperty("type", out var type) || type.GetString() != "tool_use" ||
+                    !block.TryGetProperty("id", out var idElement) || idElement.GetString() is not { } toolUseId)
+                    continue;
+
+                var name = block.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
+                if (name != MovementSearchTool.Name || !block.TryGetProperty("input", out var input))
+                {
+                    results.Add(new { type = "tool_result", tool_use_id = toolUseId, content = "Herramienta desconocida.", is_error = true });
+                    continue;
+                }
+
+                var search = await MovementSearchTool.ExecuteAsync(_db, userId, input, ct);
+                if (search.Error is not null)
+                {
+                    results.Add(new { type = "tool_result", tool_use_id = toolUseId, content = search.Error, is_error = true });
+                    continue;
+                }
+
+                foreach (var movement in search.Movements)
+                {
+                    var text = string.IsNullOrWhiteSpace(movement.Description) ? movement.Concept : movement.Description;
+                    targets?.Add(movement.Id, DescribeMovement(text, movement.DueDate, movement.Amount));
+                }
+
+                var payload = new
+                {
+                    total = search.Total,
+                    returned = search.Movements.Count,
+                    movements = search.Movements.Select(movement => new
+                    {
+                        movement.Id,
+                        movement.DueDate,
+                        movement.Direction,
+                        movement.Status,
+                        movement.IsTransfer,
+                        amount = movement.Amount,
+                        movement.ForecastAmount,
+                        movement.ActualAmount,
+                        Description = data.Mask(movement.Description),
+                        Notes = data.Mask(movement.Notes),
+                        movement.ConceptId,
+                        concept = data.Mask(movement.Concept),
+                        movement.AccountId,
+                        account = data.Mask(movement.Account)
+                    })
+                };
+                results.Add(new
+                {
+                    type = "tool_result",
+                    tool_use_id = toolUseId,
+                    content = JsonSerializer.Serialize(payload, PromptJson)
+                });
+            }
+
+            return results;
         }
 
         private async Task RepairMovementReferencesAsync(
