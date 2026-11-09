@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using PersonalFinance.Api.Common.Interfaces;
 using PersonalFinance.Api.Extensions;
+using PersonalFinance.Api.Features.Chat;
 using PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
@@ -738,9 +739,14 @@ namespace PersonalFinance.Api.Controllers
                 .ToList();
 
             var extra = await LoadChatContextAsync(userId.Value, ct);
+            var searchTerms = MovementSearchTerms.From(
+                history.Where(message => message.Role == "user")
+                    .TakeLast(2)
+                    .Select(message => message.Content)
+                    .Append(dto.Message));
             var planned = batch.Status == ImportBatchStatus.Applied
                 ? new List<ImportPlannedCandidateDto>()
-                : await LoadPlannedCandidatesAsync(userId.Value, batch, ct);
+                : await LoadPlannedCandidatesAsync(userId.Value, batch, ct, searchTerms);
             extra = extra with
             {
                 People = await _db.Counterparties.AsNoTracking()
@@ -957,11 +963,11 @@ namespace PersonalFinance.Api.Controllers
         }
 
         /// <summary>
-        /// Open planned entries of the user around the batch dates (plus any already linked by
-        /// this batch), with what this batch's linked rows will deduct from each one.
+        /// Open planned entries around the batch dates, or from any date for chat searches,
+        /// including existing links and what this batch will deduct from each entry.
         /// </summary>
         private async Task<List<ImportPlannedCandidateDto>> LoadPlannedCandidatesAsync(
-            Guid userId, ImportBatch batch, CancellationToken ct)
+            Guid userId, ImportBatch batch, CancellationToken ct, MovementSearchTerms? searchTerms = null)
         {
             if (batch.Rows.Count == 0) return new List<ImportPlannedCandidateDto>();
 
@@ -970,13 +976,14 @@ namespace PersonalFinance.Api.Controllers
             var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
             var linkedIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
                 .Select(link => link.PlannedEntryId).Distinct().ToList();
+            var searchAllDates = searchTerms is not null;
 
             var entries = await _db.LedgerEntries
                 .AsNoTracking()
                 .Where(ImportPlannedLinks.IsOpenExpression)
                 .Where(entry =>
                     entry.UserId == userId &&
-                    ((entry.DueDate >= from && entry.DueDate <= to) || linkedIds.Contains(entry.Id)))
+                    (searchAllDates || (entry.DueDate >= from && entry.DueDate <= to) || linkedIds.Contains(entry.Id)))
                 .Select(entry => new
                 {
                     entry.Id,
@@ -1019,7 +1026,17 @@ namespace PersonalFinance.Api.Controllers
                         LinkedRowIds = linked.Select(row => row.Id).ToList()
                     };
                 })
-                .OrderBy(candidate => candidate.DueDate)
+                .OrderByDescending(candidate => searchTerms is not null &&
+                    searchTerms.Amounts.Any(range =>
+                        (candidate.ForecastAmount >= range.Min && candidate.ForecastAmount <= range.Max) ||
+                        (candidate.RemainingAfterLinks >= range.Min && candidate.RemainingAfterLinks <= range.Max)))
+                .ThenByDescending(candidate => searchTerms?.Words.Count(word =>
+                    (candidate.Description?.Contains(word, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (candidate.ConceptName?.Contains(word, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (candidate.AccountName?.Contains(word, StringComparison.OrdinalIgnoreCase) ?? false)) ?? 0)
+                .ThenByDescending(candidate => searchAllDates && candidate.LinkedRowIds.Count > 0)
+                .ThenByDescending(candidate => searchAllDates && candidate.DueDate >= from && candidate.DueDate <= to)
+                .ThenBy(candidate => candidate.DueDate)
                 .ThenBy(candidate => candidate.ConceptName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
         }

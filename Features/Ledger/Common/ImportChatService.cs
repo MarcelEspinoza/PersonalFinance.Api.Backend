@@ -59,7 +59,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Array.Empty<ImportChatLoanContext>(),
             Array.Empty<ImportChatLedgerContext>());
 
-        /// <summary>Open planned entries of the user around the batch dates.</summary>
+        /// <summary>Open planned entries of the user eligible for deduction.</summary>
         public IReadOnlyList<ImportChatPlannedContext> PlannedEntries { get; init; } = Array.Empty<ImportChatPlannedContext>();
 
         /// <summary>Date used to validate reminder dates; UTC today when not set.</summary>
@@ -335,6 +335,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Conserva las diferencias de significado que haya explicado el usuario:
                 por ejemplo, un préstamo recibido y un reembolso para cubrir un gasto
                 son movimientos distintos, aunque procedan de la misma persona.
+                Que una persona envíe dinero no significa que sea para sus gastos:
+                respeta para qué dice el usuario que es ese movimiento.
 
                 GASTOS COMPARTIDOS:
                 - Sí puedes proponer "share_expense": UNA fila de gasto en "rowIds",
@@ -362,6 +364,27 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   vínculo; después podrás proponer el gasto compartido.
 
                 PREVISTOS Y RECORDATORIOS (también son propuestas que el usuario confirma):
+                - Si el usuario dice que un cobro es parte de otro que ya tiene previsto,
+                  busca ese previsto por importe, descripción y significado y propón
+                  "link_planned". No basta con poner una categoría de ingreso: debe
+                  descontarse del cobro esperado para no contar dos veces el dinero.
+                  Puede ser un cobro parcial aunque su importe sea menor que el previsto,
+                  llegue a otra cuenta o el previsto esté vencido.
+                - Un cobro propio de un pasanaco no es dinero de paso de quien lo envía.
+                  Su posterior traslado entre cuentas propias es otra operación y no
+                  cambia el origen del cobro. No lo confundas con un préstamo sólo
+                  porque coincidan la persona o el importe.
+                - "pendiente" no significa "pagado" ni excluye que sea un previsto:
+                  los previstos vencidos también están pendientes. Para vincularlos
+                  usa la lista PREVISTOS ABIERTOS QUE SE PUEDEN VINCULAR y sus id.
+                - Si la fila estaba mal clasificada, propón también "set_row_concept"
+                  con la categoría del previsto correcto, además de "link_planned".
+                  No sustituyas la vinculación pedida por crear otro ingreso, otro
+                  previsto, un préstamo o un recordatorio.
+                - No afirmes que un previsto no existe porque no aparece en los apuntes
+                  recientes. Si la lista de previstos está recortada o no puedes
+                  identificarlo, explica la limitación y pide el dato que falte.
+                  Si hay varios candidatos, pregunta cuál es antes de proponer un vínculo.
                 - Sí puedes proponer cambios en los previstos (lo que el usuario tiene
                   planificado) y crear recordatorios. Nunca digas que no puedes tocar
                   los previstos.
@@ -448,10 +471,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 PERSONAS:
                 {{JsonSerializer.Serialize(extra.People.Select(person => new { person.Id, name = Masked(person.Name, MaxNameLength) }), PromptJson)}}
 
-                MOVIMIENTOS YA REGISTRADOS (últimos 90 días y próximo mes):
+                APUNTES RECIENTES (últimos 90 días y próximo mes; pueden incluir previstos,
+                pendientes y pagados, no son todos movimientos bancarios realizados):
                 {{recentJson}}
 
-                PREVISTOS ABIERTOS (puedes usar sus "id" como "plannedEntryId"):
+                PREVISTOS ABIERTOS QUE SE PUEDEN VINCULAR (de cualquier fecha y cuenta;
+                puedes usar sus "id" como "plannedEntryId"; mostrados
+                {{Math.Min(extra.PlannedEntries.Count, MaxPlannedInPrompt)}} de {{extra.PlannedEntries.Count}}):
                 {{plannedJson}}
 
                 FILAS PENDIENTES DEL LOTE:
