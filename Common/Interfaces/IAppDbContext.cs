@@ -28,6 +28,7 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<ImportBatch> ImportBatches { get; }
         DbSet<ImportRow> ImportRows { get; }
         DbSet<ImportRowAllocation> ImportRowAllocations { get; }
+        DbSet<ImportRowPlannedAllocation> ImportRowPlannedAllocations { get; }
         DbSet<ConceptMapping> ConceptMappings { get; }
         DbSet<PersonalFinance.Domain.Advice.Entities.AdviceNote> AdviceNotes { get; }
         DbSet<PersonalFinance.Domain.Advice.Entities.ServiceReview> ServiceReviews { get; }

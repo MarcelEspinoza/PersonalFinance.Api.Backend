@@ -50,6 +50,7 @@ namespace PersonalFinance.Api.Data
         public DbSet<ImportBatch> ImportBatches => Set<ImportBatch>();
         public DbSet<ImportRow> ImportRows => Set<ImportRow>();
         public DbSet<ImportRowAllocation> ImportRowAllocations => Set<ImportRowAllocation>();
+        public DbSet<ImportRowPlannedAllocation> ImportRowPlannedAllocations => Set<ImportRowPlannedAllocation>();
         public DbSet<ConceptMapping> ConceptMappings => Set<ConceptMapping>();
         public DbSet<PersonalFinance.Domain.Advice.Entities.AdviceNote> AdviceNotes =>
             Set<PersonalFinance.Domain.Advice.Entities.AdviceNote>();

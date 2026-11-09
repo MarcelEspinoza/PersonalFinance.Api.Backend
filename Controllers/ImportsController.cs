@@ -836,7 +836,7 @@ namespace PersonalFinance.Api.Controllers
             row.PlannedEntryId = null;
             row.PlannedAllocations.Clear();
             foreach (var link in links)
-                row.PlannedAllocations.Add(new ImportRowPlannedAllocation
+                _db.ImportRowPlannedAllocations.Add(new ImportRowPlannedAllocation
                 {
                     ImportRowId = row.Id,
                     PlannedEntryId = link.PlannedEntryId,
