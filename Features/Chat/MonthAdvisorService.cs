@@ -1,4 +1,3 @@
-﻿﻿using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -102,12 +101,10 @@ namespace PersonalFinance.Api.Features.Chat
                 Month = anchor.Outlook.Month
             };
 
-            var apiKey = _configuration["Anthropic:ApiKey"]
-                ?? _configuration["ANTHROPIC_API_KEY"]
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                result.Summary = "Falta configurar la clave de Anthropic en el servidor.";
+                result.Summary = "Falta configurar la clave del proveedor de IA en el servidor.";
                 return result;
             }
 
@@ -173,11 +170,8 @@ namespace PersonalFinance.Api.Features.Chat
                 Entre 3 y 7 insights, ordenados de más a menos urgente.
                 """;
 
-            var model = AnthropicMessages.ResolveModel(_configuration);
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var model = AnthropicMessages.ResolveModel(_configuration, "Advice");
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
@@ -192,7 +186,7 @@ namespace PersonalFinance.Api.Features.Chat
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Anthropic devolvió HTTP {StatusCode} al aconsejar el mes.", (int)response.StatusCode);
+                _logger.LogWarning("La IA devolvió HTTP {StatusCode} al aconsejar el mes.", (int)response.StatusCode);
                 result.Summary = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento.";
                 return result;
             }
@@ -250,14 +244,12 @@ namespace PersonalFinance.Api.Features.Chat
 
             var thread = await LoadNotesAsync(userId, request.Year, request.Month, ct);
 
-            var apiKey = _configuration["Anthropic:ApiKey"]
-                ?? _configuration["ANTHROPIC_API_KEY"]
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 return new AdviceReplyResultDto
                 {
-                    Reply = "Falta configurar la clave de Anthropic en el servidor.",
+                    Reply = "Falta configurar la clave del proveedor de IA en el servidor.",
                     Thread = ToDtos(thread.Where(note => note.InsightTitle == title))
                 };
             }
@@ -310,11 +302,8 @@ namespace PersonalFinance.Api.Features.Chat
                 {"reply":"tu respuesta para el usuario"}
                 """;
 
-            var model = AnthropicMessages.ResolveModel(_configuration);
-            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            httpRequest.Headers.Add("x-api-key", apiKey);
-            httpRequest.Headers.Add("anthropic-version", "2023-06-01");
-            httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            var model = AnthropicMessages.ResolveModel(_configuration, "Advice");
+            using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey);
             httpRequest.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
@@ -329,7 +318,7 @@ namespace PersonalFinance.Api.Features.Chat
             using var response = await _http.SendAsync(httpRequest, ct);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Anthropic devolvió HTTP {StatusCode} al responder a un consejo.", (int)response.StatusCode);
+                _logger.LogWarning("La IA devolvió HTTP {StatusCode} al responder a un consejo.", (int)response.StatusCode);
                 return new AdviceReplyResultDto
                 {
                     Reply = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento.",

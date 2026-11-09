@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
@@ -11,16 +12,71 @@ namespace PersonalFinance.Api.Features.Chat
     /// </summary>
     public static class AnthropicMessages
     {
-        public const string DefaultModel = "claude-opus-5-5";
+        public const string DefaultModel = "claude-sonnet-5-5";
 
         /// <summary>
-        /// Modelo configurado en "Anthropic:Model" (variable Anthropic__Model)
-        /// o, si no hay ninguno, el modelo por defecto.
+        /// Resolves the task-specific model, provider model, or provider default.
         /// </summary>
-        public static string ResolveModel(IConfiguration configuration)
+        public static string ResolveModel(IConfiguration configuration, string? task = null)
         {
-            var configured = configuration["Anthropic:Model"];
-            return string.IsNullOrWhiteSpace(configured) ? DefaultModel : configured.Trim();
+            var provider = ResolveProvider(configuration);
+            var taskModel = task is null ? null : configuration[$"Ai:Models:{task}"];
+            var configured = configuration[$"{provider}:Model"];
+            var model = !string.IsNullOrWhiteSpace(taskModel)
+                ? taskModel.Trim()
+                : !string.IsNullOrWhiteSpace(configured)
+                    ? configured.Trim()
+                    : provider switch
+                    {
+                        "Poe" => "Claude-Sonnet-4.6",
+                        "OpenRouter" when task == "Savings" => "anthropic/claude-sonnet-4.6",
+                        "OpenRouter" => "openai/gpt-6.1-sol",
+                        _ => DefaultModel
+                    };
+            if (provider == "Poe" && !model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "The Poe Messages endpoint supports only official Claude models. Use OpenRouter for GPT models.");
+            return model;
+        }
+
+        public static string? ResolveApiKey(IConfiguration configuration)
+        {
+            var provider = ResolveProvider(configuration);
+            var environmentKey = provider.ToUpperInvariant() + "_API_KEY";
+            return configuration[$"{provider}:ApiKey"]
+                ?? configuration[environmentKey]
+                ?? Environment.GetEnvironmentVariable(environmentKey);
+        }
+
+        public static HttpRequestMessage CreateRequest(IConfiguration configuration, string apiKey)
+        {
+            var provider = ResolveProvider(configuration);
+            var url = provider switch
+            {
+                "Poe" => "https://api.poe.com/v1/messages",
+                "OpenRouter" => "https://openrouter.ai/api/v1/messages",
+                _ => "https://api.anthropic.com/v1/messages"
+            };
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            if (provider == "OpenRouter")
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            else
+                request.Headers.Add("x-api-key", apiKey);
+            request.Headers.Add("anthropic-version", "2023-06-01");
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            return request;
+        }
+
+        private static string ResolveProvider(IConfiguration configuration)
+        {
+            var configured = configuration["Ai:Provider"];
+            return configured?.Trim().ToLowerInvariant() switch
+            {
+                null or "" or "anthropic" => "Anthropic",
+                "poe" => "Poe",
+                "openrouter" => "OpenRouter",
+                _ => throw new InvalidOperationException("Ai:Provider must be Anthropic, Poe, or OpenRouter.")
+            };
         }
 
         /// <summary>

@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -53,13 +52,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var result = new Dictionary<string, ImportAiSuggestion>(StringComparer.OrdinalIgnoreCase);
             if (descriptions.Count == 0 || concepts.Count == 0) return result;
 
-            var apiKey = _configuration["Anthropic:ApiKey"]
-                ?? _configuration["ANTHROPIC_API_KEY"]
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                FailureReason = "Falta configurar ANTHROPIC_API_KEY en el servidor.";
-                _logger.LogWarning("Anthropic no está configurado; las filas sin mapping quedan para revisión manual.");
+                FailureReason = "Falta configurar la clave del proveedor de IA en el servidor.";
+                _logger.LogWarning("La IA no está configurada; las filas sin mapping quedan para revisión manual.");
                 return result;
             }
 
@@ -119,15 +116,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 </datos>
                 """;
 
-            using var request = new HttpRequestMessage(
-                HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
-                    model = AnthropicMessages.ResolveModel(_configuration),
+                    model = AnthropicMessages.ResolveModel(_configuration, "Import"),
                     max_tokens = 4096,
                     system,
                     messages = new[] { new { role = "user", content = data } }
@@ -138,9 +131,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
-                FailureReason = $"Anthropic devolvió HTTP {(int)response.StatusCode}.";
+                FailureReason = $"El proveedor de IA devolvió HTTP {(int)response.StatusCode}.";
                 _logger.LogWarning(
-                    "Anthropic devolvió HTTP {StatusCode} al clasificar un bloque de {Count} descripciones.",
+                    "La IA devolvió HTTP {StatusCode} al clasificar un bloque de {Count} descripciones.",
                     (int)response.StatusCode,
                     descriptions.Count);
                 return;
@@ -152,14 +145,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
                 if (!AnthropicMessages.TryGetText(document.RootElement, out text))
                 {
-                    FailureReason = "Anthropic respondió sin contenido clasificable.";
+                    FailureReason = "La IA respondió sin contenido clasificable.";
                     return;
                 }
             }
             catch (JsonException ex)
             {
-                FailureReason = "Anthropic devolvió una respuesta con formato no válido.";
-                _logger.LogWarning(ex, "La respuesta de Anthropic no era JSON.");
+                FailureReason = "La IA devolvió una respuesta con formato no válido.";
+                _logger.LogWarning(ex, "La respuesta de la IA no era JSON.");
                 return;
             }
 
@@ -197,8 +190,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             }
             catch (JsonException ex)
             {
-                FailureReason = "Anthropic devolvió una respuesta con formato no válido.";
-                _logger.LogWarning(ex, "La respuesta de Anthropic no tenía el JSON esperado.");
+                FailureReason = "La IA devolvió una respuesta con formato no válido.";
+                _logger.LogWarning(ex, "La respuesta de la IA no tenía el JSON esperado.");
             }
         }
 

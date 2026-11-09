@@ -1043,21 +1043,6 @@ namespace PersonalFinance.Api.Controllers
                 concept => concept.Name,
                 concept => concept.Id,
                 StringComparer.OrdinalIgnoreCase);
-            var unmappedDescriptions = parsed.Movements
-                .Select(m => new
-                {
-                    Movement = m,
-                    Classification = RevolutMovementClassifier.Classify(m),
-                    Normalized = RevolutMovementClassifier.Normalize(m.Description)
-                })
-                .Where(item =>
-                    item.Classification.Disposition != MovementDisposition.Excluded &&
-                    FindMapping(mappings, account.Id, item.Normalized) is null)
-                .Select(item => item.Normalized)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var aiSuggestions = await _aiSuggestions.SuggestAsync(unmappedDescriptions, concepts, ct);
-
             var existingFingerprints = await _db.LedgerEntries
                 .AsNoTracking()
                 .Where(entry => entry.UserId == userId.Value && entry.Fingerprint != null)
@@ -1082,7 +1067,9 @@ namespace PersonalFinance.Api.Controllers
                     row.Currency,
                     row.NormalizedDescription,
                     row.RawDescription,
-                    row.ClassifiedStatus
+                    row.ClassifiedStatus,
+                    row.Fingerprint,
+                    row.RowNumber
                 })
                 .ToListAsync(ct);
             var existingMovements = existingImportedRows
@@ -1094,6 +1081,12 @@ namespace PersonalFinance.Api.Controllers
                     {
                         row.Id,
                         row.ClassifiedStatus,
+                        row.Fingerprint,
+                        row.RowNumber,
+                        NormalizedDescription = row.NormalizedDescription
+                            ?? RevolutMovementClassifier.Normalize(row.RawDescription),
+                        FinancialKey = CreateMovementKey(
+                            row.ValueDate, amount, fee, row.Currency, string.Empty),
                         Key = CreateMovementKey(
                             row.ValueDate,
                             amount,
@@ -1103,19 +1096,13 @@ namespace PersonalFinance.Api.Controllers
                     };
                 })
                 .ToList();
-            var existingMovementCounts = existingMovements
+            var existingMovementsByKey = existingMovements
                 .GroupBy(row => row.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
-            var existingSettledCounts = existingMovements
-                .Where(row => row.ClassifiedStatus != EntryStatus.Pending)
-                .GroupBy(row => row.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
-            var existingPendingRowIds = existingMovements
-                .Where(row => row.ClassifiedStatus == EntryStatus.Pending)
-                .GroupBy(row => row.Key, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.Select(row => row.Id).ToList(), StringComparer.Ordinal);
-            var movementImportOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-            var completedDuplicateOccurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+            var existingMovementsByFinancialKey = existingMovements
+                .GroupBy(row => row.FinancialKey, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+            var matchedImportedRows = new HashSet<Guid>();
             var completedPendingRows = new List<(Guid RowId, DateOnly ValueDate)>();
 
             var batch = new ImportBatch
@@ -1155,32 +1142,39 @@ namespace PersonalFinance.Api.Controllers
                     movement.Fee,
                     movement.Currency,
                     normalizedDescription);
-                movementImportOccurrences.TryGetValue(movementKey, out var importedOccurrence);
-                importedOccurrence++;
-                movementImportOccurrences[movementKey] = importedOccurrence;
+                var existingMovement = existingMovementsByKey.GetValueOrDefault(movementKey)?
+                    .Where(row => !matchedImportedRows.Contains(row.Id))
+                    .OrderBy(row => row.ClassifiedStatus == classified.Status ? 0 : 1)
+                    .FirstOrDefault();
+                if (existingMovement is null)
+                {
+                    var financialKey = CreateMovementKey(
+                        DateOnly.FromDateTime(movement.StartedAt),
+                        movement.Amount, movement.Fee, movement.Currency, string.Empty);
+                    var renamedMatches = existingMovementsByFinancialKey.GetValueOrDefault(financialKey)?
+                        .Where(row => !matchedImportedRows.Contains(row.Id) && row.Key != movementKey)
+                        .Where(row => MatchesOriginalMovement(
+                            account.Id, movement, row.NormalizedDescription, row.Fingerprint,
+                            row.RowNumber, existingMovementsByKey[row.Key].Count))
+                        .Take(2)
+                        .ToList();
+                    if (renamedMatches is { Count: 1 })
+                        existingMovement = renamedMatches[0];
+                }
 
-                var wasImportedWithPreviousFingerprint =
-                    existingMovementCounts.TryGetValue(movementKey, out var importedCount) &&
-                    importedOccurrence <= importedCount;
                 if (fingerprints.Contains(legacyFingerprint) ||
-                    wasImportedWithPreviousFingerprint ||
+                    existingMovement is not null ||
                     !fingerprints.Add(fingerprint))
                 {
                     duplicateRows++;
-                    // Un movimiento que se importó PENDIENTE y ahora llega COMPLETADO: los primeros
-                    // completados cubren los que ya estaban pagados; los siguientes, los pendientes.
-                    if (classified.Status == EntryStatus.Paid &&
-                        existingPendingRowIds.TryGetValue(movementKey, out var pendingRowIds))
+                    if (existingMovement is not null)
                     {
-                        completedDuplicateOccurrences.TryGetValue(movementKey, out var completed);
-                        completed++;
-                        completedDuplicateOccurrences[movementKey] = completed;
-                        existingSettledCounts.TryGetValue(movementKey, out var settled);
-                        var pendingIndex = completed - settled - 1;
-                        if (pendingIndex >= 0 && pendingIndex < pendingRowIds.Count)
+                        matchedImportedRows.Add(existingMovement.Id);
+                        if (classified.Status == EntryStatus.Paid &&
+                            existingMovement.ClassifiedStatus == EntryStatus.Pending)
                         {
                             completedPendingRows.Add((
-                                pendingRowIds[pendingIndex],
+                                existingMovement.Id,
                                 DateOnly.FromDateTime(movement.CompletedAt ?? movement.StartedAt)));
                         }
                     }
@@ -1188,13 +1182,6 @@ namespace PersonalFinance.Api.Controllers
                 }
 
                 var mapping = FindMapping(mappings, account.Id, classified.NormalizedDescription);
-                aiSuggestions.TryGetValue(classified.NormalizedDescription, out var aiSuggestion);
-                var fallbackConceptId = mapping is null && aiSuggestion is null
-                    ? ImportFallbackClassifier.FindConceptId(
-                        classified.NormalizedDescription,
-                        movement.Amount,
-                        conceptIds)
-                    : null;
                 batch.Rows.Add(new ImportRow
                 {
                     UserId = userId.Value,
@@ -1211,18 +1198,30 @@ namespace PersonalFinance.Api.Controllers
                     NormalizedDescription = classified.NormalizedDescription,
                     Fingerprint = fingerprint,
                     Status = ImportRowStatus.Pending,
-                    SuggestedConceptId = mapping?.ConceptId ?? aiSuggestion?.ConceptId ?? fallbackConceptId,
-                    SuggestionSource = mapping is not null
-                        ? "mapping"
-                        : aiSuggestion is not null
-                            ? "ai"
-                            : fallbackConceptId is not null
-                                ? "regla general"
-                                : null,
-                    SuggestionConfidence = mapping is not null
-                        ? 1m
-                        : aiSuggestion?.Confidence ?? (fallbackConceptId is not null ? 0.5m : null)
+                    SuggestedConceptId = mapping?.ConceptId,
+                    SuggestionSource = mapping is not null ? "mapping" : null,
+                    SuggestionConfidence = mapping is not null ? 1m : null
                 });
+            }
+
+            var unmappedDescriptions = batch.Rows
+                .Where(row => row.SuggestedConceptId is null)
+                .Select(row => row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var aiSuggestions = unmappedDescriptions.Count == 0
+                ? new Dictionary<string, ImportAiSuggestion>()
+                : await _aiSuggestions.SuggestAsync(unmappedDescriptions, concepts, ct);
+            foreach (var row in batch.Rows.Where(row => row.SuggestedConceptId is null))
+            {
+                var normalized = row.NormalizedDescription ?? RevolutMovementClassifier.Normalize(row.RawDescription);
+                aiSuggestions.TryGetValue(normalized, out var suggestion);
+                var fallback = suggestion is null
+                    ? ImportFallbackClassifier.FindConceptId(normalized, row.Amount, conceptIds)
+                    : null;
+                row.SuggestedConceptId = suggestion?.ConceptId ?? fallback;
+                row.SuggestionSource = suggestion is not null ? "ai" : fallback is not null ? "regla general" : null;
+                row.SuggestionConfidence = suggestion?.Confidence ?? (fallback is not null ? 0.5m : null);
             }
 
             var confirmedPendingRows = await ConfirmCompletedPendingEntriesAsync(
@@ -1235,7 +1234,7 @@ namespace PersonalFinance.Api.Controllers
             batch.ExcludedRows = excludedRows;
             if (batch.AcceptedRows == 0)
             {
-                if (confirmedPendingRows > 0)
+                if (completedPendingRows.Count > 0)
                     await _db.SaveChangesAsync(ct);
 
                 // Aunque no haya nada nuevo, el extracto sirve para comprobar que el saldo cuadra.
@@ -1301,6 +1300,9 @@ namespace PersonalFinance.Api.Controllers
             if (completedRows.Count == 0) return 0;
 
             var rowIds = completedRows.Select(item => (Guid?)item.RowId).ToList();
+            var importedRows = await _db.ImportRows
+                .Where(row => row.UserId == userId && rowIds.Contains(row.Id))
+                .ToDictionaryAsync(row => row.Id, ct);
             var pendingEntries = await _db.LedgerEntries
                 .Where(entry =>
                     entry.UserId == userId &&
@@ -1311,6 +1313,11 @@ namespace PersonalFinance.Api.Controllers
             var confirmed = 0;
             foreach (var (rowId, valueDate) in completedRows)
             {
+                if (importedRows.TryGetValue(rowId, out var importedRow))
+                {
+                    importedRow.ClassifiedStatus = EntryStatus.Paid;
+                    importedRow.SettledDate = valueDate;
+                }
                 var rowEntries = pendingEntries.Where(entry => entry.ImportRowId == rowId).ToList();
                 if (rowEntries.Count == 0) continue;
 
@@ -1420,6 +1427,28 @@ namespace PersonalFinance.Api.Controllers
         {
             var raw = $"{movementIdentity}|{occurrence.ToString(CultureInfo.InvariantCulture)}";
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant();
+        }
+
+        private static bool MatchesOriginalMovement(
+            Guid accountId,
+            RevolutMovement movement,
+            string originalDescription,
+            string fingerprint,
+            int originalRowNumber,
+            int maxOccurrences)
+        {
+            var identity = CreateMovementIdentity(accountId, movement, originalDescription);
+            for (var occurrence = 1; occurrence <= maxOccurrences; occurrence++)
+            {
+                if (CreateFingerprint(identity, occurrence) == fingerprint)
+                    return true;
+            }
+
+            return CreateLegacyFingerprint(accountId, movement with
+            {
+                Description = originalDescription,
+                RowNumber = originalRowNumber
+            }) == fingerprint;
         }
     }
 }

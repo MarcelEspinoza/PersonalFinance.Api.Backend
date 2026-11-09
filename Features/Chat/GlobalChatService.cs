@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -96,12 +95,10 @@ namespace PersonalFinance.Api.Features.Chat
 
         public async Task<ChatResponseDto> AskAsync(Guid userId, ChatRequestDto request, bool isAdmin, CancellationToken ct)
         {
-            var apiKey = _configuration["Anthropic:ApiKey"]
-                ?? _configuration["ANTHROPIC_API_KEY"]
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                return new ChatResponseDto { Reply = "No puedo hablar todavía: falta configurar la clave de Anthropic en el servidor." };
+                return new ChatResponseDto { Reply = "No puedo hablar todavía: falta configurar la clave del proveedor de IA en el servidor." };
             }
 
             var messages = AnthropicMessages.BuildMessages(
@@ -379,14 +376,11 @@ namespace PersonalFinance.Api.Features.Chat
             for (var round = 0; ; round++)
             {
                 var allowTools = round < MaxToolRounds;
-                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-                httpRequest.Headers.Add("x-api-key", apiKey);
-                httpRequest.Headers.Add("anthropic-version", "2023-06-01");
-                httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey);
                 httpRequest.Content = new StringContent(
                     JsonSerializer.Serialize(new
                     {
-                        model = AnthropicMessages.ResolveModel(_configuration),
+                        model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                         max_tokens = 4096,
                         system,
                         messages = conversation,
@@ -401,7 +395,7 @@ namespace PersonalFinance.Api.Features.Chat
                 {
                     var errorBody = await response.Content.ReadAsStringAsync(ct);
                     _logger.LogWarning(
-                        "Anthropic devolvió HTTP {StatusCode} en el chat global: {Body}",
+                        "La IA devolvió HTTP {StatusCode} en el chat global: {Body}",
                         (int)response.StatusCode,
                         errorBody.Length > 300 ? errorBody[..300] : errorBody);
                     return new ChatResponseDto { Reply = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento." };
@@ -715,12 +709,10 @@ namespace PersonalFinance.Api.Features.Chat
                 new { role = "assistant", content = raw },
                 new { role = "user", content = feedback + "\n" + JsonSerializer.Serialize(invalid) }
             };
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
             request.Content = new StringContent(JsonSerializer.Serialize(new
             {
-                model = AnthropicMessages.ResolveModel(_configuration),
+                model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                 max_tokens = 4096,
                 system,
                 messages = repairMessages

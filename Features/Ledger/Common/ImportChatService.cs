@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -162,25 +161,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             ImportChatExtraContext extra,
             CancellationToken ct)
         {
-            var apiKey = _configuration["Anthropic:ApiKey"]
-                ?? _configuration["ANTHROPIC_API_KEY"]
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
             if (string.IsNullOrWhiteSpace(apiKey))
-                return Failure("No puedo hablar todavía: falta configurar la clave de Anthropic en el servidor.");
+                return Failure("No puedo hablar todavía: falta configurar la clave del proveedor de IA en el servidor.");
 
             var messages = AnthropicMessages.BuildMessages(
                 history.Select(h => (h.Role, h.Content)), userMessage, MaxHistoryMessages, MaxMessageLength);
             if (messages.Count == 0)
                 return Failure("Escríbeme tu pregunta y te ayudo.");
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
-                    model = AnthropicMessages.ResolveModel(_configuration),
+                    model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                     max_tokens = 4096,
                     system = BuildSystemPrompt(rows, concepts, analysis, extra ?? ImportChatExtraContext.Empty),
                     messages
@@ -193,7 +187,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "Anthropic devolvió HTTP {StatusCode} en el chat de importación: {Body}",
+                    "La IA devolvió HTTP {StatusCode} en el chat de importación: {Body}",
                     (int)response.StatusCode,
                     body.Length > 300 ? body[..300] : body);
                 return Failure("El servicio de IA no ha respondido; inténtalo de nuevo en un momento.");

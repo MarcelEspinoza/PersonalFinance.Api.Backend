@@ -4,7 +4,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
     internal static class ServiceSavingsMessages
     {
         public const string DefaultError = "El servicio de IA no ha respondido; inténtalo de nuevo en un momento.";
-        public const string MissingApiKey = "Falta configurar la clave de Anthropic en el servidor.";
+        public const string MissingApiKey = "Falta configurar la clave del proveedor de IA en el servidor.";
         public const string WebSearchDisabled =
             "La búsqueda web no está activada en la cuenta de Anthropic. Actívala en la consola de Anthropic y vuelve a intentarlo.";
         public const string InvalidResponse = "La IA no ha devuelto un resultado válido; inténtalo de nuevo en un momento.";

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -19,7 +18,6 @@ namespace PersonalFinance.Api.Features.ServiceSavings
     /// </summary>
     public sealed class ServiceSavingsService : IServiceSavingsService
     {
-        private const string MessagesUrl = "https://api.anthropic.com/v1/messages";
         private const int DefaultDailyLimit = 3;
         private const int MaxTokens = 16000;
         private const int MaxTurns = 4;
@@ -196,7 +194,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                     UserId = userId,
                     Status = ServiceReview.StatusRunning,
                     StartedAt = now,
-                    Model = AnthropicMessages.ResolveModel(_configuration)
+                    Model = AnthropicMessages.ResolveModel(_configuration, "Savings")
                 };
 
                 // Same behaviour as the month advisor: without a key the user just gets the message.
@@ -336,7 +334,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
             if (context.Candidates.Count == 0)
                 return new AnalysisOutcome(ServiceSavingsMessages.NothingToReview, new List<ServiceSavingItemDto>());
 
-            var model = AnthropicMessages.ResolveModel(_configuration);
+            var model = AnthropicMessages.ResolveModel(_configuration, "Savings");
             stats.Model = model;
             var blocks = await CallModelAsync(apiKey, model, context, stats, ct);
 
@@ -376,10 +374,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                 var messages = new List<object> { userMessage };
                 if (blocks.Count > 0) messages.Add(new { role = "assistant", content = blocks });
 
-                using var request = new HttpRequestMessage(HttpMethod.Post, MessagesUrl);
-                request.Headers.Add("x-api-key", apiKey);
-                request.Headers.Add("anthropic-version", "2023-06-01");
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
                 request.Content = new StringContent(
                     JsonSerializer.Serialize(new
                     {
@@ -397,7 +392,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning(
-                        "Anthropic devolvió HTTP {StatusCode} al buscar ofertas de servicios: {Body}",
+                        "La IA devolvió HTTP {StatusCode} al buscar ofertas de servicios: {Body}",
                         (int)response.StatusCode,
                         body.Length > 500 ? body[..500] : body);
                     throw new ServiceSavingsFailure(IsWebSearchDisabled(response.StatusCode, body)
@@ -531,10 +526,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                 ? limit
                 : DefaultDailyLimit;
 
-        private string? ResolveApiKey() =>
-            _configuration["Anthropic:ApiKey"]
-            ?? _configuration["ANTHROPIC_API_KEY"]
-            ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        private string? ResolveApiKey() => AnthropicMessages.ResolveApiKey(_configuration);
 
         private static ServiceReviewDto ToDto(ServiceReview review) => new()
         {
