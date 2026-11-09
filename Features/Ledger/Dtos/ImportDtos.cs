@@ -1,5 +1,8 @@
 namespace PersonalFinance.Api.Features.Ledger.Dtos
 {
+    public sealed record PendingImportDto(
+        Guid Id, string? FileName, Guid? AccountId, string? AccountName, int PendingRows, DateTime CreatedAt);
+
     public sealed class ImportConceptOptionDto
     {
         public Guid Id { get; set; }

@@ -44,6 +44,24 @@ namespace PersonalFinance.Api.Controllers
             _logger = logger ?? NullLogger<ImportsController>.Instance;
         }
 
+        [HttpGet]
+        public async Task<ActionResult<IReadOnlyList<PendingImportDto>>> GetPending(CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var batches = await _db.ImportBatches.AsNoTracking()
+                .Where(batch => batch.UserId == userId.Value && batch.Status != ImportBatchStatus.Applied &&
+                    batch.Rows.Any(row => row.Status == ImportRowStatus.Pending))
+                .OrderByDescending(batch => batch.CreatedAt).ThenByDescending(batch => batch.Id)
+                .Take(50)
+                .Select(batch => new PendingImportDto(
+                    batch.Id, batch.FileName, batch.AccountId,
+                    batch.Account != null ? batch.Account.Name : null,
+                    batch.Rows.Count(row => row.Status == ImportRowStatus.Pending), batch.CreatedAt))
+                .ToListAsync(ct);
+            return Ok(batches);
+        }
+
         [HttpGet("{batchId:guid}")]
         public async Task<ActionResult<ImportReviewDto>> GetReview(
             Guid batchId, CancellationToken ct)
