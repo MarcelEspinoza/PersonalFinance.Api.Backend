@@ -30,8 +30,10 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
 
         public async Task<MonthlyEntryDto> Handle(UpdateLedgerEntryCommand request, CancellationToken ct)
         {
-            var entry = await LedgerGuards.LoadEditableEntryAsync(_db, request.UserId, request.EntryId, ct);
+            var entry = await LedgerGuards.LoadEditableEntryAsync(
+                _db, request.UserId, request.EntryId, ct, allowSettlementAllocation: true);
             var dto = request.Payload;
+            EnsureSettledPartIsKept(entry, dto);
 
             if (dto.ConceptId.HasValue)
             {
@@ -61,6 +63,21 @@ namespace PersonalFinance.Api.Features.Ledger.Commands.UpdateLedgerEntry
             await _db.SaveChangesAsync(ct);
 
             return MonthlySummaryBuilder.MapEntry(entry);
+        }
+
+        private static void EnsureSettledPartIsKept(LedgerEntry entry, UpdateLedgerEntryDto dto)
+        {
+            if (entry.SettlementAllocatedAmount <= 0m) return;
+
+            var onlyAmountOrText = dto.ConceptId is null && dto.AccountId is null
+                && (dto.DueDate is null || dto.DueDate.Value == entry.DueDate);
+            if (!onlyAmountOrText || entry.Status is not (EntryStatus.Planned or EntryStatus.Pending))
+                throw new BusinessRuleException(
+                    "Este movimiento está incluido en una liquidación. Solo puedes cambiar su importe previsto; para lo demás, quita su parte de allí.");
+
+            if (dto.ForecastAmount.HasValue && Math.Abs(dto.ForecastAmount.Value) < entry.SettlementAllocatedAmount)
+                throw new BusinessRuleException(
+                    $"El previsto no puede bajar de {entry.SettlementAllocatedAmount:N2} €, que es lo que ya está incluido en una liquidación.");
         }
 
         /// <summary>
