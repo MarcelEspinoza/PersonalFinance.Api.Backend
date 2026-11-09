@@ -347,6 +347,40 @@ namespace PersonalFinance.Api.Services
             return true;
         }
 
+        public async Task MarkQuotaPaidAsync(string pasanacoId, string participantId, int month, int year, Guid userId)
+        {
+            if (month is < 1 or > 12 || year < 2000) throw new ValidationException("El mes de la cuota no es válido.");
+
+            var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
+            EnsureActive(pasanaco);
+
+            var participantExists = await _context.Participants
+                .AnyAsync(p => p.Id == participantId && p.PasanacoId == pasanacoId);
+            if (!participantExists) throw new ValidationException("Participante no válido");
+
+            var payment = await _context.PasanacoPayments.FirstOrDefaultAsync(p =>
+                p.PasanacoId == pasanacoId && p.ParticipantId == participantId && p.Month == month && p.Year == year);
+            if (payment is null)
+            {
+                payment = new PasanacoPayment
+                {
+                    PasanacoId = pasanacoId,
+                    ParticipantId = participantId,
+                    Month = month,
+                    Year = year
+                };
+                _context.PasanacoPayments.Add(payment);
+            }
+            else if (payment.Paid)
+            {
+                throw new ValidationException("Esa cuota ya está pagada.");
+            }
+
+            payment.Paid = true;
+            payment.PaymentDate = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+
         public async Task<Loan> CreateLoanForParticipantAsync(string pasanacoId, string participantId, decimal amount, Guid userId, string? note = null)
         {
             var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);

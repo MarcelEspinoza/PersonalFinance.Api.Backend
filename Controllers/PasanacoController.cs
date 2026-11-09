@@ -215,6 +215,16 @@ namespace PersonalFinance.Api.Controllers
             return Ok(loan);
         }
 
+        [HttpPost("{id}/participants/{participantId}/quota-paid")]
+        public async Task<IActionResult> MarkQuotaPaid(string id, string participantId, [FromQuery] int month, [FromQuery] int year)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            await _service.MarkQuotaPaidAsync(id, participantId, month, year, userId.Value);
+            return NoContent();
+        }
+
         [HttpPost("payments/{paymentId}/mark-paid")]
         public async Task<IActionResult> MarkPaymentAsPaid(Guid paymentId)
         {
