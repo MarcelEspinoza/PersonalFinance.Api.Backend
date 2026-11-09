@@ -30,6 +30,18 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? PlannedEntryId { get; set; }
         public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
         public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
+        /// <summary>Pasanaco participant whose quota this row collects; marked as paid when the batch is applied.</summary>
+        public string? PasanacoParticipantId { get; set; }
+        /// <summary>Month of that quota (first day).</summary>
+        public DateOnly? PasanacoQuotaMonth { get; set; }
+        public string? PasanacoQuotaLabel { get; set; }
+    }
+
+    public sealed class SetImportRowPasanacoQuotaDto
+    {
+        public string ParticipantId { get; set; } = string.Empty;
+        /// <summary>Quota month as "yyyy-MM".</summary>
+        public string Month { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -194,7 +206,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         /// <summary>
         /// "set_row_concept", "create_concept", "link_planned", "unlink_planned",
-        /// "skip_planned", "update_planned" o "create_reminder".
+        /// "skip_planned", "update_planned", "create_reminder" o "pay_pasanaco_quota".
         /// </summary>
         public string Type { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
@@ -224,5 +236,9 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string? Notes { get; set; }
         // create_reminder: true = a cobro (money comes in), so the forecast adds it.
         public bool? IsIncome { get; set; }
+        /// <summary>Participant whose quota the row collects (pay_pasanaco_quota).</summary>
+        public string? PasanacoParticipantId { get; set; }
+        /// <summary>Quota month as "yyyy-MM" (pay_pasanaco_quota).</summary>
+        public string? PasanacoMonth { get; set; }
     }
 }

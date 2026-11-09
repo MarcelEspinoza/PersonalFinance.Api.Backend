@@ -312,6 +312,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var matchedForecasts = 0;
             var bookedDeductions = new List<(Guid PlannedEntryId, decimal Amount)>();
             var settlementCandidates = new List<SettlementPaymentCandidate>();
+            var pasanacoRows = new List<ImportRow>();
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
                 var isSplit = row.Allocations.Count > 0;
@@ -416,6 +417,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     }
 
                     row.Status = ImportRowStatus.Accepted;
+                    if (row.PasanacoParticipantId is not null && row.Amount > 0m) pasanacoRows.Add(row);
                     applied++;
                     continue;
                 }
@@ -547,8 +549,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
 
                 row.Status = ImportRowStatus.Accepted;
+                if (row.PasanacoParticipantId is not null && row.Amount > 0m) pasanacoRows.Add(row);
                 applied++;
             }
+
+            await PasanacoImportQuotas.MarkPaidAsync(_db, userId, pasanacoRows, ct);
 
             // A covered planned entry is skipped (not paid): the rows already carry the real
             // amounts, so the month counts them once and nothing stays pending.

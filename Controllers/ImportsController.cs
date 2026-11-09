@@ -95,6 +95,13 @@ namespace PersonalFinance.Api.Controllers
                 .ToListAsync(ct);
 
             var rows = batch.Rows.OrderBy(row => row.RowNumber).Select(MapRow).ToList();
+            var quotaLabels = await PasanacoImportQuotas.DescribeAsync(_db, userId.Value, batch.Rows, ct);
+            foreach (var row in rows)
+            {
+                if (row.PasanacoParticipantId is { } participantId && row.PasanacoQuotaMonth is { } quotaMonth &&
+                    quotaLabels.TryGetValue((participantId, quotaMonth), out var label))
+                    row.PasanacoQuotaLabel = label;
+            }
             var plannedIds = rows.SelectMany(row => row.PlannedAllocations)
                 .Select(link => link.PlannedEntryId).Distinct().ToList();
             if (plannedIds.Count > 0)
@@ -306,6 +313,58 @@ namespace PersonalFinance.Api.Controllers
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
             row.SuggestionSource = "manual";
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/pasanaco-quota")]
+        public async Task<IActionResult> SetPasanacoQuota(
+            Guid batchId, Guid rowId, [FromBody] SetImportRowPasanacoQuotaDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var row = await _db.ImportRows.Include(item => item.Batch)
+                .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict(new { message = "Solo puedes asignar una cuota a un movimiento pendiente de importar." });
+            if (row.Amount <= 0m)
+                return BadRequest(new { message = "Solo un cobro puede pagar la cuota de un pasanaco." });
+            if (string.IsNullOrWhiteSpace(dto.ParticipantId) ||
+                !DateOnly.TryParseExact(dto.Month + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var month))
+                return BadRequest(new { message = "Indica el participante y el mes de la cuota." });
+
+            var (quota, error) = await PasanacoImportQuotas.ResolveAsync(_db, userId.Value, dto.ParticipantId, month, ct);
+            if (quota is null) return BadRequest(new { message = error });
+            var takenBy = await _db.ImportRows.AsNoTracking()
+                .Where(item => item.UserId == userId.Value && item.Id != row.Id &&
+                    item.Status == ImportRowStatus.Pending &&
+                    item.PasanacoParticipantId == quota.ParticipantId && item.PasanacoQuotaMonth == quota.Month &&
+                    item.Batch != null &&
+                    (item.Batch.Status == ImportBatchStatus.Draft || item.Batch.Status == ImportBatchStatus.Reviewing))
+                .Select(item => (int?)item.RowNumber)
+                .FirstOrDefaultAsync(ct);
+            if (takenBy is { } takenRow)
+                return Conflict(new { message = $"Esa cuota ya está asignada a otro movimiento pendiente (fila {takenRow})." });
+
+            row.PasanacoParticipantId = quota.ParticipantId;
+            row.PasanacoQuotaMonth = quota.Month;
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpDelete("{batchId:guid}/rows/{rowId:guid}/pasanaco-quota")]
+        public async Task<IActionResult> ClearPasanacoQuota(Guid batchId, Guid rowId, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var row = await _db.ImportRows.Include(item => item.Batch)
+                .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict(new { message = "El movimiento ya se ha aplicado; cambia la cuota desde Pasanaco." });
+            row.PasanacoParticipantId = null;
+            row.PasanacoQuotaMonth = null;
             await _db.SaveChangesAsync(ct);
             return NoContent();
         }
@@ -729,7 +788,9 @@ namespace PersonalFinance.Api.Controllers
                     }).ToList(),
                     IsSplit = r.Allocations.Count > 0,
                     SharedExpenseCounterpartyId = r.Allocations.FirstOrDefault(part => part.CounterpartyId.HasValue)?.CounterpartyId,
-                    SharedExpenseAmount = r.Allocations.FirstOrDefault(part => part.CounterpartyId.HasValue)?.Amount
+                    SharedExpenseAmount = r.Allocations.FirstOrDefault(part => part.CounterpartyId.HasValue)?.Amount,
+                    PasanacoParticipantId = r.PasanacoParticipantId,
+                    PasanacoQuotaMonth = r.PasanacoQuotaMonth
                 })
                 .ToList();
 
@@ -768,6 +829,9 @@ namespace PersonalFinance.Api.Controllers
                         ConceptId = p.ConceptId
                     })
                     .ToList(),
+                Pasanacos = batch.Status == ImportBatchStatus.Applied
+                    ? Array.Empty<PasanacoImportSummary>()
+                    : await PasanacoImportQuotas.LoadActiveAsync(_db, userId.Value, ct),
                 Today = DateOnly.FromDateTime(DateTime.UtcNow)
             };
             var result = await _chat.AskAsync(dto.Message, history, rowContexts, concepts, analysis, extra, ct);
@@ -803,7 +867,9 @@ namespace PersonalFinance.Api.Controllers
                         Repeat = p.Repeat,
                         NotifyDaysBefore = p.NotifyDaysBefore,
                         Notes = p.Notes,
-                        IsIncome = p.IsIncome
+                        IsIncome = p.IsIncome,
+                        PasanacoParticipantId = p.PasanacoParticipantId,
+                        PasanacoMonth = p.PasanacoMonth
                     })
                     .ToList()
             });
@@ -1601,6 +1667,8 @@ namespace PersonalFinance.Api.Controllers
             ConfirmedConceptId = row.ConfirmedConceptId,
             SuggestionSource = row.SuggestionSource,
             PlannedEntryId = row.PlannedEntryId,
+            PasanacoParticipantId = row.PasanacoParticipantId,
+            PasanacoQuotaMonth = row.PasanacoQuotaMonth,
             PlannedAllocations = row.PlannedAllocations
                 .Select(link => new ImportPlannedAllocationDto
                 {

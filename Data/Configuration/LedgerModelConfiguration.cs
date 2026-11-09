@@ -316,6 +316,7 @@ namespace PersonalFinance.Api.Data.Configuration
                 e.Property(x => x.Fingerprint).IsRequired().HasMaxLength(64);
                 e.Property(x => x.SuggestionSource).HasMaxLength(40);
                 e.Property(x => x.SuggestionConfidence).HasColumnType("decimal(5,4)");
+                e.Property(x => x.PasanacoParticipantId).HasMaxLength(64);
 
                 e.HasOne(x => x.Batch)
                     .WithMany(bt => bt.Rows)

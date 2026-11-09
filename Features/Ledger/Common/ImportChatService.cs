@@ -20,6 +20,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public bool IsSplit { get; init; }
         public Guid? SharedExpenseCounterpartyId { get; init; }
         public decimal? SharedExpenseAmount { get; init; }
+        public string? PasanacoParticipantId { get; init; }
+        public DateOnly? PasanacoQuotaMonth { get; init; }
     }
 
     public sealed record ImportChatMessage(string Role, string Content);
@@ -65,6 +67,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         /// <summary>Date used to validate reminder dates; UTC today when not set.</summary>
         public DateOnly? Today { get; init; }
         public IReadOnlyList<ImportChatPersonContext> People { get; init; } = Array.Empty<ImportChatPersonContext>();
+
+        /// <summary>Active pasanacos of the user with the quotas still unpaid.</summary>
+        public IReadOnlyList<PasanacoImportSummary> Pasanacos { get; init; } = Array.Empty<PasanacoImportSummary>();
     }
 
     public static class ImportChatActionTypes
@@ -78,6 +83,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public const string SkipPlanned = "skip_planned";
         public const string UpdatePlanned = "update_planned";
         public const string CreateReminder = "create_reminder";
+        public const string PayPasanacoQuota = "pay_pasanaco_quota";
     }
 
     /// <summary>
@@ -106,7 +112,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         bool? IsIncome = null,
         IReadOnlyList<ImportPlannedAllocationDto>? PlannedAllocations = null,
         Guid? CounterpartyId = null,
-        string? CounterpartyName = null);
+        string? CounterpartyName = null,
+        string? PasanacoParticipantId = null,
+        string? PasanacoMonth = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -268,7 +276,34 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         plannedEntryId = link.PlannedEntryId,
                         amount = link.Amount
                     }),
-                    isSplit = r.IsSplit
+                    isSplit = r.IsSplit,
+                    pasanacoQuota = r.PasanacoParticipantId is null || r.PasanacoQuotaMonth is null
+                        ? null
+                        : new
+                        {
+                            participantId = r.PasanacoParticipantId,
+                            month = r.PasanacoQuotaMonth.Value.ToString("yyyy-MM", CultureInfo.InvariantCulture)
+                        }
+                }),
+                PromptJson);
+            var pasanacosJson = JsonSerializer.Serialize(
+                extra.Pasanacos.Select(p => new
+                {
+                    name = Masked(p.Name, MaxNameLength),
+                    cuota = p.MonthlyAmount,
+                    participantes = p.TotalParticipants,
+                    bote = p.MonthlyAmount * p.TotalParticipants,
+                    rondaActual = p.CurrentRound,
+                    mesActual = p.CurrentMonth.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                    recibeEsteMes = Masked(p.CurrentRecipient, MaxNameLength),
+                    cuotasPendientes = p.PendingQuotas.Select(q => new
+                    {
+                        participantId = q.ParticipantId,
+                        participante = Masked(q.ParticipantName, MaxNameLength),
+                        month = q.Month.ToString("yyyy-MM", CultureInfo.InvariantCulture),
+                        amount = q.Amount,
+                        recibe = Masked(q.Recipient, MaxNameLength)
+                    })
                 }),
                 PromptJson);
             var plannedJson = JsonSerializer.Serialize(
@@ -295,8 +330,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 El usuario te habla en español sobre los movimientos de su extracto.
                 Puedes: explicar una fila, explicar la revisión automática, decir qué
                 no reconoces, proponer cambios de categoría (concepto), descontar
-                movimientos de un previsto, descartar o cambiar un previsto y crear
-                recordatorios cuando el usuario te lo pida.
+                movimientos de un previsto, descartar o cambiar un previsto, marcar como
+                pagada la cuota de un pasanaco y crear recordatorios cuando el usuario
+                te lo pida.
                 Hoy es {{today}}.
 
                 CÓMO SE APLICAN LOS CAMBIOS:
@@ -426,6 +462,26 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   previsto» o «Previsto en otra cuenta» y el movimiento es parte de ese
                   previsto, propón "link_planned" en vez de aconsejar «Descartar este mes».
 
+                PASANACOS (lista PASANACOS de los datos):
+                - Cada mes cada participante paga una "cuota" y uno de ellos recibe el
+                  "bote" (cuota × participantes). "cuotasPendientes" son las cuotas que
+                  aún no constan como pagadas, con su "participantId" y su "month".
+                - Si el usuario dice que un ingreso es la cuota (o parte del pasanaco)
+                  que le paga un participante, aunque se lo reenvíe otra persona (por
+                  ejemplo, su mamá lo recibió por Bizum y se lo transfirió), propón
+                  "pay_pasanaco_quota" con UNA fila de ingreso, el "participantId" y el
+                  "month" (AAAA-MM) de esa cuota. Al aplicar el lote la cuota queda
+                  pagada en Pasanaco; no se crea otro ingreso.
+                - Propón además "set_row_concept" con la categoría que pida el usuario
+                  (si no dice ninguna, la de sus cobros del pasanaco, por ejemplo
+                  «Ingresos adicionales»).
+                - No lo trates como préstamo, recordatorio ni dinero de paso, ni digas
+                  que no existe porque no aparece en los previstos: búscalo aquí.
+                - Si no está claro de qué participante o de qué mes es, pregunta antes
+                  de proponer nada. Si la fila ya tiene "pasanacoQuota", ya está asignada.
+                - Si además hay un previsto del cobro del bote, pregunta antes de
+                  vincularlo para no contar el dinero dos veces.
+
                 CÓMO TRABAJA ESTE USUARIO (aplícalo al explicar y al proponer categorías):
                 - Dinero que se mueve entre sus propias cuentas (Revolut, la conjunta,
                   la hucha, efectivo) es un traspaso: usa el concepto Transfer de
@@ -480,6 +536,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {{Math.Min(extra.PlannedEntries.Count, MaxPlannedInPrompt)}} de {{extra.PlannedEntries.Count}}):
                 {{plannedJson}}
 
+                PASANACOS ACTIVOS:
+                {{pasanacosJson}}
+
                 FILAS PENDIENTES DEL LOTE:
                 {{rowsJson}}
                 </datos>
@@ -495,6 +554,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {"type":"skip_planned","plannedEntryId":"guid"}
                 {"type":"update_planned","plannedEntryId":"guid","amount":200.00,"dueDate":"AAAA-MM-DD"}
                 {"type":"create_reminder","title":"texto","dueDate":"AAAA-MM-DD","amount":50.00,"isIncome":false,"repeat":"none","notifyDaysBefore":1,"notes":"texto"}
+                {"type":"pay_pasanaco_quota","rowIds":["guid"],"participantId":"id","month":"AAAA-MM"}
 
                 Escribe "reply" en texto plano, sin markdown (sin asteriscos, almohadillas
                 ni tablas). Si el usuario sólo pregunta (no pide cambios), deja
@@ -647,6 +707,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         else drafts.Add(new UnlinkDraft(rowIds));
                         continue;
                     }
+                    case ImportChatActionTypes.PayPasanacoQuota:
+                    {
+                        var proposal = BuildPasanacoQuota(item, rowsById, extra.Pasanacos);
+                        if (proposal is null || !usedKeys.Add($"quota-row:{proposal.RowIds[0]}") ||
+                            !usedKeys.Add($"quota:{proposal.PasanacoParticipantId}:{proposal.PasanacoMonth}"))
+                            continue;
+                        drafts.Add(new FixedDraft(proposal));
+                        continue;
+                    }
                     case ImportChatActionTypes.SkipPlanned:
                     case ImportChatActionTypes.UpdatePlanned:
                     case ImportChatActionTypes.CreateReminder:
@@ -747,6 +816,37 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 ImportChatActionTypes.AllocatePlanned, summary, ids,
                 null, null, null, null, null, null, false,
                 PlannedAllocations: allocations);
+        }
+
+        private static ImportChatProposal? BuildPasanacoQuota(
+            JsonElement item,
+            IReadOnlyDictionary<Guid, ImportChatRowContext> rows,
+            IReadOnlyList<PasanacoImportSummary> pasanacos)
+        {
+            var ids = ReadGuids(item, "rowIds").Distinct().ToList();
+            var participantId = GetString(item, "participantId")?.Trim();
+            var monthText = GetString(item, "month")?.Trim();
+            if (ids.Count != 1 || !rows.TryGetValue(ids[0], out var row) || row.Amount <= 0m ||
+                string.IsNullOrEmpty(participantId) || monthText is null ||
+                !DateOnly.TryParseExact(monthText + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var month))
+                return null;
+            if (row.PasanacoParticipantId == participantId && row.PasanacoQuotaMonth == month)
+                return null;
+            var quota = pasanacos.SelectMany(pasanaco => pasanaco.PendingQuotas)
+                .FirstOrDefault(candidate => candidate.ParticipantId == participantId && candidate.Month == month);
+            if (quota is null) return null;
+
+            var difference = row.Amount != quota.Amount
+                ? $" La cuota es de {Money(quota.Amount)} y el movimiento de {Money(row.Amount)}."
+                : string.Empty;
+            var summary = $"Marcar como pagada la {PasanacoImportQuotas.Label(quota)} ({Money(quota.Amount)}) con este cobro" +
+                DescribeRows(ids, rows) + "." + difference;
+            return new ImportChatProposal(
+                ImportChatActionTypes.PayPasanacoQuota, summary, ids,
+                null, null, null, null, null, null, false,
+                Amount: quota.Amount,
+                PasanacoParticipantId: quota.ParticipantId,
+                PasanacoMonth: month.ToString("yyyy-MM", CultureInfo.InvariantCulture));
         }
 
         private static ImportChatProposal ToLinkProposal(LinkDraft draft, IReadOnlyDictionary<Guid, ImportChatRowContext> rowsById)

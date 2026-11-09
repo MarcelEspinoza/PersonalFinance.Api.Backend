@@ -1629,6 +1629,13 @@ namespace PersonalFinance.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)");
 
+                    b.Property<string>("PasanacoParticipantId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateOnly?>("PasanacoQuotaMonth")
+                        .HasColumnType("date");
+
                     b.Property<Guid?>("PlannedEntryId")
                         .HasColumnType("char(36)");
 

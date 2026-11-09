@@ -68,7 +68,13 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// its own paid entry; the planned entry is reduced, or closed when covered.
         /// </summary>
         public Guid? PlannedEntryId { get; set; }
-
+        /// <summary>
+        /// Pasanaco participant whose monthly quota this income row collects. The quota is
+        /// marked as paid when the batch is applied.
+        /// </summary>
+        public string? PasanacoParticipantId { get; set; }
+        /// <summary>First day of the month of the pasanaco quota collected by this row.</summary>
+        public DateOnly? PasanacoQuotaMonth { get; set; }
         public ICollection<ImportRowAllocation> Allocations { get; set; } = new List<ImportRowAllocation>();
         public ICollection<ImportRowPlannedAllocation> PlannedAllocations { get; set; } = new List<ImportRowPlannedAllocation>();
     }

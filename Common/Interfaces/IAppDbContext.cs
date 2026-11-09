@@ -24,6 +24,9 @@ namespace PersonalFinance.Api.Common.Interfaces
         DbSet<Counterparty> Counterparties { get; }
         DbSet<PersonalLoan> PersonalLoans { get; }
         DbSet<PersonalFinance.Api.Models.Entities.Loan> Loans { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.Pasanaco> Pasanacos { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.Participant> Participants { get; }
+        DbSet<PersonalFinance.Api.Models.Entities.PasanacoPayment> PasanacoPayments { get; }
         DbSet<SavingsGoal> SavingsGoals { get; }
         DbSet<ImportBatch> ImportBatches { get; }
         DbSet<ImportRow> ImportRows { get; }
