@@ -91,7 +91,8 @@ namespace PersonalFinance.Api.Features.Zeus
             {
                 var pass = state.Passes.FirstOrDefault(pass => pass.Id == id)
                     ?? throw new NotFoundException("No encuentro ese bono.");
-                if (Summarize(state).Passes.First(item => item.Id == id).UsedMinutes > 0)
+                var current = Summarize(state).Passes.First(item => item.Id == id);
+                if (current.UsedMinutes + current.PlannedMinutes > 0)
                     throw new BusinessRuleException("Este bono ya tiene horas usadas. Corrige primero los registros de uso.");
                 state.Passes.Remove(pass);
                 db.ZeusHourPasses.Remove(pass);
@@ -102,7 +103,7 @@ namespace PersonalFinance.Api.Features.Zeus
             Guid userId, Guid? id, SaveZeusUsageDto dto, CancellationToken ct) =>
             MutateAsync(userId, state =>
             {
-                ValidateDate(dto.Date);
+                ValidateDate(dto.Date, allowFuture: true);
                 var minutes = ResolveUsageMinutes(dto);
                 if (dto.Note?.Length > 300)
                     throw new BusinessRuleException("La nota no puede superar 300 caracteres.");
@@ -303,7 +304,7 @@ namespace PersonalFinance.Api.Features.Zeus
                 .Include(stay => stay.LedgerEntry).ThenInclude(entry => entry!.Account)
                 .Where(stay => stay.UserId == userId).ToListAsync(ct));
 
-        private static ZeusSummaryDto Summarize(HourState state)
+        private ZeusSummaryDto Summarize(HourState state)
         {
             foreach (var group in state.CareStays.Where(stay => stay.Kind != "cancellation")
                          .GroupBy(stay => new { stay.Provider, stay.Kind }))
@@ -336,18 +337,21 @@ namespace PersonalFinance.Api.Features.Zeus
             var passes = state.Passes.OrderBy(pass => pass.PurchasedOn)
                 .ThenBy(pass => pass.CreatedAt).ThenBy(pass => pass.Id).ToList();
             var remaining = passes.ToDictionary(pass => pass.Id, pass => pass.Minutes);
+            var plannedByPass = passes.ToDictionary(pass => pass.Id, _ => 0);
             var usages = new List<ZeusUsageDto>();
             foreach (var usage in state.Usages.OrderBy(usage => usage.Date)
                          .ThenBy(usage => usage.StartTime ?? TimeOnly.MinValue)
                          .ThenBy(usage => usage.CreatedAt).ThenBy(usage => usage.Id))
             {
                 var needed = usage.Minutes;
+                var isPlanned = usage.Date > clock.Today;
                 var allocations = new List<ZeusUsageAllocationDto>();
                 foreach (var pass in passes.Where(pass => pass.PurchasedOn <= usage.Date))
                 {
                     var amount = Math.Min(needed, remaining[pass.Id]);
                     if (amount <= 0) continue;
                     remaining[pass.Id] -= amount;
+                    if (isPlanned) plannedByPass[pass.Id] += amount;
                     needed -= amount;
                     allocations.Add(new ZeusUsageAllocationDto(pass.Id, pass.PurchasedOn, amount));
                     if (needed == 0) break;
@@ -356,15 +360,18 @@ namespace PersonalFinance.Api.Features.Zeus
                     throw new BusinessRuleException(
                         $"No hay horas suficientes para el {usage.Date:dd/MM/yyyy}. Compra un bono anterior a esa fecha o corrige el uso.");
                 usages.Add(new ZeusUsageDto(
-                    usage.Id, usage.Date, usage.Minutes, usage.Note, allocations, usage.StartTime, usage.EndTime));
+                    usage.Id, usage.Date, usage.Minutes, usage.Note, allocations, usage.StartTime, usage.EndTime, isPlanned));
             }
             var passDtos = passes.Select(pass => new ZeusPassDto(
-                pass.Id, pass.PurchasedOn, pass.Minutes, pass.Minutes - remaining[pass.Id],
-                remaining[pass.Id], MapExpense(pass.LedgerEntry!))).Reverse().ToList();
+                pass.Id, pass.PurchasedOn, pass.Minutes,
+                pass.Minutes - remaining[pass.Id] - plannedByPass[pass.Id],
+                remaining[pass.Id] + plannedByPass[pass.Id], MapExpense(pass.LedgerEntry!),
+                plannedByPass[pass.Id])).Reverse().ToList();
+            var plannedMinutes = usages.Where(usage => usage.IsPlanned).Sum(usage => (long)usage.Minutes);
             return new ZeusSummaryDto(
                 passes.Sum(pass => (long)pass.Minutes),
-                usages.Sum(usage => (long)usage.Minutes),
-                remaining.Values.Sum(value => (long)value),
+                usages.Sum(usage => (long)usage.Minutes) - plannedMinutes,
+                remaining.Values.Sum(value => (long)value) + plannedMinutes,
                 passDtos.Sum(pass => pass.Expense.Amount),
                 passDtos, usages.AsEnumerable().Reverse().ToList(),
                 state.CareStays.OrderByDescending(stay => stay.Date).ThenByDescending(stay => stay.StartTime)
@@ -373,7 +380,8 @@ namespace PersonalFinance.Api.Features.Zeus
                         stay.StartTime, stay.EndTime, stay.Nights, stay.Amount, stay.Note,
                         stay.LedgerEntry is null ? null : MapExpense(stay.LedgerEntry,
                             state.CareStays.Where(other => other.LedgerEntryId == stay.LedgerEntryId)
-                                .Sum(other => other.Amount)))).ToList());
+                                .Sum(other => other.Amount)))).ToList(),
+                plannedMinutes);
         }
 
         private static ZeusExpenseDto MapExpense(LedgerEntry entry, decimal allocatedAmount = 0m) => new(

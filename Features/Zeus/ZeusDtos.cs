@@ -75,17 +75,17 @@ namespace PersonalFinance.Api.Features.Zeus
 
     public sealed record ZeusPassDto(
         Guid Id, DateOnly PurchasedOn, int Minutes, int UsedMinutes, int RemainingMinutes,
-        ZeusExpenseDto Expense);
+        ZeusExpenseDto Expense, int PlannedMinutes = 0);
 
     public sealed record ZeusUsageAllocationDto(Guid PassId, DateOnly PurchasedOn, int Minutes);
 
     public sealed record ZeusUsageDto(
         Guid Id, DateOnly Date, int Minutes, string? Note,
         IReadOnlyList<ZeusUsageAllocationDto> Allocations,
-        TimeOnly? StartTime = null, TimeOnly? EndTime = null);
+        TimeOnly? StartTime = null, TimeOnly? EndTime = null, bool IsPlanned = false);
 
     public sealed record ZeusSummaryDto(
         long PurchasedMinutes, long UsedMinutes, long AvailableMinutes,
         decimal TotalSpent, IReadOnlyList<ZeusPassDto> Passes, IReadOnlyList<ZeusUsageDto> Usages,
-        IReadOnlyList<ZeusCareStayDto> CareStays);
+        IReadOnlyList<ZeusCareStayDto> CareStays, long PlannedMinutes = 0);
 }
