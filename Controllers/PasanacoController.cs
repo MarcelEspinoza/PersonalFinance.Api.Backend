@@ -48,6 +48,16 @@ namespace PersonalFinance.Api.Controllers
             return Ok(created);
         }
 
+        [HttpPost("with-participants")]
+        public async Task<IActionResult> CreateWithParticipants([FromBody] CreatePasanacoWithParticipantsDto dto)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+
+            var created = await _service.CreateWithParticipantsAsync(userId.Value, dto);
+            return Ok(created);
+        }
+
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(string id, [FromBody] UpdatePasanacoDto dto)
         {

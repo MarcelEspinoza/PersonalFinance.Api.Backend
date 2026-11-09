@@ -206,7 +206,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         /// <summary>
         /// "set_row_concept", "create_concept", "link_planned", "unlink_planned",
-        /// "skip_planned", "update_planned", "create_reminder" o "pay_pasanaco_quota".
+        /// "skip_planned", "update_planned", "create_reminder", "pay_pasanaco_quota" o "create_pasanaco".
         /// </summary>
         public string Type { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
@@ -240,5 +240,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string? PasanacoParticipantId { get; set; }
         /// <summary>Quota month as "yyyy-MM" (pay_pasanaco_quota).</summary>
         public string? PasanacoMonth { get; set; }
+        /// <summary>create_pasanaco: the pasanaco and its numbers.</summary>
+        public PersonalFinance.Api.Models.Dtos.Pasanaco.CreatePasanacoWithParticipantsDto? Pasanaco { get; set; }
     }
 }

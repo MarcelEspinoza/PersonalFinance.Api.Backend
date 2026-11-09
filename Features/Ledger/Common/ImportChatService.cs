@@ -6,6 +6,8 @@ using System.Text.Unicode;
 using Microsoft.Extensions.Logging;
 using PersonalFinance.Api.Features.Chat;
 using PersonalFinance.Api.Features.Ledger.Dtos;
+using PersonalFinance.Api.Models.Dtos.Pasanaco;
+using PersonalFinance.Api.Services;
 using PersonalFinance.Domain.Ledger.Enums;
 
 namespace PersonalFinance.Api.Features.Ledger.Common
@@ -84,6 +86,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public const string UpdatePlanned = "update_planned";
         public const string CreateReminder = "create_reminder";
         public const string PayPasanacoQuota = "pay_pasanaco_quota";
+        public const string CreatePasanaco = "create_pasanaco";
     }
 
     /// <summary>
@@ -114,7 +117,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         Guid? CounterpartyId = null,
         string? CounterpartyName = null,
         string? PasanacoParticipantId = null,
-        string? PasanacoMonth = null);
+        string? PasanacoMonth = null,
+        CreatePasanacoWithParticipantsDto? Pasanaco = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -330,9 +334,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 El usuario te habla en español sobre los movimientos de su extracto.
                 Puedes: explicar una fila, explicar la revisión automática, decir qué
                 no reconoces, proponer cambios de categoría (concepto), descontar
-                movimientos de un previsto, descartar o cambiar un previsto, marcar como
-                pagada la cuota de un pasanaco y crear recordatorios cuando el usuario
-                te lo pida.
+                movimientos de un previsto, descartar o cambiar un previsto, crear un
+                pasanaco, marcar como pagada la cuota de un pasanaco y crear recordatorios
+                cuando el usuario te lo pida.
                 Hoy es {{today}}.
 
                 CÓMO SE APLICAN LOS CAMBIOS:
@@ -481,6 +485,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   de proponer nada. Si la fila ya tiene "pasanacoQuota", ya está asignada.
                 - Si además hay un previsto del cobro del bote, pregunta antes de
                   vincularlo para no contar el dinero dos veces.
+                - Si el pasanaco que describe el usuario no está en PASANACOS ACTIVOS,
+                  puedes proponer crearlo con "create_pasanaco": "name", "monthlyAmount"
+                  (lo que paga cada número al mes), "startMonth" (AAAA-MM del turno 1),
+                  "currentRound" (turno del mes actual: 1 en el mes de inicio) y
+                  "participants" con {"number":1,"name":"Nombre"} por cada número, del 1
+                  al último sin saltos. Una persona puede tener varios números: repítela.
+                  El número de cada persona es el turno en que recibe el bote. Si faltan
+                  datos o no cuadran (por ejemplo, más nombres que turnos), pregunta.
+                  Si no dice nombre, usa «Pasanaco» y el año del primer turno.
+                - Mientras el pasanaco no esté creado no tienes los "participantId": no
+                  propongas "pay_pasanaco_quota" en la misma respuesta. Dile que confirme
+                  la creación y te escriba otra vez para marcar la cuota.
 
                 CÓMO TRABAJA ESTE USUARIO (aplícalo al explicar y al proponer categorías):
                 - Dinero que se mueve entre sus propias cuentas (Revolut, la conjunta,
@@ -555,6 +571,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {"type":"update_planned","plannedEntryId":"guid","amount":200.00,"dueDate":"AAAA-MM-DD"}
                 {"type":"create_reminder","title":"texto","dueDate":"AAAA-MM-DD","amount":50.00,"isIncome":false,"repeat":"none","notifyDaysBefore":1,"notes":"texto"}
                 {"type":"pay_pasanaco_quota","rowIds":["guid"],"participantId":"id","month":"AAAA-MM"}
+                {"type":"create_pasanaco","name":"texto","monthlyAmount":200.00,"startMonth":"AAAA-MM","currentRound":1,"participants":[{"number":1,"name":"Nombre"},{"number":2,"name":"Nombre"}]}
 
                 Escribe "reply" en texto plano, sin markdown (sin asteriscos, almohadillas
                 ni tablas). Si el usuario sólo pregunta (no pide cambios), deja
@@ -716,6 +733,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         drafts.Add(new FixedDraft(proposal));
                         continue;
                     }
+                    case ImportChatActionTypes.CreatePasanaco:
+                    {
+                        var proposal = BuildCreatePasanaco(item, extra.Pasanacos);
+                        if (proposal is not null && usedKeys.Add("create-pasanaco")) drafts.Add(new FixedDraft(proposal));
+                        continue;
+                    }
                     case ImportChatActionTypes.SkipPlanned:
                     case ImportChatActionTypes.UpdatePlanned:
                     case ImportChatActionTypes.CreateReminder:
@@ -847,6 +870,52 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Amount: quota.Amount,
                 PasanacoParticipantId: quota.ParticipantId,
                 PasanacoMonth: month.ToString("yyyy-MM", CultureInfo.InvariantCulture));
+        }
+
+        private static ImportChatProposal? BuildCreatePasanaco(JsonElement item, IReadOnlyList<PasanacoImportSummary> existing)
+        {
+            var name = GetString(item, "name")?.Trim();
+            var startText = GetString(item, "startMonth")?.Trim();
+            if (!TryReadOptionalDecimal(item, "monthlyAmount", out var amount) || amount is not { } monthlyAmount ||
+                !TryReadOptionalInt(item, "currentRound", out var round) || round is not { } currentRound ||
+                startText is null ||
+                !DateOnly.TryParseExact(startText + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var start) ||
+                !item.TryGetProperty("participants", out var list) || list.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var participants = new List<CreateParticipantDto>();
+            foreach (var entry in list.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object ||
+                    !TryReadOptionalInt(entry, "number", out var number) || number is not { } assigned)
+                    return null;
+                participants.Add(new CreateParticipantDto { AssignedNumber = assigned, Name = GetString(entry, "name")?.Trim() ?? string.Empty });
+            }
+            if (PasanacoSetup.Validate(name, monthlyAmount, start.Month, start.Year, currentRound,
+                    participants.Select(p => (p.AssignedNumber, (string?)p.Name)).ToList()) is not null ||
+                existing.Any(p => string.Equals(p.Name.Trim(), name, StringComparison.OrdinalIgnoreCase)))
+                return null;
+
+            participants = participants.OrderBy(p => p.AssignedNumber).ToList();
+            var dto = new CreatePasanacoWithParticipantsDto
+            {
+                Name = name!,
+                MonthlyAmount = monthlyAmount,
+                StartMonth = start.Month,
+                StartYear = start.Year,
+                CurrentRound = currentRound,
+                Participants = participants
+            };
+            var current = start.AddMonths(currentRound - 1);
+            var recipient = participants[currentRound - 1].Name;
+            var summary = $"Crear el pasanaco «{dto.Name}»: {participants.Count} números de {Money(monthlyAmount)} al mes " +
+                $"(bote de {Money(monthlyAmount * participants.Count)}), desde {PasanacoImportQuotas.MonthName(start)}. " +
+                $"Turno actual: {currentRound} ({PasanacoImportQuotas.MonthName(current)}, recibe {recipient}).";
+            return new ImportChatProposal(
+                ImportChatActionTypes.CreatePasanaco, summary, Array.Empty<Guid>(),
+                null, null, dto.Name, null, null, null, false,
+                Amount: monthlyAmount,
+                Pasanaco: dto);
         }
 
         private static ImportChatProposal ToLinkProposal(LinkDraft draft, IReadOnlyDictionary<Guid, ImportChatRowContext> rowsById)

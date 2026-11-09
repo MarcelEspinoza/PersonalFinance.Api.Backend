@@ -100,6 +100,38 @@ namespace PersonalFinance.Api.Services
             return await GetByIdAsync(entity.Id, userId);
         }
 
+        public async Task<PasanacoDto> CreateWithParticipantsAsync(Guid userId, CreatePasanacoWithParticipantsDto dto)
+        {
+            var error = PasanacoSetup.Validate(dto.Name, dto.MonthlyAmount, dto.StartMonth, dto.StartYear, dto.CurrentRound,
+                dto.Participants.Select(p => (p.AssignedNumber, (string?)p.Name)).ToList());
+            if (error is not null) throw new ValidationException(error);
+
+            var entity = new Pasanaco
+            {
+                UserId = userId,
+                Name = dto.Name.Trim(),
+                MonthlyAmount = dto.MonthlyAmount,
+                TotalParticipants = dto.Participants.Count,
+                CurrentRound = dto.CurrentRound,
+                StartMonth = dto.StartMonth,
+                StartYear = dto.StartYear
+            };
+            _context.Pasanacos.Add(entity);
+            foreach (var participant in dto.Participants.OrderBy(p => p.AssignedNumber))
+            {
+                _context.Participants.Add(new Participant
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    PasanacoId = entity.Id,
+                    Name = participant.Name.Trim(),
+                    AssignedNumber = participant.AssignedNumber
+                });
+            }
+            await _context.SaveChangesAsync();
+
+            return await GetByIdAsync(entity.Id, userId);
+        }
+
         public async Task UpdateAsync(string id, Guid userId, UpdatePasanacoDto dto)
         {
             var pasanaco = await GetOwnedPasanacoAsync(id, userId);

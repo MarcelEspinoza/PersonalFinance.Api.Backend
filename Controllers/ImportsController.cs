@@ -869,7 +869,8 @@ namespace PersonalFinance.Api.Controllers
                         Notes = p.Notes,
                         IsIncome = p.IsIncome,
                         PasanacoParticipantId = p.PasanacoParticipantId,
-                        PasanacoMonth = p.PasanacoMonth
+                        PasanacoMonth = p.PasanacoMonth,
+                        Pasanaco = p.Pasanaco
                     })
                     .ToList()
             });

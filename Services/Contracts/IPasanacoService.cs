@@ -19,6 +19,7 @@ namespace PersonalFinance.Api.Services.Contracts
         Task<IEnumerable<PasanacoDto>> GetAllAsync(Guid userId);
         Task<PasanacoDto> GetByIdAsync(string id, Guid userId);
         Task<PasanacoDto> CreateAsync(Guid userId, CreatePasanacoDto dto);
+        Task<PasanacoDto> CreateWithParticipantsAsync(Guid userId, CreatePasanacoWithParticipantsDto dto);
         Task UpdateAsync(string id, Guid userId, UpdatePasanacoDto dto);
         Task DeleteAsync(string id, Guid userId);
         Task CompleteAsync(string id, Guid userId);
