@@ -90,6 +90,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 return new(false, 0, batchId, NotFound: true);
             if (batch.Status == ImportBatchStatus.Applied)
                 return new(false, 0, batchId, "El lote ya se ha aplicado.", Conflict: true);
+            if (batch.Status == ImportBatchStatus.Discarded)
+                return new(false, 0, batchId, "El lote está descartado.", Conflict: true);
             if (batch.Rows.Count == 0)
                 return new(false, 0, batchId, "El lote no contiene movimientos para aplicar.");
 
@@ -599,7 +601,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Guid userId, ImportBatch batch, CancellationToken ct)
         {
             ArgumentNullException.ThrowIfNull(batch);
-            if (batch.Status == ImportBatchStatus.Applied || batch.AccountId is null)
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded || batch.AccountId is null)
                 return Array.Empty<ImportForecastPreview>();
 
             // Mismo filtro que ApplyAsync: lo que ya está en el libro no se vuelve a emparejar.

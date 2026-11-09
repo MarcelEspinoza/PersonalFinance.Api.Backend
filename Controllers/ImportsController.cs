@@ -50,7 +50,8 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
             var batches = await _db.ImportBatches.AsNoTracking()
-                .Where(batch => batch.UserId == userId.Value && batch.Status != ImportBatchStatus.Applied &&
+                .Where(batch => batch.UserId == userId.Value &&
+                    (batch.Status == ImportBatchStatus.Draft || batch.Status == ImportBatchStatus.Reviewing) &&
                     batch.Rows.Any(row => row.Status == ImportRowStatus.Pending))
                 .OrderByDescending(batch => batch.CreatedAt).ThenByDescending(batch => batch.Id)
                 .Take(50)
@@ -77,6 +78,8 @@ namespace PersonalFinance.Api.Controllers
                     .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Discarded)
+                return Conflict("El lote está descartado.");
 
             var concepts = await _db.Concepts
                 .AsNoTracking()
@@ -162,6 +165,7 @@ namespace PersonalFinance.Api.Controllers
             if (userId is null) return Unauthorized();
 
             var batch = await _db.ImportBatches
+                .Include(item => item.Rows)
                 .FirstOrDefaultAsync(
                     item => item.Id == batchId && item.UserId == userId.Value,
                     ct);
@@ -169,7 +173,8 @@ namespace PersonalFinance.Api.Controllers
             if (batch.Status == ImportBatchStatus.Applied)
                 return Conflict("Una importación aplicada no se puede descartar.");
 
-            _db.ImportBatches.Remove(batch);
+            batch.Status = ImportBatchStatus.Discarded;
+            _db.ImportRows.RemoveRange(batch.Rows);
             await _db.SaveChangesAsync(ct);
             return NoContent();
         }
@@ -188,8 +193,8 @@ namespace PersonalFinance.Api.Controllers
                 .FirstOrDefaultAsync(
                     r => r.Id == rowId && r.BatchId == batchId && r.UserId == userId.Value, ct);
             if (row is null) return NotFound();
-            if (row.Batch?.Status == ImportBatchStatus.Applied)
-                return Conflict("El lote ya se ha aplicado.");
+            if (row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict("El lote ya se ha aplicado o está descartado.");
 
             if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
                 return BadRequest(new { message = "Usa Editar reparto o quita el gasto compartido antes de cambiar su categoría." });
@@ -250,7 +255,7 @@ namespace PersonalFinance.Api.Controllers
                 .Include(item => item.Allocations).Include(item => item.PlannedAllocations)
                 .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
             if (row is null) return NotFound();
-            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
                 return Conflict(new { message = "Solo puedes compartir un gasto pendiente de importar." });
             if (row.Amount >= 0m || !ImportBatchApplicationService.EntersAsPaid(row) ||
                 dto.Amount <= 0m || dto.Amount >= Math.Abs(row.Amount) || decimal.Round(dto.Amount, 2) != dto.Amount)
@@ -293,7 +298,7 @@ namespace PersonalFinance.Api.Controllers
             var row = await _db.ImportRows.Include(item => item.Batch).Include(item => item.Allocations)
                 .FirstOrDefaultAsync(item => item.UserId == userId.Value && item.BatchId == batchId && item.Id == rowId, ct);
             if (row is null) return NotFound();
-            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
                 return Conflict(new { message = "El gasto ya se ha aplicado; no puedes quitar este reparto desde la importación." });
             if (!row.Allocations.Any(part => part.CounterpartyId.HasValue)) return NoContent();
             row.ConfirmedConceptId = row.Allocations.Single(part => part.CounterpartyId is null).ConceptId;
@@ -322,7 +327,7 @@ namespace PersonalFinance.Api.Controllers
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
                     ct);
             if (row is null) return NotFound();
-            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
                 return Conflict("Solo se pueden dividir filas pendientes de un lote sin aplicar.");
             if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
                 return BadRequest(new { message = "Usa Editar reparto para cambiar el gasto compartido." });
@@ -399,8 +404,8 @@ namespace PersonalFinance.Api.Controllers
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
                     ct);
             if (row is null) return NotFound();
-            if (row.Batch?.Status == ImportBatchStatus.Applied)
-                return Conflict("El lote ya se ha aplicado.");
+            if (row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict("El lote ya se ha aplicado o está descartado.");
 
             if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
                 return BadRequest(new { message = "Usa Editar reparto o quita el gasto compartido antes de cambiar su categoría." });
@@ -500,8 +505,8 @@ namespace PersonalFinance.Api.Controllers
                     item => item.Id == batchId && item.UserId == userId.Value,
                     ct);
             if (batch is null) return NotFound();
-            if (batch.Status == ImportBatchStatus.Applied)
-                return Conflict("El lote ya se ha aplicado.");
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict("El lote ya se ha aplicado o está descartado.");
 
             if (dto.ConceptId is not null)
             {
@@ -576,8 +581,8 @@ namespace PersonalFinance.Api.Controllers
                     item => item.Id == batchId && item.UserId == userId.Value,
                     ct);
             if (batch is null) return NotFound();
-            if (batch.Status == ImportBatchStatus.Applied)
-                return Conflict("El lote ya se ha aplicado.");
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict("El lote ya se ha aplicado o está descartado.");
             if (batch.AccountId is null)
                 return BadRequest("El lote no tiene una cuenta asociada.");
 
@@ -689,6 +694,8 @@ namespace PersonalFinance.Api.Controllers
                     .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
+            if (batch.Status == ImportBatchStatus.Discarded)
+                return Conflict("El lote está descartado.");
 
             var concepts = await _db.Concepts
                 .AsNoTracking()
@@ -811,8 +818,8 @@ namespace PersonalFinance.Api.Controllers
                     .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
-            if (batch.Status == ImportBatchStatus.Applied)
-                return BadRequest(new { message = "El lote ya se ha aplicado." });
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return BadRequest(new { message = "El lote ya se ha aplicado o está descartado." });
 
             return Ok(await LoadPlannedCandidatesAsync(userId.Value, batch, ct));
         }
@@ -828,8 +835,8 @@ namespace PersonalFinance.Api.Controllers
                 .AsNoTracking()
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
-            if (batch.Status == ImportBatchStatus.Applied)
-                return BadRequest(new { message = "El lote ya se ha aplicado." });
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return BadRequest(new { message = "El lote ya se ha aplicado o está descartado." });
 
             var row = await _db.ImportRows
                 .Include(item => item.Allocations)
@@ -899,7 +906,7 @@ namespace PersonalFinance.Api.Controllers
                 .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId &&
                     item.UserId == userId.Value, ct);
             if (row is null) return NotFound();
-            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
                 return Conflict(new { message = "Solo se pueden repartir movimientos pendientes de una importación sin aplicar." });
             if (dto.Allocations is null) return BadRequest(new { message = "El reparto es obligatorio." });
             var links = dto.Allocations.Select(link => (link.PlannedEntryId, link.Amount)).ToList();
@@ -1262,6 +1269,7 @@ namespace PersonalFinance.Api.Controllers
                     on row.BatchId equals importBatch.Id
                 where row.UserId == userId.Value &&
                       row.Status == ImportRowStatus.Accepted &&
+                      importBatch.Status != ImportBatchStatus.Discarded &&
                       importBatch.AccountId == account.Id &&
                       importBatch.Source == ImportSource.RevolutCsv
                 select new

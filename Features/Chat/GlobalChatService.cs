@@ -965,7 +965,9 @@ namespace PersonalFinance.Api.Features.Chat
             var pendingImportEntities = await _db.ImportBatches
                 .AsNoTracking()
                 .Include(batch => batch.Rows)
-                .Where(batch => batch.UserId == userId && batch.Status != PersonalFinance.Domain.Ledger.Enums.ImportBatchStatus.Applied)
+                .Where(batch => batch.UserId == userId &&
+                    (batch.Status == PersonalFinance.Domain.Ledger.Enums.ImportBatchStatus.Draft ||
+                     batch.Status == PersonalFinance.Domain.Ledger.Enums.ImportBatchStatus.Reviewing))
                 .OrderByDescending(batch => batch.CreatedAt)
                 .Take(5)
                 .ToListAsync(ct);

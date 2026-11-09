@@ -573,7 +573,7 @@ namespace PersonalFinance.Api.Controllers
                 batch =>
                     batch.Id == batchId &&
                     batch.UserId == userId &&
-                    batch.Status != ImportBatchStatus.Applied,
+                    (batch.Status == ImportBatchStatus.Draft || batch.Status == ImportBatchStatus.Reviewing),
                 ct);
             var conceptExists = await _db.Concepts.AnyAsync(
                 concept =>
