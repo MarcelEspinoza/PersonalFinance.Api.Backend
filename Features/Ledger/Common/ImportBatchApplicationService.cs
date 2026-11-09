@@ -81,6 +81,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var batch = await _db.ImportBatches
                 .Include(item => item.Rows)
                     .ThenInclude(row => row.Allocations)
+                .Include(item => item.Rows)
+                    .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == batchId && item.UserId == userId,
                     ct);
@@ -94,24 +96,53 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             // Rows the user deducts from a planned entry: each one is booked as its own movement
             // and the planned entry is reduced (or closed) instead of being auto-matched.
             var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
-            var linkedEntryIds = linkedRows.Select(row => row.PlannedEntryId!.Value).ToHashSet();
+            var linkedEntryIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
+                .Select(link => link.PlannedEntryId).ToHashSet();
             var plannedById = linkedEntryIds.Count == 0
                 ? new Dictionary<Guid, LedgerEntry>()
                 : await _db.LedgerEntries
                     .Include(entry => entry.Period)
+                    .Include(entry => entry.Concept)
                     .Where(entry => entry.UserId == userId && linkedEntryIds.Contains(entry.Id))
                     .ToDictionaryAsync(entry => entry.Id, ct);
             var deductedRows = linkedRows
-                .Where(row => ImportPlannedLinks.IsValidLink(row, plannedById.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .Where(row => ImportPlannedLinks.IsValidLinks(row, plannedById))
                 .ToList();
+            foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending && row.PlannedAllocations.Count > 0))
+            {
+                var error = ImportPlannedLinks.AllocationError(row, ImportPlannedLinks.Links(row).ToList(), plannedById);
+                if (error is not null) return new(false, 0, batchId, error, Conflict: true);
+                var conceptId = row.ConfirmedConceptId ?? row.SuggestedConceptId;
+                if (conceptId is not null && conceptId != plannedById[row.PlannedAllocations.First().PlannedEntryId].ConceptId)
+                    return new(false, 0, batchId, "La categoría del movimiento no coincide con la de los previstos del reparto.", Conflict: true);
+                error = await ImportPlannedLinks.CareAllocationErrorAsync(
+                    _db, userId, ImportPlannedLinks.Links(row).ToList(), plannedById, ct);
+                if (error is not null) return new(false, 0, batchId, error, Conflict: true);
+            }
             var deductedRowIds = deductedRows.Select(row => row.Id).ToHashSet();
-            var deductedEntryIds = deductedRows.Select(row => row.PlannedEntryId!.Value).ToHashSet();
+            var deductedEntryIds = deductedRows.SelectMany(ImportPlannedLinks.Links)
+                .Select(link => link.PlannedEntryId).ToHashSet();
+            var legacyDeductedEntryIds = deductedRows.Where(row => row.PlannedAllocations.Count == 0)
+                .SelectMany(ImportPlannedLinks.Links).Select(link => link.PlannedEntryId).ToHashSet();
             if (await _db.ZeusCareStays.AnyAsync(stay =>
                 stay.UserId == userId && stay.LedgerEntryId.HasValue
-                && deductedEntryIds.Contains(stay.LedgerEntryId.Value), ct))
+                && legacyDeductedEntryIds.Contains(stay.LedgerEntryId.Value), ct))
                 return new(false, 0, batchId,
                     "Una previsión está vinculada a cuidados de Zeus. No la reduzcas como un previsto genérico: deja que se empareje con el pago o importa el Bizum y vincúlalo desde «Zeus».",
                     Conflict: true);
+            var explicitEntryIds = deductedRows.SelectMany(row => row.PlannedAllocations)
+                .Select(link => link.PlannedEntryId).ToHashSet();
+            foreach (var id in explicitEntryIds)
+            {
+                var total = deductedRows.SelectMany(ImportPlannedLinks.Links)
+                    .Where(link => link.PlannedEntryId == id).Sum(link => link.Amount);
+                if (total > plannedById[id].ForecastAmount + ImportPlannedLinks.CoverTolerance)
+                    return new(false, 0, batchId, "El reparto supera lo pendiente de un previsto. Actualiza los importes antes de aplicar.", Conflict: true);
+            }
+            var allocatedCareStays = await _db.ZeusCareStays
+                .Where(stay => stay.UserId == userId && stay.LedgerEntryId.HasValue &&
+                    explicitEntryIds.Contains(stay.LedgerEntryId.Value))
+                .ToListAsync(ct);
             foreach (var plannedId in deductedEntryIds)
             {
                 var plannedPeriod = plannedById[plannedId].Period;
@@ -126,7 +157,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             Guid? FallbackConcept(ImportRow row) =>
                 row.Allocations.Count == 0 &&
-                row.PlannedEntryId is { } plannedId &&
+                ImportPlannedLinks.Links(row).Select(link => (Guid?)link.PlannedEntryId).FirstOrDefault() is { } plannedId &&
                 plannedById.TryGetValue(plannedId, out var planned)
                     ? planned.ConceptId
                     : null;
@@ -446,9 +477,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     };
                     if (isPaid && deductedRowIds.Contains(row.Id))
                     {
-                        var planned = plannedById[row.PlannedEntryId!.Value];
-                        importedEntry.Notes = $"Descontado del previsto «{PlannedName(planned, concepts)}».";
-                        bookedDeductions.Add((planned.Id, amount));
+                        var links = ImportPlannedLinks.Links(row).ToList();
+                        importedEntry.Notes = row.PlannedAllocations.Count == 0
+                            ? $"Descontado del previsto «{PlannedName(plannedById[links[0].PlannedEntryId], concepts)}»."
+                            : ImportPlannedLinks.AppendNote(null, "Repartido entre " + string.Join("; ", links.Select(link =>
+                                $"«{PlannedName(plannedById[link.PlannedEntryId], concepts)}» ({plannedById[link.PlannedEntryId].DueDate:dd/MM/yyyy}): {ImportPlannedLinks.Money(link.Amount)}")) + ".");
+                        bookedDeductions.AddRange(links);
+                        foreach (var link in links)
+                        {
+                            foreach (var stay in allocatedCareStays.Where(stay => stay.LedgerEntryId == link.PlannedEntryId))
+                            {
+                                stay.LedgerEntryId = importedEntry.Id;
+                                stay.LedgerEntry = importedEntry;
+                            }
+                        }
                     }
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
@@ -581,17 +623,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
             if (linkedRows.Count == 0) return (new HashSet<Guid>(), new HashSet<Guid>());
 
-            var ids = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+            var ids = linkedRows.SelectMany(ImportPlannedLinks.Links)
+                .Select(link => link.PlannedEntryId).Distinct().ToList();
             var entries = await _db.LedgerEntries
                 .AsNoTracking()
+                .Include(entry => entry.Concept)
+                .Include(entry => entry.Period)
                 .Where(entry => entry.UserId == userId && ids.Contains(entry.Id))
                 .ToDictionaryAsync(entry => entry.Id, ct);
             var valid = linkedRows
-                .Where(row => ImportPlannedLinks.IsValidLink(row, entries.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .Where(row => ImportPlannedLinks.IsValidLinks(row, entries))
                 .ToList();
             return (
                 valid.Select(row => row.Id).ToHashSet(),
-                valid.Select(row => row.PlannedEntryId!.Value).ToHashSet());
+                valid.SelectMany(ImportPlannedLinks.Links).Select(link => link.PlannedEntryId).ToHashSet());
         }
 
         private static string PlannedName(LedgerEntry planned, IReadOnlyDictionary<Guid, Concept> concepts) =>

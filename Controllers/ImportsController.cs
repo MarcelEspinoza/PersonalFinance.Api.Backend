@@ -55,6 +55,8 @@ namespace PersonalFinance.Api.Controllers
                 .AsNoTracking()
                 .Include(b => b.Rows)
                     .ThenInclude(row => row.Allocations)
+                .Include(b => b.Rows)
+                    .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
 
@@ -70,16 +72,35 @@ namespace PersonalFinance.Api.Controllers
                 })
                 .ToListAsync(ct);
 
+            var rows = batch.Rows.OrderBy(row => row.RowNumber).Select(MapRow).ToList();
+            var plannedIds = rows.SelectMany(row => row.PlannedAllocations)
+                .Select(link => link.PlannedEntryId).Distinct().ToList();
+            if (plannedIds.Count > 0)
+            {
+                var planned = await _db.LedgerEntries.AsNoTracking()
+                    .Where(entry => entry.UserId == userId.Value && plannedIds.Contains(entry.Id))
+                    .Select(entry => new
+                    {
+                        entry.Id,
+                        Name = entry.Concept != null ? entry.Concept.Name : entry.Description,
+                        entry.DueDate
+                    })
+                    .ToDictionaryAsync(entry => entry.Id, ct);
+                foreach (var link in rows.SelectMany(row => row.PlannedAllocations))
+                {
+                    if (!planned.TryGetValue(link.PlannedEntryId, out var entry)) continue;
+                    link.PlannedEntryName = entry.Name;
+                    link.DueDate = entry.DueDate;
+                }
+            }
+
             return Ok(new ImportReviewDto
             {
                 Id = batch.Id,
                 AccountId = batch.AccountId ?? Guid.Empty,
                 FileName = batch.FileName,
                 Status = batch.Status.ToString(),
-                Rows = batch.Rows
-                    .OrderBy(r => r.RowNumber)
-                    .Select(MapRow)
-                    .ToList(),
+                Rows = rows,
                 Concepts = concepts,
                 Analysis = await AnalyzeSafelyAsync(batch, ct)
             });
@@ -141,6 +162,7 @@ namespace PersonalFinance.Api.Controllers
             var row = await _db.ImportRows
                 .Include(r => r.Batch)
                 .Include(r => r.Allocations)
+                .Include(r => r.PlannedAllocations)
                 .FirstOrDefaultAsync(
                     r => r.Id == rowId && r.BatchId == batchId && r.UserId == userId.Value, ct);
             if (row is null) return NotFound();
@@ -207,6 +229,7 @@ namespace PersonalFinance.Api.Controllers
             var row = await _db.ImportRows
                 .Include(item => item.Batch)
                 .Include(item => item.Allocations)
+                .Include(item => item.PlannedAllocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
                     ct);
@@ -251,6 +274,7 @@ namespace PersonalFinance.Api.Controllers
             row.SuggestionConfidence = 1m;
             // A split row cannot be deducted from a planned entry.
             row.PlannedEntryId = null;
+            row.PlannedAllocations.Clear();
 
             await _db.SaveChangesAsync(ct);
             var response = MapRow(row);
@@ -279,6 +303,7 @@ namespace PersonalFinance.Api.Controllers
             var row = await _db.ImportRows
                 .Include(item => item.Batch)
                 .Include(item => item.Allocations)
+                .Include(item => item.PlannedAllocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value,
                     ct);
@@ -567,6 +592,8 @@ namespace PersonalFinance.Api.Controllers
             var batch = await _db.ImportBatches
                 .Include(b => b.Rows)
                     .ThenInclude(row => row.Allocations)
+                .Include(b => b.Rows)
+                    .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
 
@@ -594,6 +621,11 @@ namespace PersonalFinance.Api.Controllers
                         : null)
                 {
                     PlannedEntryId = r.PlannedEntryId,
+                    PlannedAllocations = r.PlannedAllocations.Select(link => new ImportPlannedAllocationDto
+                    {
+                        PlannedEntryId = link.PlannedEntryId,
+                        Amount = link.Amount
+                    }).ToList(),
                     IsSplit = r.Allocations.Count > 0
                 })
                 .ToList();
@@ -620,7 +652,10 @@ namespace PersonalFinance.Api.Controllers
                         p.Description,
                         p.LinkedAmount,
                         p.RemainingAfterLinks,
-                        p.LinkedRowIds))
+                        p.LinkedRowIds)
+                    {
+                        ConceptId = p.ConceptId
+                    })
                     .ToList(),
                 Today = DateOnly.FromDateTime(DateTime.UtcNow)
             };
@@ -648,6 +683,7 @@ namespace PersonalFinance.Api.Controllers
                         SaveForFuture = p.SaveForFuture,
                         PlannedEntryId = p.PlannedEntryId,
                         PlannedEntryName = p.PlannedEntryName,
+                        PlannedAllocations = p.PlannedAllocations ?? Array.Empty<ImportPlannedAllocationDto>(),
                         Amount = p.Amount,
                         DueDate = p.DueDate,
                         Title = p.Title,
@@ -671,6 +707,8 @@ namespace PersonalFinance.Api.Controllers
                 .AsNoTracking()
                 .Include(b => b.Rows)
                     .ThenInclude(row => row.Allocations)
+                .Include(b => b.Rows)
+                    .ThenInclude(row => row.PlannedAllocations)
                 .FirstOrDefaultAsync(b => b.Id == batchId && b.UserId == userId.Value, ct);
             if (batch is null) return NotFound();
             if (batch.Status == ImportBatchStatus.Applied)
@@ -695,6 +733,7 @@ namespace PersonalFinance.Api.Controllers
 
             var row = await _db.ImportRows
                 .Include(item => item.Allocations)
+                .Include(item => item.PlannedAllocations)
                 .FirstOrDefaultAsync(
                     item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
             if (row is null)
@@ -703,6 +742,7 @@ namespace PersonalFinance.Api.Controllers
             if (dto?.PlannedEntryId is not { } plannedEntryId)
             {
                 row.PlannedEntryId = null;
+                row.PlannedAllocations.Clear();
                 await _db.SaveChangesAsync(ct);
                 return NoContent();
             }
@@ -734,6 +774,7 @@ namespace PersonalFinance.Api.Controllers
             if (error is not null) return BadRequest(new { message = error });
 
             row.PlannedEntryId = plannedEntryId;
+            row.PlannedAllocations.Clear();
             if (row.ConfirmedConceptId is null && planned.ConceptIsActive)
             {
                 row.ConfirmedConceptId = planned.ConceptId;
@@ -741,6 +782,69 @@ namespace PersonalFinance.Api.Controllers
                 row.SuggestionConfidence = 1m;
             }
 
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/planned-allocations")]
+        public async Task<IActionResult> SetRowPlannedAllocations(
+            Guid batchId, Guid rowId, [FromBody] SetImportRowPlannedAllocationsDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var row = await _db.ImportRows
+                .Include(item => item.Batch)
+                .Include(item => item.Allocations)
+                .Include(item => item.PlannedAllocations)
+                .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId &&
+                    item.UserId == userId.Value, ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+                return Conflict(new { message = "Solo se pueden repartir movimientos pendientes de una importación sin aplicar." });
+            if (dto.Allocations is null) return BadRequest(new { message = "El reparto es obligatorio." });
+            var links = dto.Allocations.Select(link => (link.PlannedEntryId, link.Amount)).ToList();
+            if (links.Count == 0)
+            {
+                row.PlannedEntryId = null;
+                row.PlannedAllocations.Clear();
+                await _db.SaveChangesAsync(ct);
+                return NoContent();
+            }
+            var ids = links.Select(link => link.PlannedEntryId).ToList();
+            var entries = await _db.LedgerEntries
+                .Include(entry => entry.Concept)
+                .Include(entry => entry.Period)
+                .Where(entry => entry.UserId == userId.Value && ids.Contains(entry.Id))
+                .ToDictionaryAsync(entry => entry.Id, ct);
+            var error = ImportPlannedLinks.AllocationError(row, links, entries);
+            if (error is not null) return BadRequest(new { message = error });
+            var siblings = await _db.ImportRows.AsNoTracking()
+                .Include(item => item.PlannedAllocations)
+                .Include(item => item.Allocations)
+                .Where(item => item.BatchId == batchId && item.UserId == userId.Value &&
+                    item.Id != rowId && item.Status == ImportRowStatus.Pending)
+                .ToListAsync(ct);
+            foreach (var link in links)
+            {
+                var otherAmount = siblings.Where(ImportPlannedLinks.Deducts).SelectMany(ImportPlannedLinks.Links)
+                    .Where(other => other.PlannedEntryId == link.PlannedEntryId).Sum(other => other.Amount);
+                if (link.Amount + otherAmount > entries[link.PlannedEntryId].ForecastAmount + ImportPlannedLinks.CoverTolerance)
+                    return BadRequest(new { message = "El reparto supera lo pendiente de un previsto. Revisa los importes." });
+            }
+            error = await ImportPlannedLinks.CareAllocationErrorAsync(_db, userId.Value, links, entries, ct);
+            if (error is not null) return BadRequest(new { message = error });
+            row.PlannedEntryId = null;
+            row.PlannedAllocations.Clear();
+            foreach (var link in links)
+                row.PlannedAllocations.Add(new ImportRowPlannedAllocation
+                {
+                    ImportRowId = row.Id,
+                    PlannedEntryId = link.PlannedEntryId,
+                    Amount = link.Amount
+                });
+            row.ConfirmedConceptId = entries[links[0].PlannedEntryId].ConceptId;
+            row.SuggestionSource = "manual";
+            row.SuggestionConfidence = 1m;
             await _db.SaveChangesAsync(ct);
             return NoContent();
         }
@@ -757,7 +861,8 @@ namespace PersonalFinance.Api.Controllers
             var from = batch.Rows.Min(row => row.ValueDate).AddDays(-ImportPlannedLinks.CandidateWindowDays);
             var to = batch.Rows.Max(row => row.ValueDate).AddDays(ImportPlannedLinks.CandidateWindowDays);
             var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
-            var linkedIds = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+            var linkedIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
+                .Select(link => link.PlannedEntryId).Distinct().ToList();
 
             var entries = await _db.LedgerEntries
                 .AsNoTracking()
@@ -784,12 +889,13 @@ namespace PersonalFinance.Api.Controllers
                 {
                     var linked = linkedRows
                         .Where(row =>
-                            row.PlannedEntryId == entry.Id &&
+                            ImportPlannedLinks.Links(row).Any(link => link.PlannedEntryId == entry.Id) &&
                             ImportPlannedLinks.LinkError(row.Amount, false, entry.Direction) is null)
                         .OrderBy(row => row.RowNumber)
                         .ToList();
                     var forecast = Math.Abs(entry.ForecastAmount);
-                    var linkedAmount = linked.Sum(row => Math.Abs(row.Amount));
+                    var linkedAmount = linked.Sum(row => ImportPlannedLinks.Links(row)
+                        .Where(link => link.PlannedEntryId == entry.Id).Sum(link => link.Amount));
                     return new ImportPlannedCandidateDto
                     {
                         Id = entry.Id,
@@ -1370,6 +1476,12 @@ namespace PersonalFinance.Api.Controllers
             ConfirmedConceptId = row.ConfirmedConceptId,
             SuggestionSource = row.SuggestionSource,
             PlannedEntryId = row.PlannedEntryId,
+            PlannedAllocations = row.PlannedAllocations
+                .Select(link => new ImportPlannedAllocationDto
+                {
+                    PlannedEntryId = link.PlannedEntryId,
+                    Amount = link.Amount
+                }).ToList(),
             Allocations = row.Allocations
                 .OrderBy(item => item.SortOrder)
                 .Select(item => new ImportRowAllocationDto

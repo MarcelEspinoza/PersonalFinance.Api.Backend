@@ -288,16 +288,42 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             // Rows the user deducts from a planned entry («previsto»): they are booked apart and the
             // planned entry is reduced, so the forecast warnings below don't apply to them.
             var linkedRows = rows.Where(ImportPlannedLinks.Deducts).ToList();
-            var linkedIds = linkedRows.Select(row => row.PlannedEntryId!.Value).Distinct().ToList();
+            var linkedIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
+                .Select(link => link.PlannedEntryId).Distinct().ToList();
             var plannedById = linkedIds.Count == 0
                 ? new Dictionary<Guid, LedgerEntry>()
                 : await db.LedgerEntries
                     .AsNoTracking()
                     .Include(entry => entry.Concept)
+                    .Include(entry => entry.Period)
                     .Where(entry => entry.UserId == userId && linkedIds.Contains(entry.Id))
                     .ToDictionaryAsync(entry => entry.Id, ct);
+            var totals = linkedRows.SelectMany(ImportPlannedLinks.Links)
+                .GroupBy(link => link.PlannedEntryId)
+                .ToDictionary(group => group.Key, group => group.Sum(link => link.Amount));
+            var invalidAllocations = new HashSet<Guid>();
+            foreach (var row in rows.Where(row => row.PlannedAllocations.Count > 0 && row.Status == ImportRowStatus.Pending))
+            {
+                var links = ImportPlannedLinks.Links(row).ToList();
+                var error = ImportPlannedLinks.AllocationError(row, links, plannedById);
+                if (error is null)
+                {
+                    var conceptId = ConceptOf(row);
+                    if (conceptId is not null && conceptId != plannedById[links[0].PlannedEntryId].ConceptId)
+                        error = "La categoría del movimiento no coincide con la de los previstos del reparto.";
+                    else if (links.Any(link => totals.GetValueOrDefault(link.PlannedEntryId) >
+                        plannedById[link.PlannedEntryId].ForecastAmount + ImportPlannedLinks.CoverTolerance))
+                        error = "El reparto supera lo pendiente de un previsto. Revisa los importes.";
+                    else
+                        error = await ImportPlannedLinks.CareAllocationErrorAsync(db, userId, links, plannedById, ct);
+                }
+                if (error is null) continue;
+                invalidAllocations.Add(row.Id);
+                findings.Add(Finding(SeverityWarning, "Reparto pendiente de corregir",
+                    error + " No se podrá aplicar el lote hasta corregir el reparto o quitar sus vínculos.", new[] { row }));
+            }
             var deductedRows = linkedRows
-                .Where(row => ImportPlannedLinks.IsValidLink(row, plannedById.GetValueOrDefault(row.PlannedEntryId!.Value)))
+                .Where(row => !invalidAllocations.Contains(row.Id) && ImportPlannedLinks.IsValidLinks(row, plannedById))
                 .ToList();
             var deductedRowIds = deductedRows.Select(row => row.Id).ToHashSet();
 
@@ -305,7 +331,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Where(row =>
                     row.Allocations.Count == 0 &&
                     ConceptOf(row) is null &&
-                    !(row.PlannedEntryId is { } plannedId && plannedById.ContainsKey(plannedId)))
+                    !deductedRowIds.Contains(row.Id))
                 .ToList();
             if (unassigned.Count > 0)
             {
@@ -377,27 +403,30 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .Select(preview => ForecastKey(preview.EntryId, preview.RuleId, preview.DueDate))
                 .ToHashSet(StringComparer.Ordinal);
             var flagged = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var deduction in deductedRows.GroupBy(row => row.PlannedEntryId!.Value))
+            foreach (var deduction in deductedRows.SelectMany(row => ImportPlannedLinks.Links(row)
+                         .Select(link => new { Row = row, link.PlannedEntryId, link.Amount }))
+                         .GroupBy(link => link.PlannedEntryId))
             {
                 var planned = plannedById[deduction.Key];
                 flagged.Add(ForecastKey(planned.Id, null, planned.DueDate));
 
                 var name = planned.Concept?.Name ?? planned.Description ?? "previsto";
-                var total = deduction.Sum(row => Math.Abs(row.Amount));
+                var total = deduction.Sum(link => link.Amount);
+                var sourceRows = deduction.Select(link => link.Row).ToList();
                 findings.Add(total < planned.ForecastAmount - ImportPlannedLinks.CoverTolerance
                     ? Finding(
                         SeverityInfo,
                         "Se descuenta de un previsto",
-                        $"Se descontarán {Money(total)} de «{name}» (quedan {Money(planned.ForecastAmount - total)}).",
-                        deduction)
+                        $"Se descontarán {Money(total)} de «{name}» ({planned.DueDate:dd/MM/yyyy}); quedan {Money(planned.ForecastAmount - total)}.",
+                        sourceRows)
                     : Finding(
                         SeverityInfo,
                         "Previsto cubierto",
-                        $"«{name}» quedará cubierto ({Money(total)} de {Money(planned.ForecastAmount)}).",
-                        deduction));
+                        $"«{name}» ({planned.DueDate:dd/MM/yyyy}) quedará cubierto ({Money(total)} de {Money(planned.ForecastAmount)}).",
+                        sourceRows));
             }
 
-            var staleLinks = linkedRows.Where(row => !deductedRowIds.Contains(row.Id)).ToList();
+            var staleLinks = linkedRows.Where(row => row.PlannedAllocations.Count == 0 && !deductedRowIds.Contains(row.Id)).ToList();
             if (staleLinks.Count > 0)
             {
                 findings.Add(Finding(

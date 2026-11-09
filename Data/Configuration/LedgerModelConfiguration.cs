@@ -349,6 +349,22 @@ namespace PersonalFinance.Api.Data.Configuration
                     .OnDelete(DeleteBehavior.Restrict);
             });
 
+            b.Entity<ImportRowPlannedAllocation>(e =>
+            {
+                e.ToTable("ImportRowPlannedAllocations");
+                e.HasKey(x => x.Id);
+                e.Property(x => x.Amount).HasColumnType(Money);
+                e.HasOne(x => x.ImportRow)
+                    .WithMany(row => row.PlannedAllocations)
+                    .HasForeignKey(x => x.ImportRowId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                e.HasOne<LedgerEntry>()
+                    .WithMany()
+                    .HasForeignKey(x => x.PlannedEntryId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                e.HasIndex(x => new { x.ImportRowId, x.PlannedEntryId }).IsUnique();
+            });
+
             b.Entity<ConceptMapping>(e =>
             {
                 e.ToTable("ConceptMappings");

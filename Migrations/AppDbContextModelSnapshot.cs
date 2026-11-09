@@ -1706,6 +1706,31 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("ImportRowAllocations", (string)null);
                 });
 
+            modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.ImportRowPlannedAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("ImportRowId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid>("PlannedEntryId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlannedEntryId");
+
+                    b.HasIndex("ImportRowId", "PlannedEntryId")
+                        .IsUnique();
+
+                    b.ToTable("ImportRowPlannedAllocations", (string)null);
+                });
+
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.LedgerEntry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2487,6 +2512,23 @@ namespace PersonalFinance.Api.Migrations
                     b.Navigation("ImportRow");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.ImportRowPlannedAllocation", b =>
+                {
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.ImportRow", "ImportRow")
+                        .WithMany("PlannedAllocations")
+                        .HasForeignKey("ImportRowId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.LedgerEntry", null)
+                        .WithMany()
+                        .HasForeignKey("PlannedEntryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ImportRow");
+                });
+
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.LedgerEntry", b =>
                 {
                     b.HasOne("PersonalFinance.Domain.Ledger.Entities.Account", "Account")
@@ -2687,6 +2729,8 @@ namespace PersonalFinance.Api.Migrations
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.ImportRow", b =>
                 {
                     b.Navigation("Allocations");
+
+                    b.Navigation("PlannedAllocations");
                 });
 
             modelBuilder.Entity("PersonalFinance.Domain.Ledger.Entities.MonthlyPeriod", b =>

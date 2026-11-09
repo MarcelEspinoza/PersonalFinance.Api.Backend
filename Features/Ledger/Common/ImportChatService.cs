@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Unicode;
 using Microsoft.Extensions.Logging;
 using PersonalFinance.Api.Features.Chat;
+using PersonalFinance.Api.Features.Ledger.Dtos;
 using PersonalFinance.Domain.Ledger.Enums;
 
 namespace PersonalFinance.Api.Features.Ledger.Common
@@ -13,6 +14,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     {
         /// <summary>Planned entry the row is currently deducted from, if any.</summary>
         public Guid? PlannedEntryId { get; init; }
+        public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; init; } = Array.Empty<ImportPlannedAllocationDto>();
 
         /// <summary>Split rows cannot be deducted from a planned entry.</summary>
         public bool IsSplit { get; init; }
@@ -34,7 +36,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         string? Description,
         decimal LinkedAmount,
         decimal RemainingAfterLinks,
-        IReadOnlyList<Guid> LinkedRowIds);
+        IReadOnlyList<Guid> LinkedRowIds)
+    {
+        public Guid? ConceptId { get; init; }
+    }
 
     /// <summary>
     /// Contexto extra para que el asistente entienda mejor los movimientos:
@@ -63,6 +68,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public const string SetRowConcept = "set_row_concept";
         public const string CreateConcept = "create_concept";
         public const string LinkPlanned = "link_planned";
+        public const string AllocatePlanned = "allocate_planned";
         public const string UnlinkPlanned = "unlink_planned";
         public const string SkipPlanned = "skip_planned";
         public const string UpdatePlanned = "update_planned";
@@ -92,7 +98,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         string? Repeat = null,
         int? NotifyDaysBefore = null,
         string? Notes = null,
-        bool? IsIncome = null);
+        bool? IsIncome = null,
+        IReadOnlyList<ImportPlannedAllocationDto>? PlannedAllocations = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -247,6 +254,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     description = Masked(r.Description, 200),
                     currentConcept = Masked(r.CurrentConcept, MaxNameLength),
                     plannedEntryId = r.PlannedEntryId,
+                    plannedAllocations = r.PlannedAllocations.Select(link => new
+                    {
+                        plannedEntryId = link.PlannedEntryId,
+                        amount = link.Amount
+                    }),
                     isSplit = r.IsSplit
                 }),
                 PromptJson);
@@ -255,6 +267,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {
                     id = p.Id,
                     concept = Masked(p.Concept, MaxNameLength),
+                    conceptId = p.ConceptId,
                     direction = p.Direction,
                     dueDate = p.DueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     forecastAmount = p.ForecastAmount,
@@ -330,8 +343,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   uno "in"; las filas divididas ("isSplit") no se pueden descontar.
                   "remainingAfterLinks" es lo que quedará del previsto con las filas ya
                   vinculadas ("linkedRowIds"); si es 0 o menos, quedará cubierto.
-                - "unlink_planned" ("rowIds"): quita ese descuento a filas que ya lo tienen
-                  ("plannedEntryId" de la fila).
+                - "allocate_planned" ("rowIds" con UNA fila y "allocations" con
+                  {"plannedEntryId":"guid","amount":25.00} por cada previsto):
+                  reparte UN pago entre uno o varios previstos de la misma categoría.
+                  Por ejemplo, un Bizum de 35 € cubre 25 € de un previsto y 10 € de otro.
+                  Los importes deben ser positivos, sumar exactamente el pago y no superar
+                  lo que queda de cada previsto. Se conserva un solo movimiento bancario.
+                  Para cuidados de Zeus, cubre cada previsión completa: se conservan las
+                  estancias y pasan a estar pagadas por ese mismo movimiento. No propongas
+                  descontar todo de un previsto y descartar otro para simular el reparto.
+                  Si no sabes qué importe corresponde a cada previsto, pregunta.
+                - "unlink_planned" ("rowIds"): quita todos los vínculos de esas filas.
                 - "skip_planned" ("plannedEntryId"): descarta el previsto este mes porque no
                   va a ocurrir.
                 - "update_planned" ("plannedEntryId" y "amount" mayor que 0 y/o "dueDate"
@@ -404,6 +426,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 Otras acciones posibles en "proposedActions":
                 {"type":"link_planned","rowIds":["guid"],"plannedEntryId":"guid"}
+                {"type":"allocate_planned","rowIds":["guid"],"allocations":[{"plannedEntryId":"guid","amount":25.00},{"plannedEntryId":"guid","amount":10.00}]}
                 {"type":"unlink_planned","rowIds":["guid"]}
                 {"type":"skip_planned","plannedEntryId":"guid"}
                 {"type":"update_planned","plannedEntryId":"guid","amount":200.00,"dueDate":"AAAA-MM-DD"}
@@ -487,6 +510,16 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var type = GetString(item, "type")?.Trim().ToLowerInvariant();
                 switch (type)
                 {
+                    case ImportChatActionTypes.AllocatePlanned:
+                    {
+                        var proposal = BuildAllocatePlanned(item, rowsById, plannedById);
+                        if (proposal is null || proposal.RowIds.Any(id => linkUsedRows.Contains(id) || usedRows.Contains(id)))
+                            continue;
+                        linkUsedRows.UnionWith(proposal.RowIds);
+                        usedRows.UnionWith(proposal.RowIds);
+                        drafts.Add(new FixedDraft(proposal));
+                        continue;
+                    }
                     case ImportChatActionTypes.LinkPlanned:
                     {
                         if (ReadGuid(item, "plannedEntryId") is not { } plannedId ||
@@ -497,6 +530,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         var rowIds = ReadGuids(item, "rowIds")
                             .Where(id => rowsById.TryGetValue(id, out var row) &&
                                          row.PlannedEntryId != plannedId &&
+                                         row.PlannedAllocations.Count == 0 &&
                                          ImportPlannedLinks.LinkError(row.Amount, row.IsSplit, plannedDirection) is null &&
                                          !linkUsedRows.Contains(id))
                             .Distinct()
@@ -513,7 +547,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     {
                         var rowIds = ReadGuids(item, "rowIds")
                             .Where(id => rowsById.TryGetValue(id, out var row) &&
-                                         row.PlannedEntryId is not null &&
+                                         (row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0) &&
                                          !linkUsedRows.Contains(id))
                             .Distinct()
                             .ToList();
@@ -562,7 +596,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 else drafts.Add(new ProposalDraft(target, saveForFuture, conceptRowIds));
             }
 
+            var allocatedIds = drafts.OfType<FixedDraft>()
+                .Where(draft => draft.Proposal.Type == ImportChatActionTypes.AllocatePlanned)
+                .SelectMany(draft => draft.Proposal.PlannedAllocations ?? Array.Empty<ImportPlannedAllocationDto>())
+                .Select(link => link.PlannedEntryId).ToHashSet();
             return drafts
+                .Where(draft => draft is not FixedDraft fixedDraft ||
+                    fixedDraft.Proposal.Type is not (ImportChatActionTypes.SkipPlanned or ImportChatActionTypes.UpdatePlanned) ||
+                    fixedDraft.Proposal.PlannedEntryId is not { } id || !allocatedIds.Contains(id))
                 .Take(MaxProposals)
                 .Select(draft => draft switch
                 {
@@ -573,6 +614,50 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     _ => throw new InvalidOperationException("Unknown proposal draft.")
                 })
                 .ToList();
+        }
+
+        private static ImportChatProposal? BuildAllocatePlanned(
+            JsonElement item,
+            IReadOnlyDictionary<Guid, ImportChatRowContext> rows,
+            IReadOnlyDictionary<Guid, ImportChatPlannedContext> planned)
+        {
+            var ids = ReadGuids(item, "rowIds").Distinct().ToList();
+            if (ids.Count != 1 || !rows.TryGetValue(ids[0], out var row) || row.IsSplit || row.Amount == 0m ||
+                !item.TryGetProperty("allocations", out var parts) || parts.ValueKind != JsonValueKind.Array)
+                return null;
+            var allocations = new List<ImportPlannedAllocationDto>();
+            foreach (var part in parts.EnumerateArray())
+            {
+                if (part.ValueKind != JsonValueKind.Object || ReadGuid(part, "plannedEntryId") is not { } id ||
+                    !planned.TryGetValue(id, out var candidate) ||
+                    !part.TryGetProperty("amount", out var amountValue) || amountValue.ValueKind != JsonValueKind.Number ||
+                    !amountValue.TryGetDecimal(out var amount) || amount <= 0m || decimal.Round(amount, 2) != amount)
+                    return null;
+                var current = row.PlannedAllocations.Where(link => link.PlannedEntryId == id).Sum(link => link.Amount);
+                if (row.PlannedEntryId == id) current += Math.Abs(row.Amount);
+                if (amount > candidate.RemainingAfterLinks + current + ImportPlannedLinks.CoverTolerance ||
+                    ImportPlannedLinks.LinkError(row.Amount, false,
+                        candidate.Direction == "in" ? EntryDirection.In : EntryDirection.Out) is not null)
+                    return null;
+                allocations.Add(new ImportPlannedAllocationDto
+                {
+                    PlannedEntryId = id,
+                    Amount = amount,
+                    PlannedEntryName = PlannedName(candidate),
+                    DueDate = candidate.DueDate
+                });
+            }
+            if (allocations.Count == 0 || allocations.Sum(link => link.Amount) != Math.Abs(row.Amount) ||
+                allocations.Select(link => link.PlannedEntryId).Distinct().Count() != allocations.Count ||
+                allocations.Select(link => planned[link.PlannedEntryId].ConceptId?.ToString()
+                    ?? planned[link.PlannedEntryId].Concept).Distinct().Count() != 1)
+                return null;
+            var summary = $"Repartir {Money(Math.Abs(row.Amount))} entre " + string.Join("; ", allocations.Select(link =>
+                $"«{PlannedName(planned[link.PlannedEntryId])}» ({planned[link.PlannedEntryId].DueDate:dd/MM}): {Money(link.Amount)}"));
+            return new ImportChatProposal(
+                ImportChatActionTypes.AllocatePlanned, summary, ids,
+                null, null, null, null, null, null, false,
+                PlannedAllocations: allocations);
         }
 
         private static ImportChatProposal ToLinkProposal(LinkDraft draft, IReadOnlyDictionary<Guid, ImportChatRowContext> rowsById)

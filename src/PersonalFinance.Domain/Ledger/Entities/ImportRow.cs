@@ -70,5 +70,6 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public Guid? PlannedEntryId { get; set; }
 
         public ICollection<ImportRowAllocation> Allocations { get; set; } = new List<ImportRowAllocation>();
+        public ICollection<ImportRowPlannedAllocation> PlannedAllocations { get; set; } = new List<ImportRowPlannedAllocation>();
     }
 }

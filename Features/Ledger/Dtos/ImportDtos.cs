@@ -26,6 +26,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
         public Guid? PlannedEntryId { get; set; }
         public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
+        public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
     }
 
     /// <summary>
@@ -61,6 +62,19 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         /// <summary>Planned entry to deduct the row from; null removes the link.</summary>
         public Guid? PlannedEntryId { get; set; }
+    }
+
+    public sealed class ImportPlannedAllocationDto
+    {
+        public Guid PlannedEntryId { get; set; }
+        public decimal Amount { get; set; }
+        public string? PlannedEntryName { get; set; }
+        public DateOnly? DueDate { get; set; }
+    }
+
+    public sealed class SetImportRowPlannedAllocationsDto
+    {
+        public IReadOnlyList<ImportPlannedAllocationDto> Allocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
     }
 
     public sealed class ImportRowAllocationDto
@@ -182,6 +196,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? PlannedEntryId { get; set; }
         /// <summary>Concept name of that planned entry, for display.</summary>
         public string? PlannedEntryName { get; set; }
+        public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
         /// <summary>New planned amount (update_planned) or reminder amount (create_reminder).</summary>
         public decimal? Amount { get; set; }
         /// <summary>New planned date (update_planned) or reminder date (create_reminder).</summary>
