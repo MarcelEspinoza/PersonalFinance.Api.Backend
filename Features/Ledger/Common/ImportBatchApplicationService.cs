@@ -178,6 +178,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var concepts = await _db.Concepts
                 .Where(concept => concept.UserId == userId)
                 .ToDictionaryAsync(concept => concept.Id, ct);
+            var sharedPersonIds = batch.Rows.Where(row => row.Status == ImportRowStatus.Pending).SelectMany(row => row.Allocations)
+                .Where(part => part.CounterpartyId.HasValue).Select(part => part.CounterpartyId!.Value).ToHashSet();
+            var activeSharedPeople = (await _db.Counterparties
+                .Where(person => person.UserId == userId && person.IsActive && sharedPersonIds.Contains(person.Id))
+                .Select(person => person.Id).ToListAsync(ct)).ToHashSet();
+            if (!sharedPersonIds.SetEquals(activeSharedPeople))
+                return new(false, 0, batchId, "Alguna persona del reparto ya no está disponible. Revisa el gasto compartido.", Conflict: true);
             var feeConcept = concepts.Values.FirstOrDefault(concept =>
                 string.Equals(
                     concept.Name,
@@ -325,6 +332,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var amount = Math.Abs(row.Amount);
                 if (isSplit)
                 {
+                    var sharedParts = row.Allocations.Where(part => part.CounterpartyId.HasValue).ToList();
+                    if (sharedParts.Count > 0 && (sharedParts.Count != 1 || row.Allocations.Count != 2 ||
+                        row.Amount >= 0m || !isPaid || !concepts.TryGetValue(sharedParts[0].ConceptId, out var advanceConcept) ||
+                        advanceConcept.Kind != ConceptKind.Transfer || advanceConcept.Name != SharedExpenseImport.ConceptName ||
+                        mirrorAccountByConcept.ContainsKey(advanceConcept.Id)))
+                        return new(false, 0, batchId, "El reparto compartido ya no es válido. Vuelve a revisarlo.", Conflict: true);
                     if (row.Allocations.Count is < 2 or > 3 ||
                         row.Allocations.Select(allocation => allocation.ConceptId).Distinct().Count() != row.Allocations.Count ||
                         row.Allocations.Sum(allocation => allocation.Amount) != amount ||
@@ -333,7 +346,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             decimal.Round(allocation.Amount, 2) != allocation.Amount ||
                             !concepts.TryGetValue(allocation.ConceptId, out var allocationConcept) ||
                             !allocationConcept.IsActive ||
-                            allocationConcept.Kind != (row.Amount > 0m ? ConceptKind.Income : ConceptKind.Expense)))
+                            allocationConcept.Kind != (allocation.CounterpartyId.HasValue
+                                ? ConceptKind.Transfer : row.Amount > 0m ? ConceptKind.Income : ConceptKind.Expense)))
                     {
                         return new(
                             false,
@@ -355,6 +369,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             ConceptId = allocation.ConceptId,
                             AccountId = accountId,
                             Direction = direction,
+                            IsTransfer = concepts[allocation.ConceptId].Kind == ConceptKind.Transfer,
                             Status = isPaid ? EntryStatus.Paid : row.ClassifiedStatus,
                             DueDate = row.ValueDate,
                             ValueDate = isPaid ? SettledOn(row) : null,
@@ -365,6 +380,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             Fingerprint = firstEntry ? row.Fingerprint : null
                         };
                         _db.LedgerEntries.Add(allocationEntry);
+                        if (allocation.CounterpartyId is { } personId)
+                        {
+                            allocationEntry.Notes = "Parte adelantada por un gasto compartido; pendiente de devolución.";
+                            await SharedExpenseImport.AddAdvanceAsync(_db, userId, personId, allocationEntry, amount, DateTime.UtcNow, ct);
+                        }
                         if (firstEntry) row.LedgerEntryId = allocationEntry.Id;
                         firstEntry = false;
                     }
@@ -495,7 +515,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
                     AddTransferMirror(importedEntry, mirrorAccountByConcept);
-                    if (isPaid && !importedEntry.IsTransfer)
+                    if (isPaid && (!importedEntry.IsTransfer || concept.Name == SharedExpenseImport.ConceptName))
                         settlementCandidates.Add(new(importedEntry.Id, row.RawDescription, row.Amount, row.ValueDate));
 
                     if (row.Fee != 0m && feeConcept is not null)

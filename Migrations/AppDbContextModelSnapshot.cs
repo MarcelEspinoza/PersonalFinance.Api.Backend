@@ -1688,6 +1688,9 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<Guid>("ConceptId")
                         .HasColumnType("char(36)");
 
+                    b.Property<Guid?>("CounterpartyId")
+                        .HasColumnType("char(36)");
+
                     b.Property<Guid>("ImportRowId")
                         .HasColumnType("char(36)");
 
@@ -1700,6 +1703,8 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ConceptId");
+
+                    b.HasIndex("CounterpartyId");
 
                     b.HasIndex("ImportRowId");
 
@@ -2084,6 +2089,9 @@ namespace PersonalFinance.Api.Migrations
 
                     b.Property<DateOnly?>("ExpectedDate")
                         .HasColumnType("date");
+
+                    b.Property<bool>("IsExpenseReimbursement")
+                        .HasColumnType("tinyint(1)");
 
                     b.Property<decimal?>("LinkedLoanBalanceSnapshot")
                         .HasColumnType("decimal(18,2)");
@@ -2500,6 +2508,11 @@ namespace PersonalFinance.Api.Migrations
                         .HasForeignKey("ConceptId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("PersonalFinance.Domain.Ledger.Entities.Counterparty", null)
+                        .WithMany()
+                        .HasForeignKey("CounterpartyId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("PersonalFinance.Domain.Ledger.Entities.ImportRow", "ImportRow")
                         .WithMany("Allocations")

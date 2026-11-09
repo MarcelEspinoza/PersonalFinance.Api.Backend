@@ -65,6 +65,13 @@ namespace PersonalFinance.Api.Features.Settlements
                 if (matching.Count != 1) continue;
 
                 var settlement = matching[0];
+                if (settlement.IsExpenseReimbursement)
+                {
+                    var entry = db.LedgerEntries.Local.FirstOrDefault(item => item.Id == candidate.LedgerEntryId)
+                        ?? await db.LedgerEntries.FirstAsync(item =>
+                            item.Id == candidate.LedgerEntryId && item.UserId == userId, ct);
+                    await SharedExpenseImport.ClassifyPaymentAsync(db, userId, settlement, entry, ct);
+                }
                 ApplyPayment(db, settlement, candidate, now);
                 await SettlementEntryCoverage.RefreshAsync(db, settlement, ct);
                 linked++;
@@ -97,6 +104,9 @@ namespace PersonalFinance.Api.Features.Settlements
                 .Include(settlement => settlement.Lines)
                 .Where(settlement => settlement.UserId == userId && personIds.Contains(settlement.CounterpartyId))
                 .ToListAsync(ct);
+            settlements = settlements.Concat(db.Settlements.Local.Where(settlement =>
+                settlement.UserId == userId && personIds.Contains(settlement.CounterpartyId)))
+                .DistinctBy(settlement => settlement.Id).ToList();
             if (settlements.Count == 0) return result;
 
             foreach (var candidate in candidates.OrderBy(candidate => candidate.Date))

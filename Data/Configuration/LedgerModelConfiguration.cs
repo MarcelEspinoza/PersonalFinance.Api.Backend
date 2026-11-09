@@ -343,6 +343,11 @@ namespace PersonalFinance.Api.Data.Configuration
                     .HasForeignKey(x => x.ImportRowId)
                     .OnDelete(DeleteBehavior.Cascade);
 
+                e.HasOne<Counterparty>()
+                    .WithMany()
+                    .HasForeignKey(x => x.CounterpartyId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
                 e.HasOne(x => x.Concept)
                     .WithMany()
                     .HasForeignKey(x => x.ConceptId)

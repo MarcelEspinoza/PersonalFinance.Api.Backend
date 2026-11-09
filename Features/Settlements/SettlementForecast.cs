@@ -47,6 +47,12 @@ namespace PersonalFinance.Api.Features.Settlements
         /// </summary>
         public static List<Settlement> Open(IEnumerable<Settlement> personSettlements)
         {
+            return personSettlements.GroupBy(settlement => settlement.IsExpenseReimbursement)
+                .SelectMany(OpenGroup).OrderBy(settlement => settlement.PeriodStart).ToList();
+        }
+
+        private static List<Settlement> OpenGroup(IEnumerable<Settlement> personSettlements)
+        {
             var ordered = Ordered(personSettlements);
             var lastCarry = ordered.FindLastIndex(settlement => settlement.CarriedOverAmount != 0m);
             return ordered
@@ -69,11 +75,12 @@ namespace PersonalFinance.Api.Features.Settlements
             IReadOnlyDictionary<Guid, string> names)
         {
             var result = new List<SettlementForecastState>(settlements.Count);
-            foreach (var person in settlements.GroupBy(settlement => settlement.CounterpartyId))
+            foreach (var person in settlements.GroupBy(settlement =>
+                (settlement.CounterpartyId, settlement.IsExpenseReimbursement)))
             {
                 var ordered = Ordered(person);
                 var lastCarry = ordered.FindLastIndex(settlement => settlement.CarriedOverAmount != 0m);
-                var name = names.TryGetValue(person.Key, out var found) && !string.IsNullOrWhiteSpace(found)
+                var name = names.TryGetValue(person.Key.CounterpartyId, out var found) && !string.IsNullOrWhiteSpace(found)
                     ? found.Trim()
                     : "Sin nombre";
 
@@ -83,6 +90,8 @@ namespace PersonalFinance.Api.Features.Settlements
                     var remaining = Remaining(settlement);
                     var reason = settlement.Status == SettlementStatus.Closed
                         ? "Pagada"
+                        : settlement.IsExpenseReimbursement && settlement.ExpectedDate is null
+                            ? "Sin fecha de devolución"
                         : index < lastCarry
                             ? $"Su saldo pasó a «{ordered[lastCarry].Title}»"
                             : settlement.Status == SettlementStatus.Sent && settlement.ExpectedDate is null

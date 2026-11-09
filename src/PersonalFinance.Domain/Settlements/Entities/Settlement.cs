@@ -33,6 +33,7 @@ namespace PersonalFinance.Domain.Settlements.Entities
         public DateOnly PeriodEnd { get; set; }
 
         public SettlementStatus Status { get; set; } = SettlementStatus.Draft;
+        public bool IsExpenseReimbursement { get; set; }
 
         /// <summary>Frase final del mensaje, editable.</summary>
         public string? ClosingNote { get; set; }

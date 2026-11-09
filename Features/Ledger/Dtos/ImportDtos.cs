@@ -81,6 +81,16 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         public Guid ConceptId { get; set; }
         public decimal Amount { get; set; }
+        public Guid? CounterpartyId { get; set; }
+    }
+
+    public sealed record ImportPersonOptionDto(Guid Id, string Name);
+
+    public sealed class ShareImportRowDto
+    {
+        public Guid CounterpartyId { get; set; }
+        public Guid ConceptId { get; set; }
+        public decimal Amount { get; set; }
     }
 
     public sealed class SplitImportRowDto
@@ -96,6 +106,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public string Status { get; set; } = string.Empty;
         public IReadOnlyList<ImportRowDto> Rows { get; set; } = Array.Empty<ImportRowDto>();
         public IReadOnlyList<ImportConceptOptionDto> Concepts { get; set; } = Array.Empty<ImportConceptOptionDto>();
+        public IReadOnlyList<ImportPersonOptionDto> People { get; set; } = Array.Empty<ImportPersonOptionDto>();
         public ImportAnalysisDto? Analysis { get; set; }
     }
 
@@ -187,6 +198,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public IReadOnlyList<Guid> RowIds { get; set; } = Array.Empty<Guid>();
         public Guid? ConceptId { get; set; }
         public string? ConceptName { get; set; }
+        public Guid? CounterpartyId { get; set; }
+        public string? CounterpartyName { get; set; }
         public string? Name { get; set; }
         public Guid? GroupId { get; set; }
         public string? GroupName { get; set; }

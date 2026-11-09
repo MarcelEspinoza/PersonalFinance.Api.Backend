@@ -18,12 +18,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         /// <summary>Split rows cannot be deducted from a planned entry.</summary>
         public bool IsSplit { get; init; }
+        public Guid? SharedExpenseCounterpartyId { get; init; }
+        public decimal? SharedExpenseAmount { get; init; }
     }
 
     public sealed record ImportChatMessage(string Role, string Content);
     public sealed record ImportChatGroupContext(Guid Id, string Name, string Kind);
     public sealed record ImportChatLoanContext(string Kind, string Name, decimal Amount, string? Detail);
     public sealed record ImportChatLedgerContext(string Date, string Direction, string Status, decimal Amount, string? Concept, string? Description);
+    public sealed record ImportChatPersonContext(Guid Id, string Name);
 
     /// <summary>Open planned entry («previsto») the rows can be deducted from; Direction is "in" or "out".</summary>
     public sealed record ImportChatPlannedContext(
@@ -61,6 +64,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         /// <summary>Date used to validate reminder dates; UTC today when not set.</summary>
         public DateOnly? Today { get; init; }
+        public IReadOnlyList<ImportChatPersonContext> People { get; init; } = Array.Empty<ImportChatPersonContext>();
     }
 
     public static class ImportChatActionTypes
@@ -69,6 +73,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public const string CreateConcept = "create_concept";
         public const string LinkPlanned = "link_planned";
         public const string AllocatePlanned = "allocate_planned";
+        public const string ShareExpense = "share_expense";
         public const string UnlinkPlanned = "unlink_planned";
         public const string SkipPlanned = "skip_planned";
         public const string UpdatePlanned = "update_planned";
@@ -99,7 +104,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         int? NotifyDaysBefore = null,
         string? Notes = null,
         bool? IsIncome = null,
-        IReadOnlyList<ImportPlannedAllocationDto>? PlannedAllocations = null);
+        IReadOnlyList<ImportPlannedAllocationDto>? PlannedAllocations = null,
+        Guid? CounterpartyId = null,
+        string? CounterpartyName = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -253,6 +260,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     amount = r.Amount,
                     description = Masked(r.Description, 200),
                     currentConcept = Masked(r.CurrentConcept, MaxNameLength),
+                    sharedExpenseCounterpartyId = r.SharedExpenseCounterpartyId,
+                    sharedExpenseAmount = r.SharedExpenseAmount,
                     plannedEntryId = r.PlannedEntryId,
                     plannedAllocations = r.PlannedAllocations.Select(link => new
                     {
@@ -326,6 +335,31 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Conserva las diferencias de significado que haya explicado el usuario:
                 por ejemplo, un préstamo recibido y un reembolso para cubrir un gasto
                 son movimientos distintos, aunque procedan de la misma persona.
+
+                GASTOS COMPARTIDOS:
+                - Sí puedes proponer "share_expense": UNA fila de gasto en "rowIds",
+                  "conceptId" de la categoría de su parte, "counterpartyId" de PERSONAS
+                  y "amount" con la parte que le deben (positiva y menor que el pago).
+                  Ejemplo: pagó 30 € en un bar y la mitad era de su mamá: 15 € son
+                  gasto propio en Restaurantes y 15 € adelantados que ella le debe.
+                  Al confirmar se prepara el reparto; al aplicar el lote se registra
+                  esa deuda en Liquidaciones y el banco refleja los 30 € completos.
+                - No clasifiques todo como gasto propio ni propongas compensarlo con
+                  un ingreso ordinario posterior. La devolución de un adelanto no es
+                  dinero ganado: usa «Anticipos y devoluciones de gastos compartidos».
+                  Si no se vincula automáticamente por el nombre bancario y el importe,
+                  el usuario puede vincular el cobro desde Liquidaciones. No afirmes
+                  que la deuda ya está cancelada sólo por cambiar la categoría.
+                - No necesitas una fecha de devolución para registrar la deuda.
+                  Pregunta la fecha sólo si quiere además un recordatorio.
+                - Usa únicamente una persona de la lista. Si falta, indica que puede
+                  añadirla en Liquidaciones. No inventes su identificador.
+                - Si la fila tiene "sharedExpenseCounterpartyId", el reparto ya está
+                  preparado. No lo borres con "set_row_concept" ni crees otra deuda.
+                  Propón otro "share_expense" sólo si pide corregir el reparto.
+                - No recuerdes un reparto compartido como regla para futuros pagos.
+                - Si el pago está vinculado a un previsto, primero propón quitar ese
+                  vínculo; después podrás proponer el gasto compartido.
 
                 PREVISTOS Y RECORDATORIOS (también son propuestas que el usuario confirma):
                 - Sí puedes proponer cambios en los previstos (lo que el usuario tiene
@@ -411,6 +445,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 PRÉSTAMOS ABIERTOS:
                 {{loansJson}}
 
+                PERSONAS:
+                {{JsonSerializer.Serialize(extra.People.Select(person => new { person.Id, name = Masked(person.Name, MaxNameLength) }), PromptJson)}}
+
                 MOVIMIENTOS YA REGISTRADOS (últimos 90 días y próximo mes):
                 {{recentJson}}
 
@@ -427,6 +464,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Otras acciones posibles en "proposedActions":
                 {"type":"link_planned","rowIds":["guid"],"plannedEntryId":"guid"}
                 {"type":"allocate_planned","rowIds":["guid"],"allocations":[{"plannedEntryId":"guid","amount":25.00},{"plannedEntryId":"guid","amount":10.00}]}
+                {"type":"share_expense","rowIds":["guid"],"conceptId":"guid","counterpartyId":"guid","amount":15.00}
                 {"type":"unlink_planned","rowIds":["guid"]}
                 {"type":"skip_planned","plannedEntryId":"guid"}
                 {"type":"update_planned","plannedEntryId":"guid","amount":200.00,"dueDate":"AAAA-MM-DD"}
@@ -510,6 +548,30 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var type = GetString(item, "type")?.Trim().ToLowerInvariant();
                 switch (type)
                 {
+                    case ImportChatActionTypes.ShareExpense:
+                    {
+                        var ids = ReadGuids(item, "rowIds").Distinct().ToList();
+                        if (ids.Count != 1 || !rowsById.TryGetValue(ids[0], out var row) || row.Amount >= 0m ||
+                            row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0 ||
+                            ReadGuid(item, "conceptId") is not { } conceptId ||
+                            !conceptsById.TryGetValue(conceptId, out var concept) ||
+                            !string.Equals(concept.Kind, "Expense", StringComparison.OrdinalIgnoreCase) ||
+                            ReadGuid(item, "counterpartyId") is not { } personId ||
+                            !TryReadOptionalDecimal(item, "amount", out var amount) || amount is not { } share ||
+                            share <= 0m || share >= Math.Abs(row.Amount) || decimal.Round(share, 2) != share ||
+                            ids.Any(id => usedRows.Contains(id) || linkUsedRows.Contains(id)))
+                            continue;
+                        var person = extra.People.FirstOrDefault(person => person.Id == personId);
+                        if (person is null) continue;
+                        usedRows.UnionWith(ids);
+                        linkUsedRows.UnionWith(ids);
+                        drafts.Add(new FixedDraft(new ImportChatProposal(
+                            ImportChatActionTypes.ShareExpense,
+                            $"De {Money(Math.Abs(row.Amount))}: {Money(Math.Abs(row.Amount) - share)} de gasto propio en «{concept.Name}» y {Money(share)} que te debe {person.Name}",
+                            ids, concept.Id, concept.Name, null, null, null, null, false,
+                            Amount: share, CounterpartyId: person.Id, CounterpartyName: person.Name)));
+                        continue;
+                    }
                     case ImportChatActionTypes.AllocatePlanned:
                     {
                         var proposal = BuildAllocatePlanned(item, rowsById, plannedById);
@@ -585,7 +647,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 // Cada fila sólo puede estar en una propuesta: si el modelo la
                 // repite, vale la primera.
                 var conceptRowIds = ReadGuids(item, "rowIds")
-                    .Where(id => rowsById.ContainsKey(id) && usedRows.Add(id))
+                    .Where(id => rowsById.TryGetValue(id, out var row) &&
+                        row.SharedExpenseCounterpartyId is null && usedRows.Add(id))
                     .ToList();
                 if (conceptRowIds.Count == 0) continue;
 

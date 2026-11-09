@@ -102,6 +102,10 @@ namespace PersonalFinance.Api.Controllers
                 Status = batch.Status.ToString(),
                 Rows = rows,
                 Concepts = concepts,
+                People = await _db.Counterparties.AsNoTracking()
+                    .Where(person => person.UserId == userId.Value && person.IsActive)
+                    .OrderBy(person => person.Name)
+                    .Select(person => new ImportPersonOptionDto(person.Id, person.Name)).ToListAsync(ct),
                 Analysis = await AnalyzeSafelyAsync(batch, ct)
             });
         }
@@ -169,6 +173,8 @@ namespace PersonalFinance.Api.Controllers
             if (row.Batch?.Status == ImportBatchStatus.Applied)
                 return Conflict("El lote ya se ha aplicado.");
 
+            if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
+                return BadRequest(new { message = "Usa Editar reparto o quita el gasto compartido antes de cambiar su categoría." });
             if (dto.ConceptId is not null)
             {
                 var valid = await _db.Concepts.AnyAsync(
@@ -216,6 +222,70 @@ namespace PersonalFinance.Api.Controllers
             return Ok(MapRow(row));
         }
 
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/shared-expense")]
+        public async Task<IActionResult> ShareExpense(
+            Guid batchId, Guid rowId, [FromBody] ShareImportRowDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var row = await _db.ImportRows.Include(item => item.Batch)
+                .Include(item => item.Allocations).Include(item => item.PlannedAllocations)
+                .FirstOrDefaultAsync(item => item.Id == rowId && item.BatchId == batchId && item.UserId == userId.Value, ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+                return Conflict(new { message = "Solo puedes compartir un gasto pendiente de importar." });
+            if (row.Amount >= 0m || !ImportBatchApplicationService.EntersAsPaid(row) ||
+                dto.Amount <= 0m || dto.Amount >= Math.Abs(row.Amount) || decimal.Round(dto.Amount, 2) != dto.Amount)
+                return BadRequest(new { message = "La parte que te deben debe ser positiva, tener hasta dos decimales y ser menor que el pago." });
+            if (ImportPlannedLinks.HasLink(row))
+                return BadRequest(new { message = "Quita el vínculo con los previstos antes de compartir este gasto." });
+            if (!await _db.Counterparties.AnyAsync(person =>
+                person.Id == dto.CounterpartyId && person.UserId == userId.Value && person.IsActive, ct))
+                return BadRequest(new { message = "La persona no existe o no está activa. Puedes añadirla en Liquidaciones." });
+            if (!await _db.Concepts.AnyAsync(concept =>
+                concept.Id == dto.ConceptId && concept.UserId == userId.Value && concept.IsActive &&
+                concept.Kind == ConceptKind.Expense, ct))
+                return BadRequest(new { message = "Elige la categoría de tu parte del gasto." });
+            var advance = await PersonalFinance.Api.Features.Settlements.SharedExpenseImport.GetOrCreateConceptAsync(_db, userId.Value, ct);
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
+            _db.ImportRowAllocations.AddRange(
+                new ImportRowAllocation
+                {
+                    UserId = userId.Value, ImportRowId = row.Id, ConceptId = dto.ConceptId,
+                    Amount = Math.Abs(row.Amount) - dto.Amount, SortOrder = 0
+                },
+                new ImportRowAllocation
+                {
+                    UserId = userId.Value, ImportRowId = row.Id, ConceptId = advance.Id,
+                    Amount = dto.Amount, SortOrder = 1, CounterpartyId = dto.CounterpartyId
+                });
+            row.ConfirmedConceptId = null;
+            row.SuggestionSource = "shared";
+            row.SuggestionConfidence = 1m;
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpDelete("{batchId:guid}/rows/{rowId:guid}/shared-expense")]
+        public async Task<IActionResult> UnshareExpense(Guid batchId, Guid rowId, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var row = await _db.ImportRows.Include(item => item.Batch).Include(item => item.Allocations)
+                .FirstOrDefaultAsync(item => item.UserId == userId.Value && item.BatchId == batchId && item.Id == rowId, ct);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
+                return Conflict(new { message = "El gasto ya se ha aplicado; no puedes quitar este reparto desde la importación." });
+            if (!row.Allocations.Any(part => part.CounterpartyId.HasValue)) return NoContent();
+            row.ConfirmedConceptId = row.Allocations.Single(part => part.CounterpartyId is null).ConceptId;
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
+            row.SuggestionSource = "manual";
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
         [HttpPut("{batchId:guid}/rows/{rowId:guid}/split")]
         public async Task<ActionResult<ImportRowDto>> SplitRow(
             Guid batchId,
@@ -236,6 +306,8 @@ namespace PersonalFinance.Api.Controllers
             if (row is null) return NotFound();
             if (row.Status != ImportRowStatus.Pending || row.Batch?.Status == ImportBatchStatus.Applied)
                 return Conflict("Solo se pueden dividir filas pendientes de un lote sin aplicar.");
+            if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
+                return BadRequest(new { message = "Usa Editar reparto para cambiar el gasto compartido." });
             if (row.Amount == 0m)
                 return BadRequest("No se puede dividir un movimiento de importe cero.");
             if (dto.Allocations is null || dto.Allocations.Count is < 2 or > 3)
@@ -284,7 +356,8 @@ namespace PersonalFinance.Api.Controllers
                 .Select(item => new ImportRowAllocationDto
                 {
                     ConceptId = item.ConceptId,
-                    Amount = item.Amount
+                    Amount = item.Amount,
+                    CounterpartyId = item.CounterpartyId
                 })
                 .ToListAsync(ct);
             return Ok(response);
@@ -311,6 +384,8 @@ namespace PersonalFinance.Api.Controllers
             if (row.Batch?.Status == ImportBatchStatus.Applied)
                 return Conflict("El lote ya se ha aplicado.");
 
+            if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
+                return BadRequest(new { message = "Usa Editar reparto o quita el gasto compartido antes de cambiar su categoría." });
             var name = dto.Name.Trim();
             if (name.Length is 0 or > 120)
                 return BadRequest("El nombre debe tener entre 1 y 120 caracteres.");
@@ -626,7 +701,9 @@ namespace PersonalFinance.Api.Controllers
                         PlannedEntryId = link.PlannedEntryId,
                         Amount = link.Amount
                     }).ToList(),
-                    IsSplit = r.Allocations.Count > 0
+                    IsSplit = r.Allocations.Count > 0,
+                    SharedExpenseCounterpartyId = r.Allocations.FirstOrDefault(part => part.CounterpartyId.HasValue)?.CounterpartyId,
+                    SharedExpenseAmount = r.Allocations.FirstOrDefault(part => part.CounterpartyId.HasValue)?.Amount
                 })
                 .ToList();
 
@@ -641,6 +718,9 @@ namespace PersonalFinance.Api.Controllers
                 : await LoadPlannedCandidatesAsync(userId.Value, batch, ct);
             extra = extra with
             {
+                People = await _db.Counterparties.AsNoTracking()
+                    .Where(person => person.UserId == userId.Value && person.IsActive)
+                    .Select(person => new ImportChatPersonContext(person.Id, person.Name)).ToListAsync(ct),
                 PlannedEntries = planned
                     .Select(p => new ImportChatPlannedContext(
                         p.Id,
@@ -676,6 +756,8 @@ namespace PersonalFinance.Api.Controllers
                         RowIds = p.RowIds,
                         ConceptId = p.ConceptId,
                         ConceptName = p.ConceptName,
+                        CounterpartyId = p.CounterpartyId,
+                        CounterpartyName = p.CounterpartyName,
                         Name = p.Name,
                         GroupId = p.GroupId,
                         GroupName = p.GroupName,
@@ -1487,7 +1569,8 @@ namespace PersonalFinance.Api.Controllers
                 .Select(item => new ImportRowAllocationDto
                 {
                     ConceptId = item.ConceptId,
-                    Amount = item.Amount
+                    Amount = item.Amount,
+                    CounterpartyId = item.CounterpartyId
                 })
                 .ToList()
         };

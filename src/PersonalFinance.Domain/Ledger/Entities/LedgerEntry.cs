@@ -28,9 +28,8 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public EntryDirection Direction { get; set; }
 
         /// <summary>
-        /// Traspaso entre cuentas propias. Mueve el saldo pero no cuenta como
-        /// gasto ni como ingreso: sumarlo contaría dos veces el mismo dinero,
-        /// una al salir de la cuenta y otra al volver.
+        /// Cash movement that is not personal income or spending, including
+        /// transfers between own accounts and recoverable expense advances.
         /// </summary>
         public bool IsTransfer { get; set; }
 

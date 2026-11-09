@@ -225,6 +225,8 @@ namespace PersonalFinance.Api.Features.Settlements
             Guid userId, Guid id, Guid? loanId, CancellationToken ct)
         {
             var settlement = await LoadEditableAsync(userId, id, ct);
+            if (settlement.IsExpenseReimbursement)
+                throw new BusinessRuleException("Los anticipos de gastos compartidos no se mezclan con préstamos recibidos.");
             if (loanId.HasValue)
             {
                 var loan = await _db.Loans.FirstOrDefaultAsync(
@@ -377,7 +379,8 @@ namespace PersonalFinance.Api.Features.Settlements
                 .Include(s => s.Lines)
                 .Where(s => s.UserId == userId
                     && s.CounterpartyId == person.Id
-                    && s.Status == SettlementStatus.Draft)
+                    && s.Status == SettlementStatus.Draft
+                    && !s.IsExpenseReimbursement)
                 .OrderByDescending(s => s.CreatedAt)
                 .FirstOrDefaultAsync(ct);
 
@@ -553,7 +556,9 @@ namespace PersonalFinance.Api.Features.Settlements
                 .AsNoTracking()
                 .Include(entry => entry.Concept)
                 .Where(entry => entry.UserId == userId
-                    && entry.Status == EntryStatus.Paid && !entry.IsTransfer && entry.AccountId != null
+                    && entry.Status == EntryStatus.Paid &&
+                    (!entry.IsTransfer || settlement.IsExpenseReimbursement && entry.Concept != null &&
+                        entry.Concept.Name == SharedExpenseImport.ConceptName) && entry.AccountId != null
                     && entry.Direction == direction && entry.ActualAmount > 0m
                     && entry.ActualAmount <= Math.Abs(remaining)
                     && (entry.ValueDate ?? entry.DueDate) >= settlement.PeriodStart
@@ -580,10 +585,11 @@ namespace PersonalFinance.Api.Features.Settlements
             var settlement = await LoadAsync(userId, id, ct);
             if (settlement.Status == SettlementStatus.Closed)
                 throw new BusinessRuleException("La liquidación ya está pagada.");
-            var entry = await _db.LedgerEntries.AsNoTracking()
+            var entry = await _db.LedgerEntries.Include(item => item.Concept).Include(item => item.Period)
                 .FirstOrDefaultAsync(entry => entry.UserId == userId && entry.Id == entryId, ct)
                 ?? throw new NotFoundException("No encuentro ese movimiento.");
-            if (entry.Status != EntryStatus.Paid || entry.IsTransfer
+            if (entry.Status != EntryStatus.Paid ||
+                entry.IsTransfer && (!settlement.IsExpenseReimbursement || entry.Concept?.Name != SharedExpenseImport.ConceptName)
                 || entry.AccountId is null || entry.ActualAmount is null or <= 0m)
                 throw new BusinessRuleException("Elige un cobro o pago real del banco.");
             if (await _db.SettlementLines.AnyAsync(line =>
@@ -594,6 +600,9 @@ namespace PersonalFinance.Api.Features.Settlements
             var remaining = SettlementForecast.Remaining(settlement);
             if (Math.Sign(signed) != Math.Sign(remaining) || Math.Abs(signed) > Math.Abs(remaining))
                 throw new BusinessRuleException("La dirección o el importe no corresponde al neto pendiente de esta liquidación.");
+            if (settlement.IsExpenseReimbursement && entry.Period?.Status == PeriodStatus.Closed)
+                throw new BusinessRuleException("Abre el mes del cobro antes de clasificarlo como devolución.");
+            await SharedExpenseImport.ClassifyPaymentAsync(_db, userId, settlement, entry, ct);
             SettlementPaymentLinker.ApplyPayment(
                 _db, settlement,
                 new SettlementPaymentCandidate(entry.Id, entry.Description ?? string.Empty, signed, EffectiveDate(entry)),
@@ -924,7 +933,7 @@ namespace PersonalFinance.Api.Features.Settlements
                 : $"CUENTAS {from} {start.Year}/{to} {end.Year}";
         }
 
-        private static string CleanDescription(string? value)
+        internal static string CleanDescription(string? value)
         {
             var text = (value ?? string.Empty).Trim();
             if (text.Length == 0) return "Sin concepto";

@@ -11,5 +11,6 @@ namespace PersonalFinance.Domain.Ledger.Entities
         public Concept? Concept { get; set; }
         public decimal Amount { get; set; }
         public int SortOrder { get; set; }
+        public Guid? CounterpartyId { get; set; }
     }
 }
