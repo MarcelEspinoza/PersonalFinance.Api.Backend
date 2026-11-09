@@ -124,7 +124,8 @@ namespace PersonalFinance.Api.Services
                     Id = Guid.NewGuid().ToString(),
                     PasanacoId = entity.Id,
                     Name = participant.Name.Trim(),
-                    AssignedNumber = participant.AssignedNumber
+                    AssignedNumber = participant.AssignedNumber,
+                    HasReceived = participant.AssignedNumber < dto.CurrentRound
                 });
             }
             await _context.SaveChangesAsync();
@@ -143,6 +144,7 @@ namespace PersonalFinance.Api.Services
             pasanaco.CurrentRound = dto.CurrentRound;
             pasanaco.StartMonth = dto.StartMonth;
             pasanaco.StartYear = dto.StartYear;
+            await SyncReceivedAsync(pasanaco);
 
             await _context.SaveChangesAsync();
         }
@@ -220,7 +222,7 @@ namespace PersonalFinance.Api.Services
                 PasanacoId = pasanacoId,
                 Name = dto.Name.Trim(),
                 AssignedNumber = dto.AssignedNumber,
-                HasReceived = false
+                HasReceived = dto.AssignedNumber < pasanaco.CurrentRound
             };
 
             _context.Participants.Add(participant);
@@ -536,9 +538,21 @@ namespace PersonalFinance.Api.Services
             }
 
             pasanaco.CurrentRound++;
+            await SyncReceivedAsync(pasanaco);
             await _context.SaveChangesAsync();
 
             return true;
+        }
+
+        private async Task SyncReceivedAsync(Pasanaco pasanaco)
+        {
+            var participants = await _context.Participants
+                .Where(p => p.PasanacoId == pasanaco.Id)
+                .ToListAsync();
+            foreach (var participant in participants)
+            {
+                participant.HasReceived = participant.AssignedNumber < pasanaco.CurrentRound;
+            }
         }
 
         public async Task<bool> RetreatRoundAsync(string pasanacoId, Guid userId)
@@ -549,6 +563,7 @@ namespace PersonalFinance.Api.Services
             if (pasanaco.CurrentRound <= 1) return false;
 
             pasanaco.CurrentRound--;
+            await SyncReceivedAsync(pasanaco);
             await _context.SaveChangesAsync();
             return true;
         }
