@@ -211,8 +211,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (batch.Rows.Any(row => row.Status == ImportRowStatus.Pending && ImportObligationLinks.HasLink(row)
                 && (row.ConfirmedConceptId ?? row.SuggestedConceptId) is { } id && mirrorAccountByConcept.ContainsKey(id)))
                 return new(false, 0, batchId, "Un traspaso entre tus propias cuentas no puede pagar una deuda.", Conflict: true);
-            var automaticReminders = await ImportObligationLinks.FindAutomaticRemindersAsync(
-                _db, userId, batch.Rows.ToList(), ct);
             var plannedMatches = await FindForecastMatchesAsync(
                 userId,
                 accountId.Value,
@@ -222,7 +220,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Allocations.Count == 0 &&
                     !ImportObligationLinks.HasLink(row) &&
                     row.PasanacoParticipantId is null &&
-                    !automaticReminders.ContainsKey(row.Id) &&
                     !deductedRowIds.Contains(row.Id) &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 deductedEntryIds,
@@ -344,11 +341,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 var isPaid = EntersAsPaid(row);
                 var amount = Math.Abs(row.Amount);
-                if (automaticReminders.TryGetValue(row.Id, out var automaticReminder))
-                {
-                    row.ReminderId = automaticReminder.Id;
-                    row.ReminderDueDate = automaticReminder.DueDate;
-                }
                 if (isSplit)
                 {
                     var sharedParts = row.Allocations.Where(part => part.CounterpartyId.HasValue).ToList();

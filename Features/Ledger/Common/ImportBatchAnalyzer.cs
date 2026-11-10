@@ -292,15 +292,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     obligationValidation.Error ??
                     "Al aplicar el extracto, estos movimientos actualizarán sus recordatorios o liquidaciones sin crear otro cobro ni pago.",
                     obligationRows));
-            var automaticReminders = await ImportObligationLinks.FindAutomaticRemindersAsync(db, userId, rows.ToList(), ct);
-            foreach (var group in rows.Where(row => automaticReminders.ContainsKey(row.Id))
-                .GroupBy(row => automaticReminders[row.Id].Id))
-            {
-                var reminder = automaticReminders[group.First().Id];
-                findings.Add(Finding(SeverityInfo, "Recordatorio reconocido",
-                    $"Al aplicar el extracto se cubrirá «{reminder.Title}» con el movimiento del banco, sin crear otro cobro ni pago.",
-                    group.ToList()));
-            }
 
             // Rows the user deducts from a planned entry («previsto»): they are booked apart and the
             // planned entry is reduced, so the forecast warnings below don't apply to them.
@@ -509,8 +500,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             foreach (var row in rows.Where(row => ImportBatchApplicationService.EntersAsPaid(row) && row.Allocations.Count == 0))
             {
-                if (deductedRowIds.Contains(row.Id) || ImportObligationLinks.HasLink(row) ||
-                    automaticReminders.ContainsKey(row.Id)) continue;
+                if (deductedRowIds.Contains(row.Id) || ImportObligationLinks.HasLink(row)) continue;
                 if (ConceptOf(row) is not { } conceptId || !concepts.TryGetValue(conceptId, out var concept))
                     continue;
 

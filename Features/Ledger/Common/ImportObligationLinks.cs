@@ -107,11 +107,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var reserved = rows.Where(row => row.Status == ImportRowStatus.Pending && row.ReminderId.HasValue)
                 .Select(row => row.ReminderId!.Value).ToHashSet();
             var conceptIds = (await db.Concepts.AsNoTracking().Where(concept =>
-                concept.UserId == userId && concept.IsActive && concept.Kind != ConceptKind.Transfer)
+                concept.UserId == userId && concept.Kind == ConceptKind.Transfer)
                 .Select(concept => concept.Id).ToListAsync(ct)).ToHashSet();
             var candidates = rows.Where(row => row.Status == ImportRowStatus.Pending && !HasLink(row) &&
-                RowError(row) is null && (row.ConfirmedConceptId ?? row.SuggestedConceptId) is { } id &&
-                conceptIds.Contains(id)).ToList();
+                RowError(row) is null &&
+                !((row.ConfirmedConceptId ?? row.SuggestedConceptId) is { } id && conceptIds.Contains(id))).ToList();
             if (candidates.Count == 0) return result;
             var fingerprints = candidates.Select(row => row.Fingerprint).ToList();
             var existing = (await db.LedgerEntries.AsNoTracking()
@@ -129,14 +129,16 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             foreach (var row in candidates)
             {
                 if (settlementRows.Contains(row.Id)) continue;
+                var amount = Math.Abs(row.Amount);
+                var generic = !ImportPendingRelevance.HasMeaningfulText(row.RawDescription);
                 var matching = reminders.Where(reminder => reminder.IsIncome == (row.Amount > 0m) &&
                     reminder.DueDate <= row.ValueDate.AddDays(ImportPlannedLinks.CandidateWindowDays) &&
-                    reminder.Amount == Math.Abs(row.Amount) &&
-                    ImportPendingRelevance.HasIdentifier(row.RawDescription, reminder.Title)).ToList();
+                    amount <= reminder.Amount!.Value && CoversReminder(amount, reminder.Amount.Value) &&
+                    (generic || ImportPendingRelevance.HasIdentifier(row.RawDescription, reminder.Title))).ToList();
                 if (matching.Count != 1 || forecasts.Any(entry =>
                     entry.Direction == ImportPlannedLinks.DirectionOf(row.Amount) &&
-                    entry.ForecastAmount == Math.Abs(row.Amount) &&
-                    ImportPendingRelevance.HasIdentifier(row.RawDescription, $"{entry.Description} {entry.Concept?.Name}")))
+                    entry.ForecastAmount == amount &&
+                    (generic || ImportPendingRelevance.HasIdentifier(row.RawDescription, $"{entry.Description} {entry.Concept?.Name}"))))
                     continue;
                 result[row.Id] = matching[0];
             }

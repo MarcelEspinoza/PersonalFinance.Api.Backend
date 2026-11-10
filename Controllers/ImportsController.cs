@@ -108,15 +108,11 @@ namespace PersonalFinance.Api.Controllers
                     settlement => settlement.CounterpartyId, person => person.Id,
                     (settlement, person) => new { settlement.Id, Name = person.Name + " · " + settlement.Title })
                 .ToDictionaryAsync(settlement => settlement.Id, settlement => settlement.Name, ct);
-            var automaticReminders = batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded
-                ? new Dictionary<Guid, PersonalFinance.Api.Models.Entities.Reminder>()
-                : await ImportObligationLinks.FindAutomaticRemindersAsync(_db, userId.Value, batch.Rows.ToList(), ct);
             foreach (var row in rows)
             {
                 row.ObligationName = row.ReminderId is { } reminderId
                     ? reminderNames.GetValueOrDefault(reminderId)
                     : row.SettlementId is { } settlementId ? settlementNames.GetValueOrDefault(settlementId) : null;
-                row.AutomaticReminderName = automaticReminders.GetValueOrDefault(row.Id)?.Title;
             }
             var quotaLabels = await PasanacoImportQuotas.DescribeAsync(_db, userId.Value, batch.Rows, ct);
             foreach (var row in rows)
@@ -1654,6 +1650,7 @@ namespace PersonalFinance.Api.Controllers
                 });
             }
 
+            await LinkAutomaticRemindersSafelyAsync(userId.Value, batch, ct);
             _db.ImportBatches.Add(batch);
             await _db.SaveChangesAsync(ct);
 
@@ -1669,6 +1666,24 @@ namespace PersonalFinance.Api.Controllers
                 ConfirmedPendingRows = confirmedPendingRows,
                 Problems = parsed.Problems
             });
+        }
+
+        private async Task LinkAutomaticRemindersSafelyAsync(Guid userId, ImportBatch batch, CancellationToken ct)
+        {
+            try
+            {
+                var matches = await ImportObligationLinks.FindAutomaticRemindersAsync(_db, userId, batch.Rows.ToList(), ct);
+                foreach (var row in batch.Rows)
+                {
+                    if (!matches.TryGetValue(row.Id, out var reminder)) continue;
+                    row.ReminderId = reminder.Id;
+                    row.ReminderDueDate = reminder.DueDate;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Automatic reminder linking failed for import batch {BatchId}", batch.Id);
+            }
         }
 
         private async Task<ImportFindingDto?> CheckBalanceSafelyAsync(

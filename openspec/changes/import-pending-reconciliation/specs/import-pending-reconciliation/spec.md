@@ -8,7 +8,15 @@ The assistant SHALL receive relevant open incoming and outgoing forecasts, activ
 - **THEN** the assistant can propose a card using that reminder's identifier without requesting a duplicate forecast
 
 ### Requirement: Clear additional matches are automatic and ambiguous matches are not
-The importer SHALL recognize an outstanding exact signed amount with a unique meaningful bank identifier even when its forecast account is unassigned or its expected date differs. It MUST NOT automatically select among ambiguous sources or match a generic Bizum solely by amount.
+The importer SHALL recognize an outstanding exact signed amount with a unique meaningful bank identifier even when its forecast account is unassigned or its expected date differs. It MUST NOT automatically select among ambiguous sources or match a generic Bizum to a forecast solely by amount.
+
+#### Scenario: Generic Bizum against a unique reminder
+- **WHEN** an uploaded receipt has generic bank text and exactly one open reminder in the same direction is covered by its amount (shortfall of 0.05 or less), with no open forecast of the same amount
+- **THEN** the upload stores that reminder link on the draft row, the review shows it with an unlink control, and the user can remove it from the review or the assistant
+
+#### Scenario: Bank text names someone else
+- **WHEN** the bank text contains a meaningful identifier that does not appear in the reminder title
+- **THEN** the reminder is not linked automatically
 
 #### Scenario: Refund against an unassigned forecast
 - **WHEN** a Trainline receipt uniquely identifies an open Trainline forecast for the same amount

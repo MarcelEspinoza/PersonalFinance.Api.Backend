@@ -32,7 +32,6 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public DateOnly? ReminderDueDate { get; set; }
         public Guid? SettlementId { get; set; }
         public string? ObligationName { get; set; }
-        public string? AutomaticReminderName { get; set; }
         public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
         public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
         /// <summary>Pasanaco participant whose quota this row collects; marked as paid when the batch is applied.</summary>

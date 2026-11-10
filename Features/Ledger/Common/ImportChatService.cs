@@ -448,6 +448,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   Si al recordatorio le faltan 0,05 € o menos tras el cobro (por
                   ejemplo 30,40 € de 30,42 €), se da por cobrado y la diferencia se
                   pierde: propón el vínculo igual.
+                  Al subir el extracto, la app ya vincula sola un cobro o pago con su
+                  único recordatorio de ese importe (aunque el banco sólo diga
+                  "Bizum"). Esas filas llegan con "reminderId"; si el usuario dice que
+                  no corresponde, propón "unlink_obligation".
                 - "link_settlement" ("rowIds" con UNA fila, "settlementId"): prepara
                   el cobro o pago, incluso parcial, de esa liquidación existente.
                   No hace falta que su nombre bancario esté configurado.
