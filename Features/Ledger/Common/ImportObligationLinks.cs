@@ -28,12 +28,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 ? "Quita primero el previsto, reparto o cuota del movimiento antes de vincular otra deuda."
             : null;
 
+        public const decimal ReminderWriteOffTolerance = 0.05m;
+
+        public static bool CoversReminder(decimal paid, decimal remaining) =>
+            remaining - paid <= ReminderWriteOffTolerance;
+
         public static string? AmountError(decimal signedAmount, bool isIncome, decimal remaining, bool repeating = false) =>
             signedAmount == 0m || (signedAmount > 0m) != isIncome
                 ? "El cobro o pago no tiene la misma dirección que lo pendiente."
             : remaining <= 0m || Math.Abs(signedAmount) > remaining
                 ? "El importe supera lo pendiente. Revisa el vínculo antes de aplicar."
-            : repeating && Math.Abs(signedAmount) != remaining
+            : repeating && !CoversReminder(Math.Abs(signedAmount), remaining)
                 ? "Un recordatorio repetitivo debe cubrirse completo; no se puede reducir el importe de sus próximos meses."
             : null;
 
@@ -148,7 +153,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             {
                 var reminder = validation.Reminders[group.Key];
                 var total = group.Sum(row => Math.Abs(row.Amount));
-                if (total == reminder.Amount)
+                if (CoversReminder(total, reminder.Amount!.Value))
                     ReminderRules.Complete(reminder, now);
                 else
                 {

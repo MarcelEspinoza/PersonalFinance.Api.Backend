@@ -15,8 +15,12 @@ Reminder and settlement proposals SHALL render confirmation cards using the exis
 - **THEN** the card shows the reminder, amount and pending effect, and confirmation prepares the link without completing the reminder early
 
 ### Requirement: Malformed responses are not success-shaped
-An invalid structured model response SHALL produce a readable error explaining that no executable cards were prepared, rather than exposing raw JSON as a successful answer.
+An invalid structured model response SHALL produce a readable error explaining that no executable cards were prepared, rather than exposing raw JSON as a successful answer. A plain-text answer without any JSON object SHALL be shown to the user together with a notice that no cards were prepared. Previous assistant turns SHALL be sent back to the model in the expected JSON shape so the conversation keeps the structured format.
 
 #### Scenario: Truncated model response
 - **WHEN** the response cannot be parsed as the expected object
 - **THEN** the assistant displays an explicit preparation error and does not execute or invent actions
+
+#### Scenario: Plain-text model response
+- **WHEN** the model answers with plain text and no JSON object
+- **THEN** the assistant shows that text, adds a notice that no card was prepared, and does not execute or invent actions

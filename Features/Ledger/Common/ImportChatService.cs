@@ -207,7 +207,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 return Failure("No puedo hablar todavía: falta configurar la clave del proveedor de IA en el servidor.");
 
             var messages = AnthropicMessages.BuildMessages(
-                history.Select(h => (h.Role, h.Content)), userMessage, MaxHistoryMessages, MaxMessageLength);
+                history.Select(h => (h.Role, h.Role == "assistant" ? AsJsonTurn(h.Content) : h.Content)),
+                userMessage,
+                MaxHistoryMessages,
+                MaxMessageLength);
             if (messages.Count == 0)
                 return Failure("Escríbeme tu pregunta y te ayudo.");
 
@@ -442,6 +445,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   el extracto; no se crea otro movimiento ni otro previsto.
                   Un pago parcial reduce el pendiente de un recordatorio "none".
                   Si se repite, sólo acepta su importe completo.
+                  Si al recordatorio le faltan 0,05 € o menos tras el cobro (por
+                  ejemplo 30,40 € de 30,42 €), se da por cobrado y la diferencia se
+                  pierde: propón el vínculo igual.
                 - "link_settlement" ("rowIds" con UNA fila, "settlementId"): prepara
                   el cobro o pago, incluso parcial, de esa liquidación existente.
                   No hace falta que su nombre bancario esté configurado.
@@ -663,10 +669,23 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IReadOnlyList<ImportAiCandidate> concepts,
             ImportChatExtraContext extra)
         {
+            var extracted = ModelJson.Extract(raw);
+            if (!extracted.StartsWith('{'))
+            {
+                _logger.LogWarning("La respuesta del chat de importación llegó como texto, sin JSON.");
+                var plainReply = CleanText(ModelJson.PlainText(raw), 8000, keepNewLines: true);
+                if (plainReply.Length == 0)
+                    return Failure("La respuesta de la IA llegó vacía. No se han preparado tarjetas ni aplicado cambios.");
+                return new ImportChatResult(
+                    plainReply,
+                    Array.Empty<ImportChatProposal>(),
+                    new[] { "Esta respuesta llegó sólo como texto: no se preparó ninguna tarjeta. Si querías un cambio, pídeselo de nuevo." });
+            }
+
             JsonDocument document;
             try
             {
-                document = JsonDocument.Parse(ModelJson.Extract(raw));
+                document = JsonDocument.Parse(extracted);
             }
             catch (JsonException ex)
             {
@@ -979,12 +998,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     target.Repeat is not (null or "none")) is not null)
                 return null;
             var remaining = target.RemainingAfterLinks - Math.Abs(row.Amount);
+            var effect = remaining <= 0m
+                ? "Al aplicar el extracto quedará cubierto."
+                : isReminder && ImportObligationLinks.CoversReminder(Math.Abs(row.Amount), target.RemainingAfterLinks)
+                    ? $"Al aplicar el extracto se dará por cobrado; la diferencia de {Money(remaining)} se pierde."
+                    : $"Al aplicar el extracto quedarán {Money(remaining)} pendientes de este importe.";
             return new ImportChatProposal(type,
                 $"Vincular el {(row.Amount > 0m ? "cobro" : "pago")} de {Money(Math.Abs(row.Amount))} " +
                 $"a {(isReminder ? "recordatorio" : "liquidación")} «{target.Title}»",
                 ids, null, null, null, null, null, null, false,
                 Amount: Math.Abs(row.Amount), DueDate: target.DueDate, Title: target.Title, Repeat: target.Repeat,
-                Notes: $"Al aplicar el extracto quedarán {Money(remaining)} pendientes de este importe.",
+                Notes: effect,
                 IsIncome: target.Direction == "in",
                 ReminderId: isReminder ? target.Id : null, SettlementId: isReminder ? null : target.Id);
         }
@@ -1497,6 +1521,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             result = date;
             return true;
         }
+
+        private static string AsJsonTurn(string? content) =>
+            string.IsNullOrWhiteSpace(content)
+                ? string.Empty
+                : JsonSerializer.Serialize(
+                    new { reply = content.Length > MaxMessageLength - 500 ? content[..(MaxMessageLength - 500)] : content, proposedActions = Array.Empty<object>() },
+                    PromptJson);
 
         private static ImportChatResult Failure(string message) =>
             new(message, Array.Empty<ImportChatProposal>(), Array.Empty<string>());

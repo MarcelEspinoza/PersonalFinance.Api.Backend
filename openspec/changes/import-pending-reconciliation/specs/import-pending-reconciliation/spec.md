@@ -33,6 +33,10 @@ The system SHALL persist a confirmed reminder or settlement link in the draft an
 - **WHEN** a confirmed payment covers only part of a one-off reminder
 - **THEN** the remainder stays outstanding and only the actual bank amount is booked
 
+#### Scenario: Small shortfall is written off
+- **WHEN** a confirmed 30.40 receipt is linked to a 30.42 reminder (shortfall of 0.05 or less)
+- **THEN** the reminder is completed, the shortfall is treated as a loss, and only the actual bank amount is booked
+
 #### Scenario: Changed repeating reminder
 - **WHEN** the reminder's due date changed after its link was confirmed
 - **THEN** the import fails visibly rather than consuming another occurrence
