@@ -33,7 +33,7 @@ namespace PersonalFinance.Api.Services.Contracts
         Task GeneratePaymentsAsync(string pasanacoId, Guid userId, int month, int year);
         Task MarkPaymentAsPaidAsync(string paymentId, Guid userId, int? transactionId);
         Task<bool> MarkPaymentAsPaidAsync(Guid paymentId, Guid userId);
-        Task MarkQuotaPaidAsync(string pasanacoId, string participantId, int month, int year, Guid userId);
+        Task MarkQuotaPaidAsync(string pasanacoId, string participantId, int month, int year, Guid userId, QuotaPaidDto? cash = null);
 
         Task<bool> RetreatRoundAsync(string pasanacoId, Guid userId);
         Task<bool> AdvanceRoundAsync(string pasanacoId, Guid userId, bool createLoans = false);

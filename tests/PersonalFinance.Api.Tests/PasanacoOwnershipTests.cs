@@ -2,6 +2,7 @@ using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Api.MappingProfiles;
 using PersonalFinance.Api.Common.Exceptions;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Models.Entities;
@@ -115,7 +116,7 @@ public sealed class PasanacoOwnershipTests : LedgerTestBase
     private PasanacoService CreateService()
     {
         var mapper = new MapperConfiguration(cfg => cfg.AddProfile<MappingProfile>()).CreateMapper();
-        return new PasanacoService(Db, new LoanService(Db, mapper), new ExpenseService(Db, mapper), new IncomeService(Db, mapper));
+        return new PasanacoService(Db, new LoanService(Db, mapper), new ExpenseService(Db, mapper), new IncomeService(Db, mapper), new PeriodProvisioner(Db, Clock));
     }
 
     private static CreatePasanacoDto NewPasanaco(string name) => new()

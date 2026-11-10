@@ -1,3 +1,4 @@
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
@@ -12,7 +13,7 @@ namespace PersonalFinance.Api.Tests;
 /// </summary>
 public class SettlementTests : LedgerTestBase
 {
-    private SettlementService CreateService() => new(Db, Clock);
+    private SettlementService CreateService() => new(Db, Clock, new PeriodProvisioner(Db, Clock));
 
     private Counterparty SeedPerson(string name, string? phone = null)
     {

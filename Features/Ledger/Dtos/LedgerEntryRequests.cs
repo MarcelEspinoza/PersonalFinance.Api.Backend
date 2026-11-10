@@ -60,6 +60,31 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? AccountId { get; set; }
     }
 
+    /// <summary>Mueve dinero propio de una cuenta a otra (por ejemplo, de Efectivo al banco).</summary>
+    public class OwnTransferDto
+    {
+        [Required]
+        public Guid FromAccountId { get; set; }
+
+        [Required]
+        public Guid ToAccountId { get; set; }
+
+        [Required]
+        public Guid ConceptId { get; set; }
+
+        [Range(0.01, 9_999_999_999_999_999.99)]
+        public decimal Amount { get; set; }
+
+        [Required]
+        public DateOnly Date { get; set; }
+
+        [MaxLength(300)]
+        public string? Description { get; set; }
+
+        /// <summary>La entrada ya llegó con el extracto del banco: solo se apunta la salida.</summary>
+        public bool SourceOnly { get; set; }
+    }
+
     public class CloseMonthDto
     {
         /// <summary>

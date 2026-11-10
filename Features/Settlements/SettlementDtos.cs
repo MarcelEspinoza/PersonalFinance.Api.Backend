@@ -127,6 +127,14 @@ namespace PersonalFinance.Api.Features.Settlements
         bool IsPaid = true);
 
     public sealed record LinkSettlementPaymentDto(Guid LedgerEntryId);
+
+    /// <summary>Pago o cobro sin extracto (efectivo, otra cuenta…) que se apunta y se vincula a la liquidación.</summary>
+    public sealed record RecordSettlementPaymentDto(
+        Guid AccountId,
+        Guid ConceptId,
+        decimal Amount,
+        DateOnly Date,
+        string? Description);
     public sealed record LinkSettlementLineEntryDto(Guid? LedgerEntryId);
 
     /// <summary>

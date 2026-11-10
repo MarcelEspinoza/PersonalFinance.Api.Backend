@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Services.Contracts;
 using System.Security.Claims;
@@ -216,12 +217,14 @@ namespace PersonalFinance.Api.Controllers
         }
 
         [HttpPost("{id}/participants/{participantId}/quota-paid")]
-        public async Task<IActionResult> MarkQuotaPaid(string id, string participantId, [FromQuery] int month, [FromQuery] int year)
+        public async Task<IActionResult> MarkQuotaPaid(
+            string id, string participantId, [FromQuery] int month, [FromQuery] int year,
+            [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] QuotaPaidDto? dto)
         {
             var userId = GetCurrentUserId();
             if (userId is null) return Unauthorized();
 
-            await _service.MarkQuotaPaidAsync(id, participantId, month, year, userId.Value);
+            await _service.MarkQuotaPaidAsync(id, participantId, month, year, userId.Value, dto);
             return NoContent();
         }
 

@@ -1,12 +1,15 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Data;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Models;
 using PersonalFinance.Api.Models.Dtos;
 using PersonalFinance.Api.Models.Dtos.Expense;
 using PersonalFinance.Api.Models.Dtos.Pasanaco;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
+using PersonalFinance.Domain.Ledger.Entities;
+using PersonalFinance.Domain.Ledger.Enums;
 using System.ComponentModel.DataAnnotations;
 
 namespace PersonalFinance.Api.Services
@@ -17,13 +20,15 @@ namespace PersonalFinance.Api.Services
         private readonly ILoanService loanService;
         private readonly IExpenseService expenseService;
         private readonly IIncomeService incomeService;
+        private readonly PeriodProvisioner _provisioner;
 
-        public PasanacoService(AppDbContext context, ILoanService loanService, IExpenseService expenseService, IIncomeService incomeService)
+        public PasanacoService(AppDbContext context, ILoanService loanService, IExpenseService expenseService, IIncomeService incomeService, PeriodProvisioner provisioner)
         {
             _context = context;
             this.loanService = loanService;
             this.expenseService = expenseService;
             this.incomeService = incomeService;
+            _provisioner = provisioner;
         }
 
         public async Task<IEnumerable<PasanacoDto>> GetAllAsync(Guid userId)
@@ -347,16 +352,16 @@ namespace PersonalFinance.Api.Services
             return true;
         }
 
-        public async Task MarkQuotaPaidAsync(string pasanacoId, string participantId, int month, int year, Guid userId)
+        public async Task MarkQuotaPaidAsync(string pasanacoId, string participantId, int month, int year, Guid userId, QuotaPaidDto? cash = null)
         {
             if (month is < 1 or > 12 || year < 2000) throw new ValidationException("El mes de la cuota no es válido.");
 
             var pasanaco = await GetOwnedPasanacoAsync(pasanacoId, userId);
             EnsureActive(pasanaco);
 
-            var participantExists = await _context.Participants
-                .AnyAsync(p => p.Id == participantId && p.PasanacoId == pasanacoId);
-            if (!participantExists) throw new ValidationException("Participante no válido");
+            var participant = await _context.Participants
+                .FirstOrDefaultAsync(p => p.Id == participantId && p.PasanacoId == pasanacoId);
+            if (participant is null) throw new ValidationException("Participante no válido");
 
             var payment = await _context.PasanacoPayments.FirstOrDefaultAsync(p =>
                 p.PasanacoId == pasanacoId && p.ParticipantId == participantId && p.Month == month && p.Year == year);
@@ -378,7 +383,42 @@ namespace PersonalFinance.Api.Services
 
             payment.Paid = true;
             payment.PaymentDate = DateTime.UtcNow;
+
+            if (cash?.AccountId is { } accountId)
+                await AddQuotaLedgerEntryAsync(userId, pasanaco, participant, month, year, accountId, cash);
+
             await _context.SaveChangesAsync();
+        }
+
+        private async Task AddQuotaLedgerEntryAsync(
+            Guid userId, Pasanaco pasanaco, Participant participant, int month, int year, Guid accountId, QuotaPaidDto cash)
+        {
+            if (cash.ConceptId is not { } conceptId)
+                throw new ValidationException("Elige el concepto con el que se apunta la cuota.");
+
+            var concept = await LedgerGuards.EnsureConceptBelongsToUserAsync(_context, userId, conceptId, CancellationToken.None);
+            await LedgerGuards.EnsureAccountBelongsToUserAsync(_context, userId, accountId, CancellationToken.None);
+
+            var date = cash.Date ?? DateOnly.FromDateTime(DateTime.UtcNow);
+            var period = await _provisioner.GetOrOpenAsync(userId, date.Year, date.Month, CancellationToken.None);
+            if (period.Status == PeriodStatus.Closed)
+                throw new ValidationException($"El mes {period.Month:D2}/{period.Year} está cerrado. Reábrelo para apuntar la cuota.");
+
+            _context.LedgerEntries.Add(new LedgerEntry
+            {
+                UserId = userId,
+                PeriodId = period.Id,
+                ConceptId = conceptId,
+                AccountId = accountId,
+                Direction = EntryDirection.In,
+                IsTransfer = concept.Kind == ConceptKind.Transfer,
+                DueDate = date,
+                ForecastAmount = pasanaco.MonthlyAmount,
+                ActualAmount = pasanaco.MonthlyAmount,
+                ValueDate = date,
+                Description = $"Cuota de {participant.Name} · pasanaco {pasanaco.Name} ({month:D2}/{year})",
+                Status = EntryStatus.Paid
+            });
         }
 
         public async Task<Loan> CreateLoanForParticipantAsync(string pasanacoId, string participantId, decimal amount, Guid userId, string? note = null)

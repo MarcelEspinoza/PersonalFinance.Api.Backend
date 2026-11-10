@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Exceptions;
 using PersonalFinance.Api.Common.Interfaces;
+using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
 using PersonalFinance.Domain.Settlements;
@@ -28,6 +29,7 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<IReadOnlyList<SettlementCandidateDto>> GetCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<IReadOnlyList<SettlementCandidateDto>> GetPaymentCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> LinkPaymentAsync(Guid userId, Guid id, Guid entryId, CancellationToken ct);
+        Task<SettlementDetailDto> RecordPaymentAsync(Guid userId, Guid id, RecordSettlementPaymentDto dto, CancellationToken ct);
         Task<IReadOnlyList<SettlementCandidateDto>> GetLineEntryCandidatesAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementCandidateDto> ValidateLineEntryLinkAsync(Guid userId, Guid id, Guid lineId, Guid entryId, CancellationToken ct);
         Task<SettlementDetailDto> LinkLineEntryAsync(Guid userId, Guid id, Guid lineId, Guid? entryId, CancellationToken ct);
@@ -45,11 +47,13 @@ namespace PersonalFinance.Api.Features.Settlements
     {
         private readonly IAppDbContext _db;
         private readonly IClock _clock;
+        private readonly PeriodProvisioner _provisioner;
 
-        public SettlementService(IAppDbContext db, IClock clock)
+        public SettlementService(IAppDbContext db, IClock clock, PeriodProvisioner provisioner)
         {
             _db = db;
             _clock = clock;
+            _provisioner = provisioner;
         }
 
         public async Task<IReadOnlyList<SettlementPersonDto>> GetPeopleAsync(Guid userId, CancellationToken ct)
@@ -606,6 +610,65 @@ namespace PersonalFinance.Api.Features.Settlements
             SettlementPaymentLinker.ApplyPayment(
                 _db, settlement,
                 new SettlementPaymentCandidate(entry.Id, entry.Description ?? string.Empty, signed, EffectiveDate(entry)),
+                _clock.UtcNow);
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
+            await _db.SaveChangesAsync(ct);
+            return await ToDetailAsync(userId, settlement, ct);
+        }
+
+        /// <summary>
+        /// Apunta un pago o cobro que no llega en un extracto (efectivo, otra cuenta…) como
+        /// movimiento pagado de la cuenta elegida y lo vincula a la liquidación.
+        /// </summary>
+        public async Task<SettlementDetailDto> RecordPaymentAsync(
+            Guid userId, Guid id, RecordSettlementPaymentDto dto, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            if (settlement.Status == SettlementStatus.Closed)
+                throw new BusinessRuleException("La liquidación ya está pagada.");
+            var remaining = SettlementForecast.Remaining(settlement);
+            var amount = Round(dto.Amount);
+            if (remaining == 0m)
+                throw new BusinessRuleException("No queda nada pendiente en esta liquidación.");
+            if (amount <= 0m || amount > Math.Abs(remaining))
+                throw new BusinessRuleException($"El importe debe estar entre 0,01 y {Math.Abs(remaining):0.00}.");
+
+            var concept = await LedgerGuards.EnsureConceptBelongsToUserAsync(_db, userId, dto.ConceptId, ct);
+            if (concept.Kind == ConceptKind.Transfer && !settlement.IsExpenseReimbursement)
+                throw new BusinessRuleException("Elige un concepto de gasto o de ingreso, no un traspaso.");
+            await LedgerGuards.EnsureAccountBelongsToUserAsync(_db, userId, dto.AccountId, ct);
+            var period = await _provisioner.GetOrOpenAsync(userId, dto.Date.Year, dto.Date.Month, ct);
+            if (period.Status == PeriodStatus.Closed)
+                throw new BusinessRuleException(
+                    $"El mes {period.Year}-{period.Month:D2} está cerrado. Reábrelo para apuntar el pago.");
+
+            var incoming = remaining > 0m;
+            var names = await PersonNamesAsync(userId, ct);
+            var name = names.TryGetValue(settlement.CounterpartyId, out var found) ? found : null;
+            var description = string.IsNullOrWhiteSpace(dto.Description)
+                ? $"Liquidación con {name ?? "otra persona"} ({settlement.Title})"
+                : dto.Description.Trim();
+            var entry = new LedgerEntry
+            {
+                UserId = userId,
+                PeriodId = period.Id,
+                ConceptId = concept.Id,
+                AccountId = dto.AccountId,
+                Direction = incoming ? EntryDirection.In : EntryDirection.Out,
+                IsTransfer = concept.Kind == ConceptKind.Transfer,
+                DueDate = dto.Date,
+                ValueDate = dto.Date,
+                ForecastAmount = amount,
+                ActualAmount = amount,
+                Description = description.Length > 300 ? description[..300] : description,
+                Status = EntryStatus.Paid
+            };
+            _db.LedgerEntries.Add(entry);
+
+            await SharedExpenseImport.ClassifyPaymentAsync(_db, userId, settlement, entry, ct);
+            SettlementPaymentLinker.ApplyPayment(
+                _db, settlement,
+                new SettlementPaymentCandidate(entry.Id, description, incoming ? amount : -amount, dto.Date),
                 _clock.UtcNow);
             await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
             await _db.SaveChangesAsync(ct);

@@ -181,6 +181,15 @@ namespace PersonalFinance.Api.Controllers
             return Ok(await _service.LinkPaymentAsync(userId.Value, id, dto.LedgerEntryId, ct));
         }
 
+        [HttpPost("{id:guid}/payments/record")]
+        public async Task<ActionResult<SettlementDetailDto>> RecordPayment(
+            Guid id, [FromBody] RecordSettlementPaymentDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            return Ok(await _service.RecordPaymentAsync(userId.Value, id, dto, ct));
+        }
+
         [HttpPut("{id:guid}/lines/{lineId:guid}")]
         public async Task<ActionResult<SettlementDetailDto>> UpdateLine(
             Guid id, Guid lineId, [FromBody] SaveLineDto dto, CancellationToken ct)

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using PersonalFinance.Api.Extensions;
 using PersonalFinance.Api.Features.Ledger.Commands.ConfirmLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.CreateLedgerEntry;
+using PersonalFinance.Api.Features.Ledger.Commands.CreateOwnTransfer;
 using PersonalFinance.Api.Features.Ledger.Commands.DeleteLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.SkipLedgerEntry;
 using PersonalFinance.Api.Features.Ledger.Commands.UnconfirmLedgerEntry;
@@ -29,6 +30,16 @@ namespace PersonalFinance.Api.Controllers
             if (userId is null) return Unauthorized();
 
             return Ok(await _mediator.Send(new CreateLedgerEntryCommand(userId.Value, dto), ct));
+        }
+
+        [HttpPost("own-transfer")]
+        public async Task<ActionResult<IReadOnlyList<MonthlyEntryDto>>> CreateOwnTransfer(
+            [FromBody] OwnTransferDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _mediator.Send(new CreateOwnTransferCommand(userId.Value, dto), ct));
         }
 
         [HttpPut("{id:guid}")]
