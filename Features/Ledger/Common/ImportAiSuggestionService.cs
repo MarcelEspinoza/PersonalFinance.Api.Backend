@@ -44,7 +44,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var result = new Dictionary<string, ImportAiSuggestion>(StringComparer.OrdinalIgnoreCase);
             if (descriptions.Count == 0 || concepts.Count == 0) return result;
 
-            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration, "Import");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 FailureReason = "Falta configurar la clave del proveedor de IA en el servidor.";
@@ -104,13 +104,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var data = "<datos>\n" + string.Join('\n', maskedDescriptions.Select((description, index) =>
                 $"{index + 1}|{description}")) + "\n</datos>";
 
-            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey, "Import");
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
                     model = AnthropicMessages.ResolveModel(_configuration, "Import"),
                     max_tokens = 1024,
-                    system = AnthropicMessages.CachedSystem(_configuration, system),
+                    system = AnthropicMessages.CachedSystem(_configuration, system, "Import"),
                     messages = new[] { new { role = "user", content = data } }
                 }),
                 Encoding.UTF8,

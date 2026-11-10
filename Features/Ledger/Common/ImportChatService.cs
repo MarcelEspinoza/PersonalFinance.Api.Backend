@@ -202,7 +202,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             ImportChatExtraContext extra,
             CancellationToken ct)
         {
-            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration, "Chat");
             if (string.IsNullOrWhiteSpace(apiKey))
                 return Failure("No puedo hablar todavía: falta configurar la clave del proveedor de IA en el servidor.");
 
@@ -214,7 +214,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (messages.Count == 0)
                 return Failure("Escríbeme tu pregunta y te ayudo.");
 
-            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey, "Chat");
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
@@ -222,7 +222,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     max_tokens = 4096,
                     system = AnthropicMessages.CachedSystem(
                         _configuration,
-                        BuildSystemPrompt(rows, concepts, analysis, extra ?? ImportChatExtraContext.Empty)),
+                        BuildSystemPrompt(rows, concepts, analysis, extra ?? ImportChatExtraContext.Empty),
+                        "Chat"),
                     messages
                 }),
                 Encoding.UTF8,

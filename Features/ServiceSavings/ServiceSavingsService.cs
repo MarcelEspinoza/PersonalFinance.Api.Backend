@@ -374,7 +374,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                 var messages = new List<object> { userMessage };
                 if (blocks.Count > 0) messages.Add(new { role = "assistant", content = blocks });
 
-                using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
+                using var request = AnthropicMessages.CreateRequest(_configuration, apiKey, "Savings");
                 request.Content = new StringContent(
                     JsonSerializer.Serialize(new
                     {
@@ -526,7 +526,7 @@ namespace PersonalFinance.Api.Features.ServiceSavings
                 ? limit
                 : DefaultDailyLimit;
 
-        private string? ResolveApiKey() => AnthropicMessages.ResolveApiKey(_configuration);
+        private string? ResolveApiKey() => AnthropicMessages.ResolveApiKey(_configuration, "Savings");
 
         private static ServiceReviewDto ToDto(ServiceReview review) => new()
         {

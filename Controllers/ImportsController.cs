@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -64,6 +65,71 @@ namespace PersonalFinance.Api.Controllers
                     batch.Rows.Count(row => row.Status == ImportRowStatus.Pending), batch.CreatedAt))
                 .ToListAsync(ct);
             return Ok(batches);
+        }
+
+        [HttpGet("mappings")]
+        public async Task<ActionResult<IReadOnlyList<ImportConceptMappingDto>>> GetMappings(
+            [FromQuery, StringLength(200)] string? pattern, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var query = _db.ConceptMappings.AsNoTracking().Where(item => item.UserId == userId.Value);
+            if (pattern is not null)
+            {
+                var normalized = RevolutMovementClassifier.Normalize(pattern);
+                query = query.Where(item => item.Pattern == normalized);
+            }
+
+            return Ok(await query
+                .OrderByDescending(item => item.Priority)
+                .ThenBy(item => item.Pattern)
+                .Select(item => new ImportConceptMappingDto(
+                    item.Id, item.Pattern, item.ConceptId, item.AccountId, item.Priority, item.IsActive))
+                .ToListAsync(ct));
+        }
+
+        [HttpPut("mappings")]
+        public async Task<ActionResult<ImportConceptMappingDto>> SaveMapping(
+            [FromBody] SaveImportConceptMappingDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            var pattern = RevolutMovementClassifier.Normalize(dto.Pattern);
+            if (pattern.Length == 0 || pattern.Length > 200)
+                return BadRequest("La regla necesita una descripción de entre 1 y 200 caracteres.");
+            if (!await _db.Concepts.AnyAsync(
+                    item => item.Id == dto.ConceptId && item.UserId == userId.Value && item.IsActive, ct))
+                return BadRequest("El concepto no existe o no está activo.");
+            if (dto.AccountId is Guid accountId && !await _db.Accounts.AnyAsync(
+                    item => item.Id == accountId && item.UserId == userId.Value && item.IsActive, ct))
+                return BadRequest("La cuenta no existe o no está activa.");
+
+            var mapping = await _db.ConceptMappings.FirstOrDefaultAsync(
+                item => item.UserId == userId.Value && item.AccountId == dto.AccountId && item.Pattern == pattern, ct);
+            if (mapping is null)
+            {
+                mapping = new ConceptMapping
+                {
+                    UserId = userId.Value,
+                    AccountId = dto.AccountId,
+                    Pattern = pattern,
+                    ConceptId = dto.ConceptId,
+                    Priority = 120
+                };
+                _db.ConceptMappings.Add(mapping);
+            }
+            else
+            {
+                mapping.ConceptId = dto.ConceptId;
+                mapping.Priority = Math.Max(mapping.Priority, 120);
+                mapping.IsActive = true;
+            }
+
+            await _db.SaveChangesAsync(ct);
+            return Ok(new ImportConceptMappingDto(
+                mapping.Id, mapping.Pattern, mapping.ConceptId, mapping.AccountId, mapping.Priority, mapping.IsActive));
         }
 
         [HttpGet("{batchId:guid}")]

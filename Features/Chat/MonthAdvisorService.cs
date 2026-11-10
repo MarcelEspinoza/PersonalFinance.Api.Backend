@@ -101,7 +101,7 @@ namespace PersonalFinance.Api.Features.Chat
                 Month = anchor.Outlook.Month
             };
 
-            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration, "Advice");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 result.Summary = "Falta configurar la clave del proveedor de IA en el servidor.";
@@ -171,7 +171,7 @@ namespace PersonalFinance.Api.Features.Chat
                 """;
 
             var model = AnthropicMessages.ResolveModel(_configuration, "Advice");
-            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey, "Advice");
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {
@@ -244,7 +244,7 @@ namespace PersonalFinance.Api.Features.Chat
 
             var thread = await LoadNotesAsync(userId, request.Year, request.Month, ct);
 
-            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration, "Advice");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 return new AdviceReplyResultDto
@@ -303,7 +303,7 @@ namespace PersonalFinance.Api.Features.Chat
                 """;
 
             var model = AnthropicMessages.ResolveModel(_configuration, "Advice");
-            using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey);
+            using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey, "Advice");
             httpRequest.Content = new StringContent(
                 JsonSerializer.Serialize(new
                 {

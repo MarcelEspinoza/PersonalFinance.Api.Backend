@@ -19,8 +19,9 @@ namespace PersonalFinance.Api.Features.Chat
         /// </summary>
         public static string ResolveModel(IConfiguration configuration, string? task = null)
         {
-            var provider = ResolveProvider(configuration);
-            var taskModel = task is null ? null : configuration[$"Ai:Models:{task}"];
+            var provider = ResolveProvider(configuration, task);
+            var taskModel = ResolveRoute(configuration, task)?["Model"]
+                ?? (task is null ? null : configuration[$"Ai:Models:{task}"]);
             var configured = configuration[$"{provider}:Model"];
             var model = !string.IsNullOrWhiteSpace(taskModel)
                 ? taskModel.Trim()
@@ -39,18 +40,18 @@ namespace PersonalFinance.Api.Features.Chat
             return model;
         }
 
-        public static string? ResolveApiKey(IConfiguration configuration)
+        public static string? ResolveApiKey(IConfiguration configuration, string? task = null)
         {
-            var provider = ResolveProvider(configuration);
+            var provider = ResolveProvider(configuration, task);
             var environmentKey = provider.ToUpperInvariant() + "_API_KEY";
             return configuration[$"{provider}:ApiKey"]
                 ?? configuration[environmentKey]
                 ?? Environment.GetEnvironmentVariable(environmentKey);
         }
 
-        public static HttpRequestMessage CreateRequest(IConfiguration configuration, string apiKey)
+        public static HttpRequestMessage CreateRequest(IConfiguration configuration, string apiKey, string? task = null)
         {
-            var provider = ResolveProvider(configuration);
+            var provider = ResolveProvider(configuration, task);
             var url = provider switch
             {
                 "Poe" => "https://api.poe.com/v1/messages",
@@ -71,14 +72,24 @@ namespace PersonalFinance.Api.Features.Chat
         /// Lets Anthropic reuse a long system prompt across calls at a fraction of its price.
         /// Other providers get the plain text so their requests do not change.
         /// </summary>
-        public static object CachedSystem(IConfiguration configuration, string system) =>
-            ResolveProvider(configuration) == "Anthropic"
+        public static object CachedSystem(IConfiguration configuration, string system, string? task = null) =>
+            ResolveProvider(configuration, task) == "Anthropic"
                 ? new object[] { new { type = "text", text = system, cache_control = new { type = "ephemeral" } } }
                 : system;
 
-        private static string ResolveProvider(IConfiguration configuration)
+        private static IConfigurationSection? ResolveRoute(IConfiguration configuration, string? task)
         {
-            var configured = configuration["Ai:Provider"];
+            if (task is null || !configuration.GetValue<bool>("Ai:Routing:Enabled")) return null;
+            var route = configuration.GetSection($"Ai:Routing:{task}");
+            if (!route.Exists()) return null;
+            if (string.IsNullOrWhiteSpace(route["Provider"]) || string.IsNullOrWhiteSpace(route["Model"]))
+                throw new InvalidOperationException($"Ai:Routing:{task} requires both Provider and Model.");
+            return route;
+        }
+
+        private static string ResolveProvider(IConfiguration configuration, string? task = null)
+        {
+            var configured = ResolveRoute(configuration, task)?["Provider"] ?? configuration["Ai:Provider"];
             return configured?.Trim().ToLowerInvariant() switch
             {
                 null or "" or "anthropic" => "Anthropic",

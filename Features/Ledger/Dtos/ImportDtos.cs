@@ -1,5 +1,20 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace PersonalFinance.Api.Features.Ledger.Dtos
 {
+    public sealed record ImportConceptMappingDto(
+        Guid Id, string Pattern, Guid ConceptId, Guid? AccountId, int Priority, bool IsActive);
+
+    public sealed class SaveImportConceptMappingDto
+    {
+        [Required]
+        [StringLength(200)]
+        public string Pattern { get; set; } = string.Empty;
+
+        public Guid ConceptId { get; set; }
+        public Guid? AccountId { get; set; }
+    }
+
     public sealed record PendingImportDto(
         Guid Id, string? FileName, Guid? AccountId, string? AccountName, int PendingRows, DateTime CreatedAt);
 

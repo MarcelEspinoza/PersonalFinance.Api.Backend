@@ -95,7 +95,7 @@ namespace PersonalFinance.Api.Features.Chat
 
         public async Task<ChatResponseDto> AskAsync(Guid userId, ChatRequestDto request, bool isAdmin, CancellationToken ct)
         {
-            var apiKey = AnthropicMessages.ResolveApiKey(_configuration);
+            var apiKey = AnthropicMessages.ResolveApiKey(_configuration, "Chat");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 return new ChatResponseDto { Reply = "No puedo hablar todavía: falta configurar la clave del proveedor de IA en el servidor." };
@@ -376,13 +376,13 @@ namespace PersonalFinance.Api.Features.Chat
             for (var round = 0; ; round++)
             {
                 var allowTools = round < MaxToolRounds;
-                using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey);
+                using var httpRequest = AnthropicMessages.CreateRequest(_configuration, apiKey, "Chat");
                 httpRequest.Content = new StringContent(
                     JsonSerializer.Serialize(new
                     {
                         model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                         max_tokens = 4096,
-                        system = AnthropicMessages.CachedSystem(_configuration, system),
+                        system = AnthropicMessages.CachedSystem(_configuration, system, "Chat"),
                         messages = conversation,
                         tools = new[] { MovementSearchTool.Definition },
                         tool_choice = new { type = allowTools ? "auto" : "none" }
@@ -709,12 +709,12 @@ namespace PersonalFinance.Api.Features.Chat
                 new { role = "assistant", content = raw },
                 new { role = "user", content = feedback + "\n" + JsonSerializer.Serialize(invalid) }
             };
-            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey);
+            using var request = AnthropicMessages.CreateRequest(_configuration, apiKey, "Chat");
             request.Content = new StringContent(JsonSerializer.Serialize(new
             {
                 model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                 max_tokens = 4096,
-                system = AnthropicMessages.CachedSystem(_configuration, system),
+                system = AnthropicMessages.CachedSystem(_configuration, system, "Chat"),
                 messages = repairMessages
             }), Encoding.UTF8, "application/json");
             try
