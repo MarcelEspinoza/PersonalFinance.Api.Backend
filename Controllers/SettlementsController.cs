@@ -253,6 +253,15 @@ namespace PersonalFinance.Api.Controllers
             return Ok(await _service.MarkPaidAsync(userId.Value, id, ct));
         }
 
+        [HttpPost("{id:guid}/carry-over")]
+        public async Task<ActionResult<SettlementDetailDto>> CarryOver(Guid id, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+
+            return Ok(await _service.CarryOverAsync(userId.Value, id, ct));
+        }
+
         [HttpPost("{id:guid}/reopen")]
         public async Task<ActionResult<SettlementDetailDto>> Reopen(Guid id, CancellationToken ct)
         {

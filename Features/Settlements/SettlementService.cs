@@ -36,6 +36,7 @@ namespace PersonalFinance.Api.Features.Settlements
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> MarkSentAsync(Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct);
         Task<SettlementDetailDto> MarkPaidAsync(Guid userId, Guid id, CancellationToken ct);
+        Task<SettlementDetailDto> CarryOverAsync(Guid userId, Guid id, CancellationToken ct);
         Task<SettlementDetailDto> ReopenAsync(Guid userId, Guid id, CancellationToken ct);
     }
 
@@ -720,6 +721,63 @@ namespace PersonalFinance.Api.Features.Settlements
             await _db.SaveChangesAsync(ct);
 
             return await ToDetailAsync(userId, settlement, ct);
+        }
+
+        /// <summary>
+        /// Pasa lo pendiente a la siguiente liquidación de la misma persona (la crea si no
+        /// existe) como «Pendiente anterior» y cierra esta. Devuelve la siguiente.
+        /// </summary>
+        public async Task<SettlementDetailDto> CarryOverAsync(Guid userId, Guid id, CancellationToken ct)
+        {
+            var settlement = await LoadAsync(userId, id, ct);
+            if (settlement.Status == SettlementStatus.Closed)
+                throw new BusinessRuleException("La liquidación ya está cerrada.");
+            var remaining = SettlementForecast.Remaining(settlement);
+            if (Math.Abs(remaining) < 0.01m)
+                throw new BusinessRuleException("No queda nada pendiente que pasar.");
+
+            var next = await _db.Settlements
+                .Where(candidate => candidate.UserId == userId
+                    && candidate.CounterpartyId == settlement.CounterpartyId
+                    && candidate.IsExpenseReimbursement == settlement.IsExpenseReimbursement
+                    && candidate.Id != settlement.Id
+                    && candidate.PeriodStart > settlement.PeriodEnd)
+                .OrderBy(candidate => candidate.PeriodStart)
+                .FirstOrDefaultAsync(ct);
+
+            if (next is null)
+            {
+                var start = settlement.PeriodEnd.AddDays(1);
+                var end = new DateOnly(start.Year, start.Month, DateTime.DaysInMonth(start.Year, start.Month));
+                next = new Settlement
+                {
+                    UserId = userId,
+                    CounterpartyId = settlement.CounterpartyId,
+                    IsExpenseReimbursement = settlement.IsExpenseReimbursement,
+                    Title = DefaultTitle(start, end),
+                    PeriodStart = start,
+                    PeriodEnd = end,
+                    LinkedLoanId = settlement.IsExpenseReimbursement
+                        ? null
+                        : await FindPreviousLinkedLoanIdAsync(userId, settlement.CounterpartyId, ct),
+                    ClosingNote = "Si hay algo que no se entienda o hay dudas, me avisas.",
+                    CreatedAt = _clock.UtcNow
+                };
+                _db.Settlements.Add(next);
+            }
+            else if (next.Status == SettlementStatus.Closed)
+            {
+                throw new BusinessRuleException($"«{next.Title}» ya está cerrada. Reábrela para pasarle lo pendiente.");
+            }
+
+            next.CarriedOverAmount = Round(next.CarriedOverAmount + remaining);
+            next.UpdatedAt = _clock.UtcNow;
+            settlement.Status = SettlementStatus.Closed;
+            settlement.UpdatedAt = _clock.UtcNow;
+            await SettlementEntryCoverage.RefreshAsync(_db, settlement, ct);
+            await _db.SaveChangesAsync(ct);
+
+            return await ToDetailAsync(userId, next, ct);
         }
 
         public async Task<SettlementDetailDto> ReopenAsync(Guid userId, Guid id, CancellationToken ct)
