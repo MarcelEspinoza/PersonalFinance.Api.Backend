@@ -67,6 +67,15 @@ namespace PersonalFinance.Api.Features.Chat
             return request;
         }
 
+        /// <summary>
+        /// Lets Anthropic reuse a long system prompt across calls at a fraction of its price.
+        /// Other providers get the plain text so their requests do not change.
+        /// </summary>
+        public static object CachedSystem(IConfiguration configuration, string system) =>
+            ResolveProvider(configuration) == "Anthropic"
+                ? new object[] { new { type = "text", text = system, cache_control = new { type = "ephemeral" } } }
+                : system;
+
         private static string ResolveProvider(IConfiguration configuration)
         {
             var configured = configuration["Ai:Provider"];

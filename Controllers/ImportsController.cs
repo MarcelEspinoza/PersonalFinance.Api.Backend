@@ -697,12 +697,23 @@ namespace PersonalFinance.Api.Controllers
                     row.Status == ImportRowStatus.Pending &&
                     row.ConfirmedConceptId is null)
                 .ToList();
+            var history = await ImportHistoryClassifier.LoadAsync(_db, userId.Value, ct);
+            Guid? Learned(ImportRow row) =>
+                history.TryGetValue(
+                    ImportHistoryClassifier.Key(row.NormalizedDescription ?? row.RawDescription, row.Amount),
+                    out var conceptId)
+                    ? conceptId
+                    : null;
+            bool AlreadySuggestedByAi(ImportRow row) =>
+                row.SuggestedConceptId is not null && row.SuggestionSource == "ai";
             var descriptionsForAi = pendingRows
                 .Where(row =>
+                    !AlreadySuggestedByAi(row) &&
                     FindMapping(
                         mappings,
                         batch.AccountId.Value,
-                        row.NormalizedDescription ?? string.Empty) is null)
+                        row.NormalizedDescription ?? string.Empty) is null &&
+                    Learned(row) is null)
                 .Select(row => row.NormalizedDescription ?? string.Empty)
                 .Where(description => !string.IsNullOrWhiteSpace(description))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -727,6 +738,21 @@ namespace PersonalFinance.Api.Controllers
                     row.SuggestionSource = "mapping";
                     row.SuggestionConfidence = 1m;
                     mapped++;
+                    continue;
+                }
+
+                if (Learned(row) is { } learnedConceptId)
+                {
+                    row.SuggestedConceptId = learnedConceptId;
+                    row.SuggestionSource = ImportHistoryClassifier.Source;
+                    row.SuggestionConfidence = 0.9m;
+                    mapped++;
+                    continue;
+                }
+
+                if (AlreadySuggestedByAi(row))
+                {
+                    suggested++;
                     continue;
                 }
 
@@ -1428,6 +1454,7 @@ namespace PersonalFinance.Api.Controllers
                 .Include(m => m.Concept)
                 .Where(m => m.UserId == userId.Value && m.IsActive)
                 .ToListAsync(ct);
+            var history = await ImportHistoryClassifier.LoadAsync(_db, userId.Value, ct);
             var concepts = await _db.Concepts
                 .AsNoTracking()
                 .Where(c => c.UserId == userId.Value && c.IsActive)
@@ -1577,6 +1604,12 @@ namespace PersonalFinance.Api.Controllers
                 }
 
                 var mapping = FindMapping(mappings, account.Id, classified.NormalizedDescription);
+                Guid? learned = mapping is null &&
+                    history.TryGetValue(
+                        ImportHistoryClassifier.Key(classified.NormalizedDescription, movement.Amount),
+                        out var learnedConceptId)
+                    ? learnedConceptId
+                    : null;
                 batch.Rows.Add(new ImportRow
                 {
                     UserId = userId.Value,
@@ -1593,9 +1626,9 @@ namespace PersonalFinance.Api.Controllers
                     NormalizedDescription = classified.NormalizedDescription,
                     Fingerprint = fingerprint,
                     Status = ImportRowStatus.Pending,
-                    SuggestedConceptId = mapping?.ConceptId,
-                    SuggestionSource = mapping is not null ? "mapping" : null,
-                    SuggestionConfidence = mapping is not null ? 1m : null
+                    SuggestedConceptId = mapping?.ConceptId ?? learned,
+                    SuggestionSource = mapping is not null ? "mapping" : learned is not null ? ImportHistoryClassifier.Source : null,
+                    SuggestionConfidence = mapping is not null ? 1m : learned is not null ? 0.9m : null
                 });
             }
 

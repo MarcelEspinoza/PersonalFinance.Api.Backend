@@ -220,7 +220,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {
                     model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                     max_tokens = 4096,
-                    system = BuildSystemPrompt(rows, concepts, analysis, extra ?? ImportChatExtraContext.Empty),
+                    system = AnthropicMessages.CachedSystem(
+                        _configuration,
+                        BuildSystemPrompt(rows, concepts, analysis, extra ?? ImportChatExtraContext.Empty)),
                     messages
                 }),
                 Encoding.UTF8,

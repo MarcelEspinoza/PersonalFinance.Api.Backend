@@ -382,7 +382,7 @@ namespace PersonalFinance.Api.Features.Chat
                     {
                         model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                         max_tokens = 4096,
-                        system,
+                        system = AnthropicMessages.CachedSystem(_configuration, system),
                         messages = conversation,
                         tools = new[] { MovementSearchTool.Definition },
                         tool_choice = new { type = allowTools ? "auto" : "none" }
@@ -714,7 +714,7 @@ namespace PersonalFinance.Api.Features.Chat
             {
                 model = AnthropicMessages.ResolveModel(_configuration, "Chat"),
                 max_tokens = 4096,
-                system,
+                system = AnthropicMessages.CachedSystem(_configuration, system),
                 messages = repairMessages
             }), Encoding.UTF8, "application/json");
             try
