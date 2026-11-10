@@ -43,8 +43,6 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public sealed class ImportBatchApplicationService : IImportBatchApplicationService
     {
         private const int ForecastMatchWindowDays = 5;
-        private const decimal MinForecastAmountRatio = 0.5m;
-        private const decimal MaxForecastAmountRatio = 2m;
 
         private sealed record ForecastMatch(
             ImportRow Row,
@@ -206,6 +204,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .Select(entry => entry.Fingerprint!)
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
+            var obligationValidation = await ImportObligationLinks.ValidateAsync(
+                _db, userId, batch.Rows.Where(row => !existingFingerprints.Contains(row.Fingerprint)), ct);
+            if (obligationValidation.Error is { } obligationError)
+                return new(false, 0, batchId, obligationError, Conflict: true);
+            if (batch.Rows.Any(row => row.Status == ImportRowStatus.Pending && ImportObligationLinks.HasLink(row)
+                && (row.ConfirmedConceptId ?? row.SuggestedConceptId) is { } id && mirrorAccountByConcept.ContainsKey(id)))
+                return new(false, 0, batchId, "Un traspaso entre tus propias cuentas no puede pagar una deuda.", Conflict: true);
+            var automaticReminders = await ImportObligationLinks.FindAutomaticRemindersAsync(
+                _db, userId, batch.Rows.ToList(), ct);
             var plannedMatches = await FindForecastMatchesAsync(
                 userId,
                 accountId.Value,
@@ -213,6 +220,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Status == ImportRowStatus.Pending &&
                     EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
+                    !ImportObligationLinks.HasLink(row) &&
+                    row.PasanacoParticipantId is null &&
+                    !automaticReminders.ContainsKey(row.Id) &&
                     !deductedRowIds.Contains(row.Id) &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 deductedEntryIds,
@@ -313,6 +323,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var bookedDeductions = new List<(Guid PlannedEntryId, decimal Amount)>();
             var settlementCandidates = new List<SettlementPaymentCandidate>();
             var pasanacoRows = new List<ImportRow>();
+            var bookedObligations = new List<ImportRow>();
             foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending))
             {
                 var isSplit = row.Allocations.Count > 0;
@@ -333,6 +344,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 var isPaid = EntersAsPaid(row);
                 var amount = Math.Abs(row.Amount);
+                if (automaticReminders.TryGetValue(row.Id, out var automaticReminder))
+                {
+                    row.ReminderId = automaticReminder.Id;
+                    row.ReminderDueDate = automaticReminder.DueDate;
+                }
                 if (isSplit)
                 {
                     var sharedParts = row.Allocations.Where(part => part.CounterpartyId.HasValue).ToList();
@@ -519,7 +535,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     _db.LedgerEntries.Add(importedEntry);
                     row.LedgerEntryId = importedEntry.Id;
                     AddTransferMirror(importedEntry, mirrorAccountByConcept);
-                    if (isPaid && (!importedEntry.IsTransfer || concept.Name == SharedExpenseImport.ConceptName))
+                    if (isPaid && !ImportObligationLinks.HasLink(row) && !deductedRowIds.Contains(row.Id) &&
+                        row.PasanacoParticipantId is null &&
+                        (!importedEntry.IsTransfer || concept.Name == SharedExpenseImport.ConceptName))
                         settlementCandidates.Add(new(importedEntry.Id, row.RawDescription, row.Amount, row.ValueDate));
 
                     if (row.Fee != 0m && feeConcept is not null)
@@ -549,6 +567,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 }
 
                 row.Status = ImportRowStatus.Accepted;
+                if (ImportObligationLinks.HasLink(row)) bookedObligations.Add(row);
                 if (row.PasanacoParticipantId is not null && row.Amount > 0m) pasanacoRows.Add(row);
                 applied++;
             }
@@ -584,8 +603,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 planned.UpdatedAt = DateTime.UtcNow;
             }
 
+            obligationValidation = await ImportObligationLinks.ValidateAsync(
+                _db, userId, bookedObligations, ct, includeBooked: true);
+            if (obligationValidation.Error is { } finalObligationError)
+                return new(false, 0, batchId, finalObligationError, Conflict: true);
+            var settlementPayments = await ImportObligationLinks.ApplyAsync(
+                _db, userId, bookedObligations, obligationValidation, DateTime.UtcNow, ct);
             // Transfers to or from a person with open settlements are booked there automatically.
-            var settlementPayments = await SettlementPaymentLinker.LinkAsync(
+            settlementPayments += await SettlementPaymentLinker.LinkAsync(
                 _db, userId, settlementCandidates, DateTime.UtcNow, ct);
 
             batch.AcceptedRows = batch.Rows.Count(row => row.Status == ImportRowStatus.Accepted);
@@ -628,6 +653,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     row.Status == ImportRowStatus.Pending &&
                     EntersAsPaid(row) &&
                     row.Allocations.Count == 0 &&
+                    !ImportObligationLinks.HasLink(row) &&
+                    row.PasanacoParticipantId is null &&
                     !deductedRowIds.Contains(row.Id) &&
                     !existingFingerprints.Contains(row.Fingerprint)),
                 deductedEntryIds,
@@ -695,7 +722,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         {
             var candidates = rows
                 .Where(row => row.ConfirmedConceptId.HasValue || row.SuggestedConceptId.HasValue)
+                .Where(row => ImportPendingRelevance.HasMeaningfulText(row.RawDescription))
                 .ToList();
+            if (candidates.Count == 0) return new();
+            var reminders = await _db.Reminders.AsNoTracking()
+                .Where(reminder => reminder.UserId == userId && !reminder.IsDone && reminder.Amount > 0m)
+                .Select(reminder => new { reminder.Title, reminder.Amount, reminder.IsIncome }).ToListAsync(ct);
+            candidates = candidates.Where(row => !reminders.Any(reminder =>
+                reminder.IsIncome == (row.Amount > 0m) && reminder.Amount == Math.Abs(row.Amount) &&
+                ImportPendingRelevance.HasIdentifier(row.RawDescription, reminder.Title))).ToList();
             if (candidates.Count == 0) return new();
             var settlementRowIds = await SettlementPaymentLinker.FindCandidateIdsAsync(
                 _db,
@@ -716,12 +751,13 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 row => row.Amount >= 0 ? EntryDirection.In : EntryDirection.Out);
 
             var existingEntries = await _db.LedgerEntries
+                .Include(entry => entry.Concept)
+                .Include(entry => entry.Period)
                 .Where(entry =>
                     entry.UserId == userId &&
-                    entry.AccountId == accountId &&
                     conceptIds.Contains(entry.ConceptId) &&
-                    entry.DueDate >= firstDate &&
-                    entry.DueDate <= lastDate)
+                    entry.Status != EntryStatus.Paid &&
+                    entry.Status != EntryStatus.Skipped)
                 .ToListAsync(ct);
             var availableEntries = existingEntries
                 .Where(entry =>
@@ -768,9 +804,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .Where(entry =>
                         entry.ConceptId == conceptId &&
                         entry.Direction == direction &&
-                        Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays &&
-                        InAllowedMonth(entry.DueDate) &&
-                        IsPlausibleAmount(amount, entry.CashForecastAmount) &&
+                        ((entry.AccountId == accountId &&
+                          Math.Abs(entry.DueDate.DayNumber - row.ValueDate.DayNumber) <= ForecastMatchWindowDays &&
+                          InAllowedMonth(entry.DueDate) &&
+                          amount == entry.CashForecastAmount) ||
+                         (ImportPlannedLinks.IsOpen(entry) &&
+                          entry.Period?.Status != PeriodStatus.Closed &&
+                          entry.Concept?.IsActive == true &&
+                          entry.DueDate <= row.ValueDate.AddDays(ImportPlannedLinks.CandidateWindowDays) &&
+                          amount == entry.CashForecastAmount &&
+                          ImportPendingRelevance.HasIdentifier(row.RawDescription,
+                              $"{entry.Description} {entry.Concept?.Name}"))) &&
                         (entry.SettlementAllocatedAmount == 0m || amount <= entry.CashForecastAmount))
                     .Select(entry => new ForecastMatch(
                         row, conceptId, direction, entry.DueDate, entry.CashForecastAmount, entry, null)));
@@ -780,7 +824,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                              rule.Direction == direction &&
                              rule.StartDate <= latest &&
                              (rule.EndDate is null || rule.EndDate >= earliest) &&
-                             IsPlausibleAmount(amount, rule.ForecastAmount)))
+                             amount == rule.ForecastAmount))
                 {
                     for (var cursor = new DateOnly(earliest.Year, earliest.Month, 1);
                          cursor <= latest;
@@ -806,7 +850,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                  occurrence.ConceptId == conceptId &&
                                  occurrence.Direction == direction &&
                                  occurrence.CashForecastAmount > 0m &&
-                                 IsPlausibleAmount(amount, occurrence.CashForecastAmount) &&
+                                 amount == occurrence.CashForecastAmount &&
                                  (occurrence.SettlementAllocatedAmount == 0m || amount <= occurrence.CashForecastAmount) &&
                                  !options.Any(option => option.Row.Id == row.Id && option.Entry?.Id == occurrence.Id))
                         {
@@ -822,6 +866,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var matches = new List<ForecastMatch>();
             var matchedRows = new HashSet<Guid>();
             var usedForecasts = new HashSet<string>(StringComparer.Ordinal);
+            var ambiguousRows = options.GroupBy(option => option.Row.Id)
+                .Where(group =>
+                {
+                    var best = group.OrderBy(option => option.AmountGap).ThenBy(option => option.DayGap).First();
+                    return group.Count(option => option.AmountGap == best.AmountGap && option.DayGap == best.DayGap) > 1;
+                })
+                .Select(group => group.Key).ToHashSet();
+            var ambiguousForecasts = options.GroupBy(option => option.Key)
+                .Where(group =>
+                {
+                    var best = group.OrderBy(option => option.AmountGap).ThenBy(option => option.DayGap).First();
+                    return group.Count(option => option.AmountGap == best.AmountGap && option.DayGap == best.DayGap) > 1;
+                })
+                .Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
             foreach (var option in options
                          .OrderBy(option => option.AmountGap)
                          .ThenBy(option => option.DayGap)
@@ -829,17 +887,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                          .ThenBy(option => option.Row.RowNumber)
                          .ThenBy(option => option.Key, StringComparer.Ordinal))
             {
-                if (matchedRows.Contains(option.Row.Id) || !usedForecasts.Add(option.Key)) continue;
+                if (ambiguousRows.Contains(option.Row.Id) || ambiguousForecasts.Contains(option.Key) ||
+                    matchedRows.Contains(option.Row.Id) ||
+                    !usedForecasts.Add(option.Key)) continue;
                 matchedRows.Add(option.Row.Id);
                 matches.Add(option);
             }
 
             return matches;
         }
-
-        private static bool IsPlausibleAmount(decimal actual, decimal forecast) =>
-            forecast <= 0m ||
-            (actual >= forecast * MinForecastAmountRatio && actual <= forecast * MaxForecastAmountRatio);
 
         /// <summary>El saldo se mueve el día que el banco liquida, no el de la compra.</summary>
         private static DateOnly SettledOn(ImportRow row) => row.SettledDate ?? row.ValueDate;

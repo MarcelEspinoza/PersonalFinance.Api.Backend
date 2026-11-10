@@ -72,6 +72,22 @@ namespace PersonalFinance.Api.Features.Reminders
             }
         }
 
+        public static void Complete(Reminder reminder, DateTime now)
+        {
+            if (reminder.IsDone) return;
+            if (reminder.Repeat == ReminderRepeat.None)
+            {
+                reminder.IsDone = true;
+                reminder.CompletedAt = now;
+            }
+            else
+            {
+                reminder.DueDate = NextDueDate(reminder);
+                reminder.SnoozedUntil = null;
+            }
+            reminder.UpdatedAt = now;
+        }
+
         public static string ToApi(ReminderRepeat repeat) => repeat switch
         {
             ReminderRepeat.Weekly => "weekly",

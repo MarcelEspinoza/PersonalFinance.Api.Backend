@@ -16,6 +16,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     {
         /// <summary>Planned entry the row is currently deducted from, if any.</summary>
         public Guid? PlannedEntryId { get; init; }
+        public Guid? ReminderId { get; init; }
+        public Guid? SettlementId { get; init; }
         public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; init; } = Array.Empty<ImportPlannedAllocationDto>();
 
         /// <summary>Split rows cannot be deducted from a planned entry.</summary>
@@ -31,6 +33,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public sealed record ImportChatLoanContext(string Kind, string Name, decimal Amount, string? Detail);
     public sealed record ImportChatLedgerContext(string Date, string Direction, string Status, decimal Amount, string? Concept, string? Description);
     public sealed record ImportChatPersonContext(Guid Id, string Name);
+    public sealed record ImportChatObligationContext(
+        Guid Id, string Title, string Direction, DateOnly DueDate, decimal Amount,
+        string? Repeat, decimal LinkedAmount, IReadOnlyList<Guid> LinkedRowIds)
+    {
+        public decimal RemainingAfterLinks => Amount - LinkedAmount;
+    }
 
     /// <summary>Open planned entry («previsto») the rows can be deducted from; Direction is "in" or "out".</summary>
     public sealed record ImportChatPlannedContext(
@@ -65,6 +73,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         /// <summary>Open planned entries of the user eligible for deduction.</summary>
         public IReadOnlyList<ImportChatPlannedContext> PlannedEntries { get; init; } = Array.Empty<ImportChatPlannedContext>();
+        public IReadOnlyList<ImportChatObligationContext> Reminders { get; init; } = Array.Empty<ImportChatObligationContext>();
+        public IReadOnlyList<ImportChatObligationContext> Settlements { get; init; } = Array.Empty<ImportChatObligationContext>();
 
         /// <summary>Date used to validate reminder dates; UTC today when not set.</summary>
         public DateOnly? Today { get; init; }
@@ -79,6 +89,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public const string SetRowConcept = "set_row_concept";
         public const string CreateConcept = "create_concept";
         public const string LinkPlanned = "link_planned";
+        public const string LinkReminder = "link_reminder";
+        public const string LinkSettlement = "link_settlement";
+        public const string UnlinkObligation = "unlink_obligation";
         public const string AllocatePlanned = "allocate_planned";
         public const string ShareExpense = "share_expense";
         public const string UnlinkPlanned = "unlink_planned";
@@ -118,7 +131,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         string? CounterpartyName = null,
         string? PasanacoParticipantId = null,
         string? PasanacoMonth = null,
-        CreatePasanacoWithParticipantsDto? Pasanaco = null);
+        CreatePasanacoWithParticipantsDto? Pasanaco = null,
+        Guid? ReminderId = null,
+        Guid? SettlementId = null);
 
     public sealed record ImportChatResult(
         string Reply,
@@ -275,6 +290,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     sharedExpenseCounterpartyId = r.SharedExpenseCounterpartyId,
                     sharedExpenseAmount = r.SharedExpenseAmount,
                     plannedEntryId = r.PlannedEntryId,
+                    reminderId = r.ReminderId,
+                    settlementId = r.SettlementId,
                     plannedAllocations = r.PlannedAllocations.Select(link => new
                     {
                         plannedEntryId = link.PlannedEntryId,
@@ -328,6 +345,19 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 PromptJson);
             var today = (extra.Today ?? DateOnly.FromDateTime(DateTime.UtcNow))
                 .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string ObligationsJson(IReadOnlyList<ImportChatObligationContext> items) =>
+                JsonSerializer.Serialize(items.Take(MaxPlannedInPrompt).Select(item => new
+                {
+                    item.Id,
+                    title = Masked(item.Title, MaxTitleLength),
+                    item.Direction,
+                    item.DueDate,
+                    item.Amount,
+                    item.Repeat,
+                    item.LinkedAmount,
+                    item.RemainingAfterLinks,
+                    item.LinkedRowIds
+                }), PromptJson);
 
             return $$"""
                 Eres el asistente de revisión de un importador bancario personal.
@@ -404,6 +434,29 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   vínculo; después podrás proponer el gasto compartido.
 
                 PREVISTOS Y RECORDATORIOS (también son propuestas que el usuario confirma):
+                - Revisa también RECORDATORIOS ABIERTOS y LIQUIDACIONES ABIERTAS, tanto
+                  lo que le deben al usuario como lo que él debe. Tienen identificadores
+                  reales y sí puedes proponer vincularlos desde aquí.
+                - "link_reminder" ("rowIds" con UNA fila, "reminderId"): prepara el
+                  cobro o pago contra un recordatorio existente. Se completa al aplicar
+                  el extracto; no se crea otro movimiento ni otro previsto.
+                  Un pago parcial reduce el pendiente de un recordatorio "none".
+                  Si se repite, sólo acepta su importe completo.
+                - "link_settlement" ("rowIds" con UNA fila, "settlementId"): prepara
+                  el cobro o pago, incluso parcial, de esa liquidación existente.
+                  No hace falta que su nombre bancario esté configurado.
+                - "unlink_obligation" ("rowIds"): quita el vínculo con un recordatorio
+                  o liquidación, sin modificar la deuda.
+                - No vincules una fila a dos fuentes. Si ya tiene previsto, reparto,
+                  cuota, "reminderId" o "settlementId", propón quitar el vínculo
+                  incompatible y espera su confirmación antes de preparar otro.
+                - El nombre y la aclaración del usuario identifican a la persona;
+                  un Bizum genérico y una coincidencia de importe no bastan.
+                  Jenny y Yenny no son la misma persona. Un recordatorio de Carlos
+                  no demuestra que le prestó dinero: no inventes esa clasificación.
+                - Si el usuario identifica un cobro de un recordatorio, usa
+                  "link_reminder", no "create_reminder", "link_planned" ni un préstamo
+                  nuevo. No le pidas cerrarlo manualmente si lo puedes vincular aquí.
                 - Si el usuario dice que un cobro es parte de otro que ya tiene previsto,
                   busca ese previsto por importe, descripción y significado y propón
                   "link_planned". No basta con poner una categoría de ingreso: debe
@@ -552,6 +605,14 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 {{Math.Min(extra.PlannedEntries.Count, MaxPlannedInPrompt)}} de {{extra.PlannedEntries.Count}}):
                 {{plannedJson}}
 
+                RECORDATORIOS ABIERTOS (mostrados {{Math.Min(extra.Reminders.Count, MaxPlannedInPrompt)}}
+                de {{extra.Reminders.Count}}; usa "id" como "reminderId"):
+                {{ObligationsJson(extra.Reminders)}}
+
+                LIQUIDACIONES ABIERTAS (mostradas {{Math.Min(extra.Settlements.Count, MaxPlannedInPrompt)}}
+                de {{extra.Settlements.Count}}; usa "id" como "settlementId"):
+                {{ObligationsJson(extra.Settlements)}}
+
                 PASANACOS ACTIVOS:
                 {{pasanacosJson}}
 
@@ -564,6 +625,9 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
                 Otras acciones posibles en "proposedActions":
                 {"type":"link_planned","rowIds":["guid"],"plannedEntryId":"guid"}
+                {"type":"link_reminder","rowIds":["guid"],"reminderId":"guid"}
+                {"type":"link_settlement","rowIds":["guid"],"settlementId":"guid"}
+                {"type":"unlink_obligation","rowIds":["guid"]}
                 {"type":"allocate_planned","rowIds":["guid"],"allocations":[{"plannedEntryId":"guid","amount":25.00},{"plannedEntryId":"guid","amount":10.00}]}
                 {"type":"share_expense","rowIds":["guid"],"conceptId":"guid","counterpartyId":"guid","amount":15.00}
                 {"type":"unlink_planned","rowIds":["guid"]}
@@ -576,7 +640,12 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 Escribe "reply" en texto plano, sin markdown (sin asteriscos, almohadillas
                 ni tablas). Si el usuario sólo pregunta (no pide cambios), deja
                 "proposedActions" vacío. Nunca inventes un rowId, conceptId, groupId o
-                plannedEntryId que no esté en las listas de arriba.
+                plannedEntryId, reminderId o settlementId que no esté en las listas de arriba.
+                Si propones un cambio, incluye su acción completa en "proposedActions":
+                describirlo sólo en "reply" no crea una tarjeta. Copia exactamente los
+                identificadores. Si falta un dato, explícalo en "unrecognized" y no
+                afirmes que hay una tarjeta. Si una lista está recortada, no concluyas
+                que lo que no ves no existe.
 
                 FORMATO DE "reply":
                 - A una pregunta corta, responde corto (una o dos frases).
@@ -602,20 +671,27 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             catch (JsonException ex)
             {
                 _logger.LogWarning(ex, "La respuesta del chat de importación no tenía el JSON esperado.");
-                return Failure(ModelJson.PlainText(raw));
+                return Failure("La respuesta de la IA quedó incompleta o no tenía el formato esperado. No se han preparado tarjetas ni aplicado cambios.");
             }
 
             using (document)
             {
                 var root = document.RootElement;
-                if (root.ValueKind != JsonValueKind.Object) return Failure(ModelJson.PlainText(raw));
+                if (root.ValueKind != JsonValueKind.Object)
+                    return Failure("La respuesta de la IA no tenía el formato esperado. No se han preparado tarjetas ni aplicado cambios.");
 
-                var proposals = BuildProposals(GetArray(root, "proposedActions"), rows, concepts, extra);
-                var unrecognized = GetArray(root, "unrecognized")
+                var rejected = new List<string>();
+                var proposals = BuildProposals(GetArray(root, "proposedActions"), rows, concepts, extra, rejected);
+                if (!TryGetProperty(root, "proposedActions", out var actionArray) || actionArray.ValueKind != JsonValueKind.Array)
+                    rejected.Add("La IA no devolvió la lista de tarjetas. No se ha preparado ningún cambio.");
+                var modelUnrecognized = GetArray(root, "unrecognized")
                     .Where(item => item.ValueKind == JsonValueKind.String)
                     .Select(item => CleanText(item.GetString(), 200))
                     .Where(text => text.Length > 0)
-                    .Take(MaxUnrecognized)
+                    .Take(MaxUnrecognized);
+                var unrecognized = rejected.Concat(modelUnrecognized)
+                    .Distinct()
+                    .Take(MaxUnrecognized + MaxProposals)
                     .ToList();
 
                 var reply = CleanText(GetString(root, "reply"), 8000, keepNewLines: true);
@@ -634,7 +710,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             IEnumerable<JsonElement> items,
             IReadOnlyList<ImportChatRowContext> rows,
             IReadOnlyList<ImportAiCandidate> concepts,
-            ImportChatExtraContext extra)
+            ImportChatExtraContext extra,
+            List<string> rejected)
         {
             var rowsById = rows.GroupBy(r => r.RowId).ToDictionary(g => g.Key, g => g.First());
             var conceptsById = concepts.GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First());
@@ -644,143 +721,199 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var usedRows = new HashSet<Guid>();
             var linkUsedRows = new HashSet<Guid>();
             var usedKeys = new HashSet<string>(StringComparer.Ordinal);
+            var obligationAmounts = new Dictionary<string, decimal>(StringComparer.Ordinal);
             var drafts = new List<Draft>();
 
-            foreach (var item in items.Where(i => i.ValueKind == JsonValueKind.Object).Take(50))
+            var rawItems = items.ToList();
+            if (rawItems.Count > 50)
+                rejected.Add("La respuesta incluye demasiadas acciones. Solo se han revisado las primeras 50.");
+            foreach (var item in rawItems.Take(50))
             {
-                var type = GetString(item, "type")?.Trim().ToLowerInvariant();
-                switch (type)
+                if (item.ValueKind != JsonValueKind.Object)
                 {
-                    case ImportChatActionTypes.ShareExpense:
-                    {
-                        var ids = ReadGuids(item, "rowIds").Distinct().ToList();
-                        if (ids.Count != 1 || !rowsById.TryGetValue(ids[0], out var row) || row.Amount >= 0m ||
-                            row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0 ||
-                            ReadGuid(item, "conceptId") is not { } conceptId ||
-                            !conceptsById.TryGetValue(conceptId, out var concept) ||
-                            !string.Equals(concept.Kind, "Expense", StringComparison.OrdinalIgnoreCase) ||
-                            ReadGuid(item, "counterpartyId") is not { } personId ||
-                            !TryReadOptionalDecimal(item, "amount", out var amount) || amount is not { } share ||
-                            share <= 0m || share >= Math.Abs(row.Amount) || decimal.Round(share, 2) != share ||
-                            ids.Any(id => usedRows.Contains(id) || linkUsedRows.Contains(id)))
-                            continue;
-                        var person = extra.People.FirstOrDefault(person => person.Id == personId);
-                        if (person is null) continue;
-                        usedRows.UnionWith(ids);
-                        linkUsedRows.UnionWith(ids);
-                        drafts.Add(new FixedDraft(new ImportChatProposal(
-                            ImportChatActionTypes.ShareExpense,
-                            $"De {Money(Math.Abs(row.Amount))}: {Money(Math.Abs(row.Amount) - share)} de gasto propio en «{concept.Name}» y {Money(share)} que te debe {person.Name}",
-                            ids, concept.Id, concept.Name, null, null, null, null, false,
-                            Amount: share, CounterpartyId: person.Id, CounterpartyName: person.Name)));
-                        continue;
-                    }
-                    case ImportChatActionTypes.AllocatePlanned:
-                    {
-                        var proposal = BuildAllocatePlanned(item, rowsById, plannedById);
-                        if (proposal is null || proposal.RowIds.Any(id => linkUsedRows.Contains(id) || usedRows.Contains(id)))
-                            continue;
-                        linkUsedRows.UnionWith(proposal.RowIds);
-                        usedRows.UnionWith(proposal.RowIds);
-                        drafts.Add(new FixedDraft(proposal));
-                        continue;
-                    }
-                    case ImportChatActionTypes.LinkPlanned:
-                    {
-                        if (ReadGuid(item, "plannedEntryId") is not { } plannedId ||
-                            !plannedById.TryGetValue(plannedId, out var planned))
-                            continue;
-
-                        var plannedDirection = planned.Direction == "in" ? EntryDirection.In : EntryDirection.Out;
-                        var rowIds = ReadGuids(item, "rowIds")
-                            .Where(id => rowsById.TryGetValue(id, out var row) &&
-                                         row.PlannedEntryId != plannedId &&
-                                         row.PlannedAllocations.Count == 0 &&
-                                         ImportPlannedLinks.LinkError(row.Amount, row.IsSplit, plannedDirection) is null &&
-                                         !linkUsedRows.Contains(id))
-                            .Distinct()
-                            .ToList();
-                        if (rowIds.Count == 0) continue;
-                        linkUsedRows.UnionWith(rowIds);
-
-                        var sameEntry = drafts.OfType<LinkDraft>().FirstOrDefault(d => d.Planned.Id == plannedId);
-                        if (sameEntry is not null) sameEntry.RowIds.AddRange(rowIds);
-                        else drafts.Add(new LinkDraft(planned, rowIds));
-                        continue;
-                    }
-                    case ImportChatActionTypes.UnlinkPlanned:
-                    {
-                        var rowIds = ReadGuids(item, "rowIds")
-                            .Where(id => rowsById.TryGetValue(id, out var row) &&
-                                         (row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0) &&
-                                         !linkUsedRows.Contains(id))
-                            .Distinct()
-                            .ToList();
-                        if (rowIds.Count == 0) continue;
-                        linkUsedRows.UnionWith(rowIds);
-
-                        var existing = drafts.OfType<UnlinkDraft>().FirstOrDefault();
-                        if (existing is not null) existing.RowIds.AddRange(rowIds);
-                        else drafts.Add(new UnlinkDraft(rowIds));
-                        continue;
-                    }
-                    case ImportChatActionTypes.PayPasanacoQuota:
-                    {
-                        var proposal = BuildPasanacoQuota(item, rowsById, extra.Pasanacos);
-                        if (proposal is null || !usedKeys.Add($"quota-row:{proposal.RowIds[0]}") ||
-                            !usedKeys.Add($"quota:{proposal.PasanacoParticipantId}:{proposal.PasanacoMonth}"))
-                            continue;
-                        drafts.Add(new FixedDraft(proposal));
-                        continue;
-                    }
-                    case ImportChatActionTypes.CreatePasanaco:
-                    {
-                        var proposal = BuildCreatePasanaco(item, extra.Pasanacos);
-                        if (proposal is not null && usedKeys.Add("create-pasanaco")) drafts.Add(new FixedDraft(proposal));
-                        continue;
-                    }
-                    case ImportChatActionTypes.SkipPlanned:
-                    case ImportChatActionTypes.UpdatePlanned:
-                    case ImportChatActionTypes.CreateReminder:
-                    {
-                        var proposal = type switch
-                        {
-                            ImportChatActionTypes.SkipPlanned => BuildSkipPlanned(item, plannedById),
-                            ImportChatActionTypes.UpdatePlanned => BuildUpdatePlanned(item, plannedById),
-                            _ => BuildReminder(item, today)
-                        };
-                        if (proposal is null) continue;
-
-                        var key = proposal.Type == ImportChatActionTypes.CreateReminder
-                            ? $"reminder:{proposal.Title!.ToUpperInvariant()}:{proposal.DueDate:yyyy-MM-dd}"
-                            : $"{proposal.Type}:{proposal.PlannedEntryId}";
-                        if (usedKeys.Add(key)) drafts.Add(new FixedDraft(proposal));
-                        continue;
-                    }
+                    rejected.Add("No se pudo preparar una tarjeta: la acción no tenía el formato esperado.");
+                    continue;
                 }
+                var before = drafts.Sum(DraftSize);
+                try
+                {
+                    var type = GetString(item, "type")?.Trim().ToLowerInvariant();
+                    switch (type)
+                    {
+                        case ImportChatActionTypes.LinkReminder:
+                        case ImportChatActionTypes.LinkSettlement:
+                            {
+                                var proposal = BuildObligationLink(item, type, rowsById, extra);
+                                if (proposal is null || proposal.RowIds.Any(linkUsedRows.Contains)) continue;
+                                var targetId = proposal.ReminderId ?? proposal.SettlementId;
+                                var obligation = (type == ImportChatActionTypes.LinkReminder ? extra.Reminders : extra.Settlements)
+                                    .Single(candidate => candidate.Id == targetId);
+                                var key = $"{type}:{targetId}";
+                                var total = obligationAmounts.GetValueOrDefault(key) + proposal.Amount!.Value;
+                                if (total > obligation.RemainingAfterLinks) continue;
+                                obligationAmounts[key] = total;
+                                linkUsedRows.UnionWith(proposal.RowIds);
+                                drafts.Add(new FixedDraft(proposal));
+                                continue;
+                            }
+                        case ImportChatActionTypes.UnlinkObligation:
+                            {
+                                var ids = ReadGuids(item, "rowIds").Distinct().Where(id => rowsById.TryGetValue(id, out var row)
+                                    && (row.ReminderId.HasValue || row.SettlementId.HasValue) && !linkUsedRows.Contains(id)).ToList();
+                                if (ids.Count == 0) continue;
+                                linkUsedRows.UnionWith(ids);
+                                drafts.Add(new FixedDraft(new ImportChatProposal(type,
+                                    "Quitar el vínculo con el recordatorio o la liquidación, sin modificar lo pendiente",
+                                    ids, null, null, null, null, null, null, false)));
+                                continue;
+                            }
+                        case ImportChatActionTypes.ShareExpense:
+                            {
+                                var ids = ReadGuids(item, "rowIds").Distinct().ToList();
+                                if (ids.Count != 1 || !rowsById.TryGetValue(ids[0], out var row) || row.Amount >= 0m ||
+                                    row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0 ||
+                                    row.ReminderId is not null || row.SettlementId is not null ||
+                                    ReadGuid(item, "conceptId") is not { } conceptId ||
+                                    !conceptsById.TryGetValue(conceptId, out var concept) ||
+                                    !string.Equals(concept.Kind, "Expense", StringComparison.OrdinalIgnoreCase) ||
+                                    ReadGuid(item, "counterpartyId") is not { } personId ||
+                                    !TryReadOptionalDecimal(item, "amount", out var amount) || amount is not { } share ||
+                                    share <= 0m || share >= Math.Abs(row.Amount) || decimal.Round(share, 2) != share ||
+                                    ids.Any(id => usedRows.Contains(id) || linkUsedRows.Contains(id)))
+                                    continue;
+                                var person = extra.People.FirstOrDefault(person => person.Id == personId);
+                                if (person is null) continue;
+                                usedRows.UnionWith(ids);
+                                linkUsedRows.UnionWith(ids);
+                                drafts.Add(new FixedDraft(new ImportChatProposal(
+                                    ImportChatActionTypes.ShareExpense,
+                                    $"De {Money(Math.Abs(row.Amount))}: {Money(Math.Abs(row.Amount) - share)} de gasto propio en «{concept.Name}» y {Money(share)} que te debe {person.Name}",
+                                    ids, concept.Id, concept.Name, null, null, null, null, false,
+                                    Amount: share, CounterpartyId: person.Id, CounterpartyName: person.Name)));
+                                continue;
+                            }
+                        case ImportChatActionTypes.AllocatePlanned:
+                            {
+                                var proposal = BuildAllocatePlanned(item, rowsById, plannedById);
+                                if (proposal is null || proposal.RowIds.Any(id => linkUsedRows.Contains(id) || usedRows.Contains(id)))
+                                    continue;
+                                linkUsedRows.UnionWith(proposal.RowIds);
+                                usedRows.UnionWith(proposal.RowIds);
+                                drafts.Add(new FixedDraft(proposal));
+                                continue;
+                            }
+                        case ImportChatActionTypes.LinkPlanned:
+                            {
+                                if (ReadGuid(item, "plannedEntryId") is not { } plannedId ||
+                                    !plannedById.TryGetValue(plannedId, out var planned))
+                                    continue;
 
-                var target = ResolveTarget(type, item, concepts, conceptsById, groupsById);
-                if (target is null) continue;
+                                var plannedDirection = planned.Direction == "in" ? EntryDirection.In : EntryDirection.Out;
+                                var rowIds = ReadGuids(item, "rowIds")
+                                    .Where(id => rowsById.TryGetValue(id, out var row) &&
+                                                 row.PlannedEntryId != plannedId &&
+                                                 row.ReminderId is null && row.SettlementId is null &&
+                                                 row.PlannedAllocations.Count == 0 &&
+                                                 ImportPlannedLinks.LinkError(row.Amount, row.IsSplit, plannedDirection) is null &&
+                                                 !linkUsedRows.Contains(id))
+                                    .Distinct()
+                                    .ToList();
+                                if (rowIds.Count == 0) continue;
+                                linkUsedRows.UnionWith(rowIds);
 
-                // Cada fila sólo puede estar en una propuesta: si el modelo la
-                // repite, vale la primera.
-                var conceptRowIds = ReadGuids(item, "rowIds")
-                    .Where(id => rowsById.TryGetValue(id, out var row) &&
-                        row.SharedExpenseCounterpartyId is null && usedRows.Add(id))
-                    .ToList();
-                if (conceptRowIds.Count == 0) continue;
+                                var sameEntry = drafts.OfType<LinkDraft>().FirstOrDefault(d => d.Planned.Id == plannedId);
+                                if (sameEntry is not null) sameEntry.RowIds.AddRange(rowIds);
+                                else drafts.Add(new LinkDraft(planned, rowIds));
+                                continue;
+                            }
+                        case ImportChatActionTypes.UnlinkPlanned:
+                            {
+                                var rowIds = ReadGuids(item, "rowIds")
+                                    .Where(id => rowsById.TryGetValue(id, out var row) &&
+                                                 (row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0) &&
+                                                 !linkUsedRows.Contains(id))
+                                    .Distinct()
+                                    .ToList();
+                                if (rowIds.Count == 0) continue;
+                                linkUsedRows.UnionWith(rowIds);
 
-                var saveForFuture = ReadBool(item, "saveForFuture");
-                var sameTarget = drafts.OfType<ProposalDraft>()
-                    .FirstOrDefault(d => d.Target.Key == target.Key && d.SaveForFuture == saveForFuture);
-                if (sameTarget is not null) sameTarget.RowIds.AddRange(conceptRowIds);
-                else drafts.Add(new ProposalDraft(target, saveForFuture, conceptRowIds));
+                                var existing = drafts.OfType<UnlinkDraft>().FirstOrDefault();
+                                if (existing is not null) existing.RowIds.AddRange(rowIds);
+                                else drafts.Add(new UnlinkDraft(rowIds));
+                                continue;
+                            }
+                        case ImportChatActionTypes.PayPasanacoQuota:
+                            {
+                                var proposal = BuildPasanacoQuota(item, rowsById, extra.Pasanacos);
+                                if (proposal is null || proposal.RowIds.Any(id => linkUsedRows.Contains(id) ||
+                                        rowsById[id].ReminderId.HasValue || rowsById[id].SettlementId.HasValue) ||
+                                    !usedKeys.Add($"quota-row:{proposal.RowIds[0]}") ||
+                                    !usedKeys.Add($"quota:{proposal.PasanacoParticipantId}:{proposal.PasanacoMonth}"))
+                                    continue;
+                                linkUsedRows.UnionWith(proposal.RowIds);
+                                drafts.Add(new FixedDraft(proposal));
+                                continue;
+                            }
+                        case ImportChatActionTypes.CreatePasanaco:
+                            {
+                                var proposal = BuildCreatePasanaco(item, extra.Pasanacos);
+                                if (proposal is not null && usedKeys.Add("create-pasanaco")) drafts.Add(new FixedDraft(proposal));
+                                continue;
+                            }
+                        case ImportChatActionTypes.SkipPlanned:
+                        case ImportChatActionTypes.UpdatePlanned:
+                        case ImportChatActionTypes.CreateReminder:
+                            {
+                                var proposal = type switch
+                                {
+                                    ImportChatActionTypes.SkipPlanned => BuildSkipPlanned(item, plannedById),
+                                    ImportChatActionTypes.UpdatePlanned => BuildUpdatePlanned(item, plannedById),
+                                    _ => BuildReminder(item, today)
+                                };
+                                if (proposal is null) continue;
+
+                                var key = proposal.Type == ImportChatActionTypes.CreateReminder
+                                    ? $"reminder:{proposal.Title!.ToUpperInvariant()}:{proposal.DueDate:yyyy-MM-dd}"
+                                    : $"{proposal.Type}:{proposal.PlannedEntryId}";
+                                if (usedKeys.Add(key)) drafts.Add(new FixedDraft(proposal));
+                                continue;
+                            }
+                    }
+
+                    var target = ResolveTarget(type, item, concepts, conceptsById, groupsById);
+                    if (target is null) continue;
+
+                    // Cada fila sólo puede estar en una propuesta: si el modelo la
+                    // repite, vale la primera.
+                    var conceptRowIds = ReadGuids(item, "rowIds")
+                        .Where(id => rowsById.TryGetValue(id, out var row) &&
+                            row.SharedExpenseCounterpartyId is null && usedRows.Add(id))
+                        .ToList();
+                    if (conceptRowIds.Count == 0) continue;
+
+                    var saveForFuture = ReadBool(item, "saveForFuture");
+                    var sameTarget = drafts.OfType<ProposalDraft>()
+                        .FirstOrDefault(d => d.Target.Key == target.Key && d.SaveForFuture == saveForFuture);
+                    if (sameTarget is not null) sameTarget.RowIds.AddRange(conceptRowIds);
+                    else drafts.Add(new ProposalDraft(target, saveForFuture, conceptRowIds));
+                }
+                finally
+                {
+                    if (drafts.Sum(DraftSize) == before)
+                        rejected.Add(RejectedActionReason(item, rowsById, extra));
+                }
             }
 
+            if (drafts.Count > MaxProposals)
+                rejected.Add($"Solo se muestran las primeras {MaxProposals} tarjetas. Las demás no se han preparado.");
             var allocatedIds = drafts.OfType<FixedDraft>()
                 .Where(draft => draft.Proposal.Type == ImportChatActionTypes.AllocatePlanned)
                 .SelectMany(draft => draft.Proposal.PlannedAllocations ?? Array.Empty<ImportPlannedAllocationDto>())
                 .Select(link => link.PlannedEntryId).ToHashSet();
+            if (drafts.OfType<FixedDraft>().Any(draft =>
+                draft.Proposal.Type is ImportChatActionTypes.SkipPlanned or ImportChatActionTypes.UpdatePlanned &&
+                draft.Proposal.PlannedEntryId is { } id && allocatedIds.Contains(id)))
+                rejected.Add("No se prepararon cambios para descartar o modificar un previsto que ya tiene un reparto propuesto en esta respuesta.");
             return drafts
                 .Where(draft => draft is not FixedDraft fixedDraft ||
                     fixedDraft.Proposal.Type is not (ImportChatActionTypes.SkipPlanned or ImportChatActionTypes.UpdatePlanned) ||
@@ -797,6 +930,65 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .ToList();
         }
 
+        private static int DraftSize(Draft draft) => draft switch
+        {
+            ProposalDraft proposal => proposal.RowIds.Count,
+            LinkDraft link => link.RowIds.Count,
+            UnlinkDraft unlink => unlink.RowIds.Count,
+            _ => 1
+        };
+
+        private static string RejectedActionReason(JsonElement item,
+            IReadOnlyDictionary<Guid, ImportChatRowContext> rows, ImportChatExtraContext extra)
+        {
+            var type = GetString(item, "type") ?? "(sin tipo)";
+            var prefix = $"No se pudo preparar la tarjeta «{CleanText(type, 60)}»: ";
+            var ids = ReadGuids(item, "rowIds");
+            if (ids.Any(id => !rows.ContainsKey(id))) return prefix + "algún movimiento ya no está disponible en este lote.";
+            if (type is ImportChatActionTypes.LinkReminder or ImportChatActionTypes.LinkSettlement)
+            {
+                var targetId = ReadGuid(item, type == ImportChatActionTypes.LinkReminder ? "reminderId" : "settlementId");
+                var target = (type == ImportChatActionTypes.LinkReminder ? extra.Reminders : extra.Settlements)
+                    .FirstOrDefault(candidate => candidate.Id == targetId);
+                if (target is null) return prefix + "el recordatorio o la liquidación no está entre los pendientes disponibles.";
+                if (ids.Count != 1) return prefix + "indica un solo movimiento.";
+                var row = rows[ids[0]];
+                var error = ImportObligationLinks.AmountError(row.Amount, target.Direction == "in",
+                    target.RemainingAfterLinks, target.Repeat is not (null or "none"));
+                return prefix + (error ?? "el movimiento ya está vinculado, tiene otro reparto o la propuesta se repite. Revisa sus vínculos.");
+            }
+            if (type is ImportChatActionTypes.LinkPlanned or ImportChatActionTypes.SkipPlanned or ImportChatActionTypes.UpdatePlanned)
+            {
+                if (ReadGuid(item, "plannedEntryId") is not { } id || !extra.PlannedEntries.Any(entry => entry.Id == id))
+                    return prefix + "el previsto no está entre los pendientes disponibles.";
+            }
+            return prefix + "faltan datos válidos, el cambio es incompatible con otro vínculo o la acción está duplicada o no está admitida. No se ha aplicado.";
+        }
+
+        private static ImportChatProposal? BuildObligationLink(JsonElement item, string type,
+            IReadOnlyDictionary<Guid, ImportChatRowContext> rows, ImportChatExtraContext extra)
+        {
+            var ids = ReadGuids(item, "rowIds").Distinct().ToList();
+            var isReminder = type == ImportChatActionTypes.LinkReminder;
+            var targetId = ReadGuid(item, isReminder ? "reminderId" : "settlementId");
+            var target = (isReminder ? extra.Reminders : extra.Settlements).FirstOrDefault(candidate => candidate.Id == targetId);
+            if (ids.Count != 1 || !rows.TryGetValue(ids[0], out var row) || target is null ||
+                row.IsSplit || row.PlannedEntryId.HasValue || row.PlannedAllocations.Count > 0 ||
+                row.PasanacoParticipantId is not null || row.ReminderId.HasValue || row.SettlementId.HasValue ||
+                ImportObligationLinks.AmountError(row.Amount, target.Direction == "in", target.RemainingAfterLinks,
+                    target.Repeat is not (null or "none")) is not null)
+                return null;
+            var remaining = target.RemainingAfterLinks - Math.Abs(row.Amount);
+            return new ImportChatProposal(type,
+                $"Vincular el {(row.Amount > 0m ? "cobro" : "pago")} de {Money(Math.Abs(row.Amount))} " +
+                $"a {(isReminder ? "recordatorio" : "liquidación")} «{target.Title}»",
+                ids, null, null, null, null, null, null, false,
+                Amount: Math.Abs(row.Amount), DueDate: target.DueDate, Title: target.Title, Repeat: target.Repeat,
+                Notes: $"Al aplicar el extracto quedarán {Money(remaining)} pendientes de este importe.",
+                IsIncome: target.Direction == "in",
+                ReminderId: isReminder ? target.Id : null, SettlementId: isReminder ? null : target.Id);
+        }
+
         private static ImportChatProposal? BuildAllocatePlanned(
             JsonElement item,
             IReadOnlyDictionary<Guid, ImportChatRowContext> rows,
@@ -804,6 +996,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         {
             var ids = ReadGuids(item, "rowIds").Distinct().ToList();
             if (ids.Count != 1 || !rows.TryGetValue(ids[0], out var row) || row.IsSplit || row.Amount == 0m ||
+                row.ReminderId.HasValue || row.SettlementId.HasValue ||
                 !item.TryGetProperty("allocations", out var parts) || parts.ValueKind != JsonValueKind.Array)
                 return null;
             var allocations = new List<ImportPlannedAllocationDto>();

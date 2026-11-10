@@ -122,19 +122,7 @@ namespace PersonalFinance.Api.Features.Reminders
             var reminder = await FindAsync(userId, id, ct);
             if (reminder.IsDone) return ReminderRules.ToDto(reminder);
 
-            var now = _clock.UtcNow;
-            if (reminder.Repeat == ReminderRepeat.None)
-            {
-                reminder.IsDone = true;
-                reminder.CompletedAt = now;
-            }
-            else
-            {
-                reminder.DueDate = ReminderRules.NextDueDate(reminder);
-                reminder.SnoozedUntil = null;
-            }
-
-            reminder.UpdatedAt = now;
+            ReminderRules.Complete(reminder, _clock.UtcNow);
             await _db.SaveChangesAsync(ct);
             return ReminderRules.ToDto(reminder);
         }

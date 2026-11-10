@@ -1644,11 +1644,20 @@ namespace PersonalFinance.Api.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)");
 
+                    b.Property<DateOnly?>("ReminderDueDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid?>("ReminderId")
+                        .HasColumnType("char(36)");
+
                     b.Property<int>("RowNumber")
                         .HasColumnType("int");
 
                     b.Property<DateOnly?>("SettledDate")
                         .HasColumnType("date");
+
+                    b.Property<Guid?>("SettlementId")
+                        .HasColumnType("char(36)");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -1672,6 +1681,10 @@ namespace PersonalFinance.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PlannedEntryId");
+
+                    b.HasIndex("ReminderId");
+
+                    b.HasIndex("SettlementId");
 
                     b.HasIndex("SuggestedConceptId");
 

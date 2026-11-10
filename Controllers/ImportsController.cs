@@ -12,6 +12,8 @@ using PersonalFinance.Api.Features.Chat;
 using PersonalFinance.Api.Features.Ledger.Commands.SeedChartOfAccounts;
 using PersonalFinance.Api.Features.Ledger.Common;
 using PersonalFinance.Api.Features.Ledger.Dtos;
+using PersonalFinance.Api.Features.Reminders;
+using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Domain.Ledger.Entities;
 using PersonalFinance.Domain.Ledger.Enums;
 
@@ -95,6 +97,27 @@ namespace PersonalFinance.Api.Controllers
                 .ToListAsync(ct);
 
             var rows = batch.Rows.OrderBy(row => row.RowNumber).Select(MapRow).ToList();
+            var reminderIds = rows.Where(row => row.ReminderId.HasValue).Select(row => row.ReminderId!.Value).ToList();
+            var reminderNames = await _db.Reminders.AsNoTracking()
+                .Where(reminder => reminder.UserId == userId.Value && reminderIds.Contains(reminder.Id))
+                .ToDictionaryAsync(reminder => reminder.Id, reminder => reminder.Title, ct);
+            var settlementIds = rows.Where(row => row.SettlementId.HasValue).Select(row => row.SettlementId!.Value).ToList();
+            var settlementNames = await _db.Settlements.AsNoTracking()
+                .Where(settlement => settlement.UserId == userId.Value && settlementIds.Contains(settlement.Id))
+                .Join(_db.Counterparties.Where(person => person.UserId == userId.Value),
+                    settlement => settlement.CounterpartyId, person => person.Id,
+                    (settlement, person) => new { settlement.Id, Name = person.Name + " · " + settlement.Title })
+                .ToDictionaryAsync(settlement => settlement.Id, settlement => settlement.Name, ct);
+            var automaticReminders = batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded
+                ? new Dictionary<Guid, PersonalFinance.Api.Models.Entities.Reminder>()
+                : await ImportObligationLinks.FindAutomaticRemindersAsync(_db, userId.Value, batch.Rows.ToList(), ct);
+            foreach (var row in rows)
+            {
+                row.ObligationName = row.ReminderId is { } reminderId
+                    ? reminderNames.GetValueOrDefault(reminderId)
+                    : row.SettlementId is { } settlementId ? settlementNames.GetValueOrDefault(settlementId) : null;
+                row.AutomaticReminderName = automaticReminders.GetValueOrDefault(row.Id)?.Title;
+            }
             var quotaLabels = await PasanacoImportQuotas.DescribeAsync(_db, userId.Value, batch.Rows, ct);
             foreach (var row in rows)
             {
@@ -270,6 +293,8 @@ namespace PersonalFinance.Api.Controllers
                 return BadRequest(new { message = "La parte que te deben debe ser positiva, tener hasta dos decimales y ser menor que el pago." });
             if (ImportPlannedLinks.HasLink(row))
                 return BadRequest(new { message = "Quita el vínculo con los previstos antes de compartir este gasto." });
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita el vínculo con el recordatorio o la liquidación antes de compartir este gasto." });
             if (!await _db.Counterparties.AnyAsync(person =>
                 person.Id == dto.CounterpartyId && person.UserId == userId.Value && person.IsActive, ct))
                 return BadRequest(new { message = "La persona no existe o no está activa. Puedes añadirla en Liquidaciones." });
@@ -330,6 +355,8 @@ namespace PersonalFinance.Api.Controllers
                 return Conflict(new { message = "Solo puedes asignar una cuota a un movimiento pendiente de importar." });
             if (row.Amount <= 0m)
                 return BadRequest(new { message = "Solo un cobro puede pagar la cuota de un pasanaco." });
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita el vínculo con el recordatorio o la liquidación antes de asignar una cuota." });
             if (string.IsNullOrWhiteSpace(dto.ParticipantId) ||
                 !DateOnly.TryParseExact(dto.Month + "-01", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var month))
                 return BadRequest(new { message = "Indica el participante y el mes de la cuota." });
@@ -391,6 +418,8 @@ namespace PersonalFinance.Api.Controllers
                 return Conflict("Solo se pueden dividir filas pendientes de un lote sin aplicar.");
             if (row.Allocations.Any(part => part.CounterpartyId.HasValue))
                 return BadRequest(new { message = "Usa Editar reparto para cambiar el gasto compartido." });
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita el vínculo con el recordatorio o la liquidación antes de dividir el movimiento." });
             if (row.Amount == 0m)
                 return BadRequest("No se puede dividir un movimiento de importe cero.");
             if (dto.Allocations is null || dto.Allocations.Count is < 2 or > 3)
@@ -781,6 +810,8 @@ namespace PersonalFinance.Api.Controllers
                         : null)
                 {
                     PlannedEntryId = r.PlannedEntryId,
+                    ReminderId = r.ReminderId,
+                    SettlementId = r.SettlementId,
                     PlannedAllocations = r.PlannedAllocations.Select(link => new ImportPlannedAllocationDto
                     {
                         PlannedEntryId = link.PlannedEntryId,
@@ -808,11 +839,43 @@ namespace PersonalFinance.Api.Controllers
             var planned = batch.Status == ImportBatchStatus.Applied
                 ? new List<ImportPlannedCandidateDto>()
                 : await LoadPlannedCandidatesAsync(userId.Value, batch, ct, searchTerms);
+            var reminders = await _db.Reminders.AsNoTracking()
+                .Where(reminder => reminder.UserId == userId.Value && !reminder.IsDone && reminder.Amount > 0m)
+                .ToListAsync(ct);
+            var openSettlements = await ImportObligationLinks.LoadOpenSettlementsAsync(_db, userId.Value, ct);
+            var people = await _db.Counterparties.AsNoTracking()
+                .Where(person => person.UserId == userId.Value && person.IsActive)
+                .Select(person => new ImportChatPersonContext(person.Id, person.Name)).ToListAsync(ct);
+            var personNames = people.ToDictionary(person => person.Id, person => person.Name);
+            var pendingRows = batch.Rows.Where(row => row.Status == ImportRowStatus.Pending).ToList();
+            ImportChatObligationContext Obligation(Guid id, string title, string direction, DateOnly dueDate,
+                decimal amount, string? repeat, bool isReminder)
+            {
+                var linked = pendingRows.Where(row => isReminder ? row.ReminderId == id : row.SettlementId == id).ToList();
+                return new(id, title, direction, dueDate, amount, repeat,
+                    linked.Sum(row => Math.Abs(row.Amount)), linked.Select(row => row.Id).ToList());
+            }
+            IReadOnlyList<ImportChatObligationContext> RankObligations(IEnumerable<ImportChatObligationContext> items) =>
+                items.OrderByDescending(item => ImportPendingRelevance.Score(item.Title, item.Amount, searchTerms, batch.Rows))
+                    .ThenByDescending(item => item.LinkedRowIds.Count > 0)
+                    .ThenBy(item => batch.Rows.Count == 0 ? 0 :
+                        batch.Rows.Min(row => Math.Abs(item.DueDate.DayNumber - row.ValueDate.DayNumber)))
+                    .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase).ToList();
             extra = extra with
             {
-                People = await _db.Counterparties.AsNoTracking()
-                    .Where(person => person.UserId == userId.Value && person.IsActive)
-                    .Select(person => new ImportChatPersonContext(person.Id, person.Name)).ToListAsync(ct),
+                People = people,
+                Reminders = RankObligations(reminders.Select(reminder => Obligation(
+                    reminder.Id, reminder.Title, reminder.IsIncome ? "in" : "out",
+                    reminder.DueDate, reminder.Amount!.Value, ReminderRules.ToApi(reminder.Repeat), true))),
+                Settlements = RankObligations(openSettlements.Values.Select(settlement =>
+                {
+                    var remaining = SettlementForecast.Remaining(settlement);
+                    return Obligation(settlement.Id,
+                        $"{personNames.GetValueOrDefault(settlement.CounterpartyId)} · {settlement.Title}",
+                        remaining > 0m ? "in" : "out",
+                        settlement.ExpectedDate ?? SettlementForecast.DefaultDate(settlement),
+                        Math.Abs(remaining), null, false);
+                })),
                 PlannedEntries = planned
                     .Select(p => new ImportChatPlannedContext(
                         p.Id,
@@ -859,6 +922,8 @@ namespace PersonalFinance.Api.Controllers
                         Nature = p.Nature,
                         SaveForFuture = p.SaveForFuture,
                         PlannedEntryId = p.PlannedEntryId,
+                        ReminderId = p.ReminderId,
+                        SettlementId = p.SettlementId,
                         PlannedEntryName = p.PlannedEntryName,
                         PlannedAllocations = p.PlannedAllocations ?? Array.Empty<ImportPlannedAllocationDto>(),
                         Amount = p.Amount,
@@ -929,6 +994,8 @@ namespace PersonalFinance.Api.Controllers
 
             if (row.Status != ImportRowStatus.Pending)
                 return BadRequest(new { message = "Este movimiento ya no está pendiente; no se puede descontar de un previsto." });
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita primero el vínculo con el recordatorio o la liquidación." });
 
             var planned = await _db.LedgerEntries
                 .AsNoTracking()
@@ -991,6 +1058,8 @@ namespace PersonalFinance.Api.Controllers
                 return NoContent();
             }
             var ids = links.Select(link => link.PlannedEntryId).ToList();
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita primero el vínculo con el recordatorio o la liquidación." });
             var entries = await _db.LedgerEntries
                 .Include(entry => entry.Concept)
                 .Include(entry => entry.Period)
@@ -1025,6 +1094,36 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = entries[links[0].PlannedEntryId].ConceptId;
             row.SuggestionSource = "manual";
             row.SuggestionConfidence = 1m;
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpPut("{batchId:guid}/rows/{rowId:guid}/obligation")]
+        public async Task<IActionResult> SetRowObligation(
+            Guid batchId, Guid rowId, [FromBody] SetImportRowObligationDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var batch = await _db.ImportBatches.Include(item => item.Rows).ThenInclude(row => row.Allocations)
+                .Include(item => item.Rows).ThenInclude(row => row.PlannedAllocations)
+                .FirstOrDefaultAsync(item => item.Id == batchId && item.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict(new { message = "El lote ya se ha aplicado o está descartado." });
+            var row = batch.Rows.FirstOrDefault(row => row.Id == rowId && row.UserId == userId.Value);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending)
+                return Conflict(new { message = "El movimiento ya no está pendiente de importar." });
+            row.ReminderId = dto.ReminderId;
+            row.ReminderDueDate = dto.ReminderId.HasValue ? dto.ReminderDueDate : null;
+            row.SettlementId = dto.SettlementId;
+            if (!ImportObligationLinks.HasLink(row))
+            {
+                await _db.SaveChangesAsync(ct);
+                return NoContent();
+            }
+            var validation = await ImportObligationLinks.ValidateAsync(_db, userId.Value, batch.Rows, ct);
+            if (validation.Error is { } error) return BadRequest(new { message = error });
             await _db.SaveChangesAsync(ct);
             return NoContent();
         }
@@ -1093,7 +1192,9 @@ namespace PersonalFinance.Api.Controllers
                         LinkedRowIds = linked.Select(row => row.Id).ToList()
                     };
                 })
-                .OrderByDescending(candidate => searchTerms is not null &&
+                .OrderByDescending(candidate => ImportPendingRelevance.Score(
+                    $"{candidate.ConceptName} {candidate.Description}", candidate.ForecastAmount, searchTerms, batch.Rows))
+                .ThenByDescending(candidate => searchTerms is not null &&
                     searchTerms.Amounts.Any(range =>
                         (candidate.ForecastAmount >= range.Min && candidate.ForecastAmount <= range.Max) ||
                         (candidate.RemainingAfterLinks >= range.Min && candidate.RemainingAfterLinks <= range.Max)))
@@ -1124,7 +1225,7 @@ namespace PersonalFinance.Api.Controllers
 
             var bankLoans = await _db.Loans
                 .AsNoTracking()
-                .Where(l => l.UserId == userId && l.Status.ToLower() != "paid")
+                .Where(l => l.UserId == userId && l.Status.ToLower() == "active" && l.OutstandingAmount > 0m)
                 .OrderBy(l => l.Name)
                 .Take(50)
                 .Select(l => new { l.Type, l.Name, l.OutstandingAmount, l.DueDate })
@@ -1668,6 +1769,9 @@ namespace PersonalFinance.Api.Controllers
             ConfirmedConceptId = row.ConfirmedConceptId,
             SuggestionSource = row.SuggestionSource,
             PlannedEntryId = row.PlannedEntryId,
+            ReminderId = row.ReminderId,
+            ReminderDueDate = row.ReminderDueDate,
+            SettlementId = row.SettlementId,
             PasanacoParticipantId = row.PasanacoParticipantId,
             PasanacoQuotaMonth = row.PasanacoQuotaMonth,
             PlannedAllocations = row.PlannedAllocations

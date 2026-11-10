@@ -68,6 +68,9 @@ namespace PersonalFinance.Domain.Ledger.Entities
         /// its own paid entry; the planned entry is reduced, or closed when covered.
         /// </summary>
         public Guid? PlannedEntryId { get; set; }
+        public Guid? ReminderId { get; set; }
+        public DateOnly? ReminderDueDate { get; set; }
+        public Guid? SettlementId { get; set; }
         /// <summary>
         /// Pasanaco participant whose monthly quota this income row collects. The quota is
         /// marked as paid when the batch is applied.

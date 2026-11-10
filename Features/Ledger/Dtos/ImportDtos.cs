@@ -28,6 +28,11 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         /// <summary>Planned entry this row will be deducted from when the batch is applied (always serialized, null if none).</summary>
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)]
         public Guid? PlannedEntryId { get; set; }
+        public Guid? ReminderId { get; set; }
+        public DateOnly? ReminderDueDate { get; set; }
+        public Guid? SettlementId { get; set; }
+        public string? ObligationName { get; set; }
+        public string? AutomaticReminderName { get; set; }
         public IReadOnlyList<ImportRowAllocationDto> Allocations { get; set; } = Array.Empty<ImportRowAllocationDto>();
         public IReadOnlyList<ImportPlannedAllocationDto> PlannedAllocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
         /// <summary>Pasanaco participant whose quota this row collects; marked as paid when the batch is applied.</summary>
@@ -77,6 +82,13 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         /// <summary>Planned entry to deduct the row from; null removes the link.</summary>
         public Guid? PlannedEntryId { get; set; }
+    }
+
+    public sealed class SetImportRowObligationDto
+    {
+        public Guid? ReminderId { get; set; }
+        public DateOnly? ReminderDueDate { get; set; }
+        public Guid? SettlementId { get; set; }
     }
 
     public sealed class ImportPlannedAllocationDto
@@ -204,6 +216,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     /// <summary>Cambio propuesto por el asistente; no se aplica hasta que el usuario lo confirma.</summary>
     public sealed class ImportChatProposedActionDto
     {
+        public Guid? ReminderId { get; set; }
+        public Guid? SettlementId { get; set; }
         /// <summary>
         /// "set_row_concept", "create_concept", "link_planned", "unlink_planned",
         /// "skip_planned", "update_planned", "create_reminder", "pay_pasanaco_quota" o "create_pasanaco".
