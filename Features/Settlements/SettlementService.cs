@@ -681,7 +681,8 @@ namespace PersonalFinance.Api.Features.Settlements
 
         /// <param name="expectedDate">
         /// Día en que se espera el dinero; coloca la liquidación en la previsión. Si no
-        /// viene, se mantiene el que tuviera o, si no tenía, dentro de 7 días.
+        /// viene, se mantiene el que tuviera o, si no tenía, dentro de 7 días sin pasar del
+        /// final del periodo si todavía no ha terminado.
         /// </param>
         public async Task<SettlementDetailDto> MarkSentAsync(
             Guid userId, Guid id, DateOnly? expectedDate, CancellationToken ct)
@@ -701,7 +702,7 @@ namespace PersonalFinance.Api.Features.Settlements
             settlement.SentAt = _clock.UtcNow;
             settlement.ExpectedDate = expectedDate
                 ?? settlement.ExpectedDate
-                ?? DateOnly.FromDateTime(_clock.UtcNow).AddDays(SettlementForecast.DefaultDaysToCollect);
+                ?? SettlementForecast.DefaultSentDate(settlement, DateOnly.FromDateTime(_clock.UtcNow));
             settlement.UpdatedAt = _clock.UtcNow;
             await _db.SaveChangesAsync(ct);
 

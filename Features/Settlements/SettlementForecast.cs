@@ -37,8 +37,18 @@ namespace PersonalFinance.Api.Features.Settlements
         public static decimal Remaining(Settlement settlement) =>
             Math.Round(SettlementMessageBuilder.Totals(settlement).Pending, 2, MidpointRounding.AwayFromZero);
 
-        public static DateOnly DefaultDate(Settlement settlement) =>
-            settlement.PeriodEnd.AddDays(DefaultDaysToCollect);
+        public static DateOnly DefaultDate(Settlement settlement)
+        {
+            var date = settlement.PeriodEnd.AddDays(-DefaultDaysToCollect);
+            return date < settlement.PeriodStart ? settlement.PeriodStart : date;
+        }
+
+        /// <summary>Hoy más unos días, sin pasarse del final del periodo si todavía no ha terminado.</summary>
+        public static DateOnly DefaultSentDate(Settlement settlement, DateOnly today)
+        {
+            var date = today.AddDays(DefaultDaysToCollect);
+            return today <= settlement.PeriodEnd && date > settlement.PeriodEnd ? settlement.PeriodEnd : date;
+        }
 
         /// <summary>
         /// One person's settlements still waiting for money, oldest first: not paid, not

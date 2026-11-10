@@ -102,7 +102,7 @@ namespace PersonalFinance.Api.Features.Settlements
         string? ClosingNote,
         DateOnly? ExpectedDate = null);
 
-    /// <param name="ExpectedDate">Día en que se espera cobrar o pagar. Si no viene, dentro de 7 días.</param>
+    /// <param name="ExpectedDate">Día en que se espera cobrar o pagar. Si no viene, dentro de 7 días sin pasar del final del periodo.</param>
     public sealed record MarkSentDto(DateOnly? ExpectedDate);
 
     public sealed record CloseSettlementLoanDto(string Resolution);
