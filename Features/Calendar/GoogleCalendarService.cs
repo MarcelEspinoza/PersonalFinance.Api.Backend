@@ -73,7 +73,7 @@ namespace PersonalFinance.Api.Features.Calendar
         public async Task<string> StartConnectionAsync(Guid userId, string returnPath, CancellationToken ct)
         {
             settings.EnsureConfigured();
-            if (returnPath is not ("/zeus" or "/pasanaco" or "/reminders"))
+            if (returnPath is not ("/zeus" or "/pasanaco" or "/reminders" or "/settings"))
                 throw new BusinessRuleException("La página de retorno no es válida.");
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             var connection = await db.GoogleCalendarConnections.FirstOrDefaultAsync(item => item.UserId == userId, ct);

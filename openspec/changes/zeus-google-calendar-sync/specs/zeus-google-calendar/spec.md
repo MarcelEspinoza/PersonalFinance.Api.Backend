@@ -62,6 +62,14 @@ The system SHALL expose one normal connection/disconnection control in the globa
 - **WHEN** synchronization is pending or an error is reported
 - **THEN** the panel shows synchronization in progress or an enabled retry control, never a successful synchronized state
 
+#### Scenario: Source page is opened
+- **WHEN** the user opens Zeus, Pasanaco or Reminders
+- **THEN** only compact synchronization status/action is shown, without the detailed Google description or color form
+
+#### Scenario: Google settings are opened
+- **WHEN** the user selects Settings > Google
+- **THEN** the app shows Google integration details and color preferences, and any authorization started there returns to that tab
+
 ### Requirement: Per-user event colors
 The system SHALL let each authenticated user choose valid Google Calendar colors separately for Zeus and pasanaco and persist these preferences across reloads, disconnection and reconnection.
 

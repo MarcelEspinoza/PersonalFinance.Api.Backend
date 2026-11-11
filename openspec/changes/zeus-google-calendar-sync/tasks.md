@@ -36,3 +36,12 @@ Live Google synchronization remains unverified until the user supplies OAuth con
 The user reports that Google is now connected and events synchronize. The new status/color behavior still requires deployment verification after explicit publication approval.
 
 Backend/dependent compilation, frontend production build, focused lint, EF model consistency and OpenSpec validation passed. Generated SQL only adds two integer color columns with defaults 3 and 10; the token TEXT mapping is unchanged. Frontend type-checking still reports the same six pre-existing errors documented above, with no new diagnostics.
+
+## 6. Settings-only Google preferences
+
+- [x] 6.1 Move Google explanations and event color preferences to Settings > Google, keeping only compact sync status/action on source pages.
+- [x] 6.2 Restore the Google settings tab after OAuth using a fixed allowlisted return path and preserve the global account control.
+- [x] 6.3 Compile/build/lint the scoped change without tests and review OAuth query preservation.
+- [x] 6.4 Obtain approval for exact commit messages/files before publication.
+
+Backend/dependent compilation, the frontend production build and focused lint passed for the relocation. The existing type-check and Pasanaco lint diagnostics above remain unchanged. No migration was added and no tests were written or run.

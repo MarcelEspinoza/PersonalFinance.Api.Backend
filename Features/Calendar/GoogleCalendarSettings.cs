@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.WebUtilities;
 using PersonalFinance.Api.Common.Exceptions;
 
 namespace PersonalFinance.Api.Features.Calendar
@@ -39,8 +40,9 @@ namespace PersonalFinance.Api.Features.Calendar
         public string ReturnUrl(string returnPath, string result)
         {
             EnsureConfigured();
-            var path = returnPath is "/pasanaco" or "/reminders" ? returnPath : "/zeus";
-            return new Uri(new Uri(FrontendUrl), path + "?googleCalendar=" + result).AbsoluteUri;
+            var path = returnPath is "/pasanaco" or "/reminders" or "/settings" ? returnPath : "/zeus";
+            var url = QueryHelpers.AddQueryString(new Uri(new Uri(FrontendUrl), path).AbsoluteUri, "googleCalendar", result);
+            return path == "/settings" ? QueryHelpers.AddQueryString(url, "tab", "google") : url;
         }
 
         private static bool IsWebUri(string value) =>

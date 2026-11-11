@@ -13,6 +13,7 @@ Zeus attendance and monthly pasanaco recipients are already recorded in the app.
 - Keep synchronization durable, retry failures and show connection/pending/error status without changing finance behavior.
 - Show one global Google connection control, a disabled Synchronized state when current, and retry controls for failures.
 - Let each user choose separate Google event colors for Zeus and pasanaco, updating existing owned events.
+- Keep detailed Google preferences in Settings > Google; source pages expose only compact synchronization status/actions.
 
 ## Capabilities
 
