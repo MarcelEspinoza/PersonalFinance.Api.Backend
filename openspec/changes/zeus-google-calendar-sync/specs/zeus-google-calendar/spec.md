@@ -50,3 +50,25 @@ The system SHALL stop synchronization and clear locally stored Google credential
 #### Scenario: Connection is removed
 - **WHEN** the user confirms disconnection
 - **THEN** new work is not sent to Google and the UI explains that existing events remain
+
+### Requirement: Global connection and explicit synchronization state
+The system SHALL expose one normal connection/disconnection control in the global application header. Page panels SHALL display Synchronized only after completed work with no pending items or errors, disable that status control when current, and allow retry after failures.
+
+#### Scenario: Connected account is current
+- **WHEN** synchronization has completed without pending work or reported errors
+- **THEN** the panel shows a disabled Synchronized control and disconnection is available only in the global header
+
+#### Scenario: Work is pending or failed
+- **WHEN** synchronization is pending or an error is reported
+- **THEN** the panel shows synchronization in progress or an enabled retry control, never a successful synchronized state
+
+### Requirement: Per-user event colors
+The system SHALL let each authenticated user choose valid Google Calendar colors separately for Zeus and pasanaco and persist these preferences across reloads, disconnection and reconnection.
+
+#### Scenario: Existing events are recolored
+- **WHEN** a user saves different event colors
+- **THEN** existing and future owned events acquire the selected source-specific colors without duplicate creation or changes to Google Tasks
+
+#### Scenario: Invalid color is submitted
+- **WHEN** a color outside the supported Google event palette is submitted
+- **THEN** the request fails explicitly without changing preferences or existing events

@@ -11,6 +11,8 @@ Zeus attendance and monthly pasanaco recipients are already recorded in the app.
 - Schedule each pasanaco recipient's delivery as an all-day event on the fifth of their assigned month.
 - Synchronize reminders, including edits, completion and deletions, into a separate PersonalFinance Google Tasks list.
 - Keep synchronization durable, retry failures and show connection/pending/error status without changing finance behavior.
+- Show one global Google connection control, a disabled Synchronized state when current, and retry controls for failures.
+- Let each user choose separate Google event colors for Zeus and pasanaco, updating existing owned events.
 
 ## Capabilities
 

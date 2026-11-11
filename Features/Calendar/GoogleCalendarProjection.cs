@@ -10,8 +10,9 @@ namespace PersonalFinance.Api.Features.Calendar
 {
     public sealed class GoogleCalendarProjection(AppDbContext db, GoogleCalendarSettings settings)
     {
-        public async Task ReconcileAsync(Guid userId, DateTime now, CancellationToken ct)
+        public async Task ReconcileAsync(GoogleCalendarConnection connection, DateTime now, CancellationToken ct)
         {
+            var userId = connection.UserId;
             var desired = new Dictionary<string, string>(StringComparer.Ordinal);
             var usages = await db.ZeusHourUsages.AsNoTracking().Where(item => item.UserId == userId).ToListAsync(ct);
             foreach (var usage in usages)
@@ -19,7 +20,7 @@ namespace PersonalFinance.Api.Features.Calendar
                 var key = "zeus:" + usage.Id.ToString("N");
                 var duration = $"{usage.Minutes / 60} h {usage.Minutes % 60:00} min";
                 desired[key] = Event(userId, key, $"Zeus · Guardería · {duration}", usage.Date,
-                    usage.StartTime, usage.EndTime, usage.Note);
+                    usage.StartTime, usage.EndTime, usage.Note, connection.ZeusColorId);
             }
             var pasanacos = await db.Pasanacos.AsNoTracking().Include(item => item.Participants)
                 .Where(item => item.UserId == userId).ToListAsync(ct);
@@ -33,7 +34,8 @@ namespace PersonalFinance.Api.Features.Calendar
                         .AddMonths(participant.AssignedNumber - 1);
                     var key = "pasanaco:" + participant.Id;
                     desired[key] = Event(userId, key, $"Entregar pasanaco a {participant.Name}", date,
-                        null, null, $"Pasanaco: {pasanaco.Name}. Este evento no confirma que se haya pagado.");
+                        null, null, $"Pasanaco: {pasanaco.Name}. Este evento no confirma que se haya pagado.",
+                        connection.PasanacoColorId);
                 }
             }
             var reminders = await db.Reminders.AsNoTracking().Where(item => item.UserId == userId).ToListAsync(ct);
@@ -84,7 +86,7 @@ namespace PersonalFinance.Api.Features.Calendar
         }
 
         private string Event(Guid userId, string source, string title, DateOnly date,
-            TimeOnly? start, TimeOnly? end, string? note)
+            TimeOnly? start, TimeOnly? end, string? note, int colorId)
         {
             object startValue;
             object endValue;
@@ -106,6 +108,7 @@ namespace PersonalFinance.Api.Features.Calendar
             return JsonSerializer.Serialize(new
             {
                 summary = title,
+                colorId = colorId.ToString(CultureInfo.InvariantCulture),
                 description = note ?? "Sincronizado desde PersonalFinance.",
                 start = startValue,
                 end = endValue,

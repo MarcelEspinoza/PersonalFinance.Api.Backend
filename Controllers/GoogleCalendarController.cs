@@ -13,6 +13,15 @@ namespace PersonalFinance.Api.Controllers
         public string ReturnPath { get; set; } = "/zeus";
     }
 
+    public sealed class UpdateGoogleCalendarColorsDto
+    {
+        [Range(1, 11)]
+        public int ZeusColorId { get; set; }
+
+        [Range(1, 11)]
+        public int PasanacoColorId { get; set; }
+    }
+
     [ApiController]
     [Authorize]
     [Route("api/calendar/google")]
@@ -32,6 +41,16 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
             return Ok(new { authorizationUrl = await service.StartConnectionAsync(userId.Value, dto.ReturnPath, ct) });
+        }
+
+        [HttpPut("colors")]
+        public async Task<ActionResult<GoogleCalendarStateDto>> UpdateColors(
+            UpdateGoogleCalendarColorsDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            await service.UpdateColorsAsync(userId.Value, dto.ZeusColorId, dto.PasanacoColorId, ct);
+            return Ok(await service.GetStateAsync(userId.Value, ct));
         }
 
         [AllowAnonymous]

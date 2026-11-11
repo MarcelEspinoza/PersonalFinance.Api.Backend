@@ -13,6 +13,8 @@ namespace PersonalFinance.Api.Data.Configuration
                 entity.Property(item => item.AccessToken).HasMaxLength(8192).HasColumnType("text");
                 entity.Property(item => item.RefreshToken).HasMaxLength(8192).HasColumnType("text");
                 entity.Property(item => item.TaskListId).HasMaxLength(1024);
+                entity.Property(item => item.ZeusColorId).HasDefaultValue(GoogleCalendarConnection.DefaultZeusColorId);
+                entity.Property(item => item.PasanacoColorId).HasDefaultValue(GoogleCalendarConnection.DefaultPasanacoColorId);
                 entity.Property(item => item.LastError).HasMaxLength(500);
             });
             builder.Entity<GoogleCalendarAuthorization>(entity =>

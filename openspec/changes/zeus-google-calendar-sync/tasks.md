@@ -25,3 +25,14 @@ Backend/dependent compilation and the frontend production build passed. The gene
 Global frontend type-checking is blocked by six existing errors: TransactionModal account nullability and missing `@/lib/utils` alias declarations. PasanacoPage has two existing explicit-any lint errors and two existing warnings outside this change. The same diagnostics were reproduced against committed HEAD sources without modifying the worktree.
 
 Live Google synchronization remains unverified until the user supplies OAuth configuration and authorizes an account. No tests were written or run.
+
+## 5. Global controls, synchronization state and event colors
+
+- [x] 5.1 Persist validated per-user Zeus/pasanaco color preferences with an additive migration and reconcile existing event colors.
+- [x] 5.2 Share Google state across the layout, move normal connection controls to the global header, and show disabled Synchronized/in-progress states with explicit error retry.
+- [x] 5.3 Add source-specific color controls, compile/build/lint the changed code without tests, and inspect generated migration SQL.
+- [x] 5.4 Present exact commit messages and files and obtain publication approval.
+
+The user reports that Google is now connected and events synchronize. The new status/color behavior still requires deployment verification after explicit publication approval.
+
+Backend/dependent compilation, frontend production build, focused lint, EF model consistency and OpenSpec validation passed. Generated SQL only adds two integer color columns with defaults 3 and 10; the token TEXT mapping is unchanged. Frontend type-checking still reports the same six pre-existing errors documented above, with no new diagnostics.

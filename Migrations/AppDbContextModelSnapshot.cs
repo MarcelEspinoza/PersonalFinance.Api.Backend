@@ -563,6 +563,11 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<bool>("NeedsReconnect")
                         .HasColumnType("tinyint(1)");
 
+                    b.Property<int>("PasanacoColorId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(10);
+
                     b.Property<string>("RefreshToken")
                         .HasMaxLength(8192)
                         .HasColumnType("text");
@@ -573,6 +578,11 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<string>("TaskListId")
                         .HasMaxLength(1024)
                         .HasColumnType("varchar(1024)");
+
+                    b.Property<int>("ZeusColorId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(3);
 
                     b.HasKey("UserId");
 

@@ -13,7 +13,7 @@ namespace PersonalFinance.Api.Features.Calendar
 {
     public sealed record GoogleCalendarStateDto(
         bool Configured, bool Connected, bool NeedsReconnect, int PendingCount,
-        DateTime? LastSyncedAt, string? Error, string TimeZone);
+        DateTime? LastSyncedAt, string? Error, string TimeZone, int ZeusColorId, int PasanacoColorId);
 
     public sealed class GoogleCalendarService(
         AppDbContext db, GoogleCalendarSettings settings, GoogleCalendarTokenProtector protector,
@@ -31,7 +31,43 @@ namespace PersonalFinance.Api.Features.Calendar
                 ? DateTime.SpecifyKind(last, DateTimeKind.Utc) : (DateTime?)null;
             return new(settings.IsConfigured, connection?.RefreshToken is not null && !connection.NeedsReconnect,
                 connection?.NeedsReconnect ?? false, await pending.CountAsync(ct), lastSyncedAt,
-                connection?.LastError ?? pendingError, settings.TimeZone);
+                connection?.LastError ?? pendingError, settings.TimeZone,
+                connection?.ZeusColorId ?? GoogleCalendarConnection.DefaultZeusColorId,
+                connection?.PasanacoColorId ?? GoogleCalendarConnection.DefaultPasanacoColorId);
+        }
+
+        public async Task UpdateColorsAsync(Guid userId, int zeusColorId, int pasanacoColorId, CancellationToken ct)
+        {
+            if (zeusColorId is < 1 or > 11 || pasanacoColorId is < 1 or > 11)
+                throw new BusinessRuleException("Selecciona colores válidos de Google Calendar.");
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            var connection = await db.GoogleCalendarConnections.FirstOrDefaultAsync(item => item.UserId == userId, ct);
+            if (connection is null)
+            {
+                connection = new GoogleCalendarConnection { UserId = userId };
+                db.GoogleCalendarConnections.Add(connection);
+            }
+            else if (connection.ZeusColorId == zeusColorId && connection.PasanacoColorId == pasanacoColorId)
+            {
+                await transaction.CommitAsync(ct);
+                return;
+            }
+            connection.ZeusColorId = zeusColorId;
+            connection.PasanacoColorId = pasanacoColorId;
+            connection.Generation = Guid.NewGuid();
+            connection.LeaseId = null;
+            connection.LeaseUntil = null;
+            connection.LastSyncedAt = null;
+            connection.LastError = null;
+            connection.Attempts = 0;
+            connection.RetryAt = null;
+            await db.GoogleSyncItems.Where(item => item.UserId == userId && item.ResourceKind == "event")
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.NeedsSync, true)
+                    .SetProperty(item => item.RetryAt, clock.UtcNow)
+                    .SetProperty(item => item.Attempts, 0)
+                    .SetProperty(item => item.LastError, (string?)null), ct);
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
         }
 
         public async Task<string> StartConnectionAsync(Guid userId, string returnPath, CancellationToken ct)
@@ -190,7 +226,7 @@ namespace PersonalFinance.Api.Features.Calendar
             {
                 await using (var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct))
                 {
-                    await projection.ReconcileAsync(userId, now, ct);
+                    await projection.ReconcileAsync(connection, now, ct);
                     await transaction.CommitAsync(ct);
                 }
                 var pending = await db.GoogleSyncItems.AsNoTracking().Where(item => item.UserId == userId

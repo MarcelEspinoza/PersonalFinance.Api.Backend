@@ -2,11 +2,16 @@ namespace PersonalFinance.Api.Models.Entities
 {
     public sealed class GoogleCalendarConnection
     {
+        public const int DefaultZeusColorId = 3;
+        public const int DefaultPasanacoColorId = 10;
+
         public Guid UserId { get; set; }
         public Guid Generation { get; set; } = Guid.NewGuid();
         public string? AccessToken { get; set; }
         public string? RefreshToken { get; set; }
         public string? TaskListId { get; set; }
+        public int ZeusColorId { get; set; } = DefaultZeusColorId;
+        public int PasanacoColorId { get; set; } = DefaultPasanacoColorId;
         public DateTime? AccessTokenExpiresAt { get; set; }
         public DateTime? ConnectedAt { get; set; }
         public DateTime? LastSyncedAt { get; set; }
