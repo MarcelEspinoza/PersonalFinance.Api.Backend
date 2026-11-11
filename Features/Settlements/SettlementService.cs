@@ -166,7 +166,7 @@ namespace PersonalFinance.Api.Features.Settlements
                     loan.Id,
                     loan.Name,
                     GetActiveLoanBalance(loan),
-                    loan.Status))
+                    loan.ArchivedAt.HasValue ? "archived" : loan.Status))
                 .ToList();
         }
 
@@ -927,7 +927,9 @@ namespace PersonalFinance.Api.Features.Settlements
             await _db.Settlements
                 .Where(s => s.UserId == userId
                     && s.CounterpartyId == counterpartyId
-                    && s.LinkedLoanId.HasValue)
+                    && s.LinkedLoanId.HasValue
+                    && _db.Loans.Any(loan => loan.Id == s.LinkedLoanId
+                        && loan.UserId == userId && loan.ArchivedAt == null))
                 .OrderByDescending(s => s.PeriodEnd)
                 .ThenByDescending(s => s.CreatedAt)
                 .Select(s => s.LinkedLoanId)
@@ -961,7 +963,8 @@ namespace PersonalFinance.Api.Features.Settlements
                     : GetActiveLoanBalance(settlement.LinkedLoanId, loansById);
 
         private static decimal GetActiveLoanBalance(PersonalFinance.Api.Models.Entities.Loan loan) =>
-            loan.Status.Equals("paid", StringComparison.OrdinalIgnoreCase)
+            loan.ArchivedAt.HasValue
+                || loan.Status.Equals("paid", StringComparison.OrdinalIgnoreCase)
                 || loan.Status.Equals("cancelled", StringComparison.OrdinalIgnoreCase)
                 ? 0m
                 : Math.Max(0m, loan.OutstandingAmount);

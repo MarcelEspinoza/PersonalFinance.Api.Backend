@@ -723,6 +723,9 @@ namespace PersonalFinance.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("char(36)");
 
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("datetime(6)");
+
                     b.Property<int>("CategoryId")
                         .HasColumnType("int");
 

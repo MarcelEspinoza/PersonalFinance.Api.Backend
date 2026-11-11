@@ -8,6 +8,8 @@ using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Models.Dtos;
 using PersonalFinance.Api.Models.Entities;
 using PersonalFinance.Api.Services.Contracts;
+using PersonalFinance.Api.Features.Settlements;
+using PersonalFinance.Api.Models.Enums;
 
 namespace PersonalFinance.Api.Services
 {
@@ -27,6 +29,87 @@ namespace PersonalFinance.Api.Services
 
         public async Task<Loan?> GetLoanAsync(Guid id, Guid userId) =>
             await _context.Loans.Include(l => l.Payments).FirstOrDefaultAsync(l => l.Id == id && l.UserId == userId);
+
+        public async Task<bool> SetArchivedAsync(
+            Guid userId, IReadOnlyCollection<Guid> loanIds, bool archived, CancellationToken ct)
+        {
+            var ids = loanIds.Distinct().ToArray();
+            var loans = await _context.Loans
+                .Where(loan => loan.UserId == userId && ids.Contains(loan.Id))
+                .ToListAsync(ct);
+            if (loans.Count != ids.Length) return false;
+            var now = DateTimeOffset.UtcNow;
+            foreach (var loan in loans)
+                loan.ArchivedAt = archived ? loan.ArchivedAt ?? now : null;
+            await _context.SaveChangesAsync(ct);
+            return true;
+        }
+
+        public async Task<LoanOverviewDto> GetOverviewAsync(
+            Guid userId, int year, int month, CancellationToken ct)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var loans = await _context.Loans.AsNoTracking()
+                .Where(loan => loan.UserId == userId).ToListAsync(ct);
+            var items = new List<LoanOverviewItemDto>();
+            foreach (var loan in loans.Where(loan => loan.ArchivedAt is null &&
+                !loan.Status.Equals("paid", StringComparison.OrdinalIgnoreCase) &&
+                !loan.Status.Equals("cancelled", StringComparison.OrdinalIgnoreCase) &&
+                loan.OutstandingAmount > 0m))
+            {
+                var bank = loan.Type == LoanType.Bank;
+                var next = bank ? loan.NextPaymentDate : loan.DueDate;
+                var nextDate = next.HasValue ? DateOnly.FromDateTime(next.Value.DateTime) : (DateOnly?)null;
+                var completion = loan.DueDate.HasValue
+                    ? DateOnly.FromDateTime(loan.DueDate.Value.DateTime) : (DateOnly?)null;
+                if (completion < today) completion = null;
+                items.Add(new(
+                    loan.Id, "loan", loan.Name, loan.Type == LoanType.Given ? "in" : "out",
+                    loan.OutstandingAmount, nextDate,
+                    bank ? loan.NextPaymentAmount : loan.OutstandingAmount,
+                    completion, null, null));
+            }
+
+            var settlements = await _context.Settlements.AsNoTracking()
+                .Include(settlement => settlement.Lines)
+                .Where(settlement => settlement.UserId == userId).ToListAsync(ct);
+            var names = await _context.Counterparties.AsNoTracking()
+                .Where(person => person.UserId == userId && person.IsActive)
+                .ToDictionaryAsync(person => person.Id, person => person.Name, ct);
+            var forecast = SettlementForecast.Evaluate(settlements, names)
+                .ToDictionary(state => state.SettlementId);
+            foreach (var group in settlements.GroupBy(settlement => settlement.CounterpartyId))
+            {
+                if (!names.TryGetValue(group.Key, out var name)) continue;
+                foreach (var settlement in SettlementForecast.Open(group))
+                {
+                    var remaining = SettlementForecast.Remaining(settlement);
+                    var expected = forecast[settlement.Id].Expectation;
+                    var completion = settlement.ExpectedDate >= today ? settlement.ExpectedDate : null;
+                    items.Add(new(
+                        settlement.Id, "settlement", settlement.Title, remaining > 0m ? "in" : "out",
+                        Math.Abs(remaining), expected?.Date, expected?.Amount,
+                        completion, name, null));
+                }
+            }
+
+            bool InMonth(LoanOverviewItemDto item) =>
+                item.NextDate is { } date && date.Year == year && date.Month == month;
+            var payable = items.Where(item => item.Direction == "out").ToList();
+            var missingDates = payable.Count(item => item.CompletionDate is null ||
+                item.NextDate is null || item.NextAmount is null || item.NextDate < today);
+            var lastDate = payable.Count > 0 && missingDates == 0
+                ? payable.Max(item => item.CompletionDate) : null;
+            var archived = loans.Where(loan => loan.ArchivedAt.HasValue).ToList();
+            return new(
+                payable.Sum(item => item.RemainingAmount),
+                items.Where(item => item.Direction == "in").Sum(item => item.RemainingAmount),
+                payable.Where(InMonth).Sum(item => item.NextAmount ?? 0m),
+                items.Where(item => item.Direction == "in").Where(InMonth).Sum(item => item.NextAmount ?? 0m),
+                lastDate, missingDates, archived.Count, archived.Sum(loan => loan.OutstandingAmount),
+                items.OrderBy(item => item.NextDate is null).ThenBy(item => item.NextDate)
+                    .ThenBy(item => item.Title).ToList());
+        }
 
         // El propietario es dto.UserId: el controlador lo fija desde el token y PasanacoService
         // con el propietario ya verificado del pasanaco.

@@ -45,6 +45,34 @@ namespace PersonalFinance.Api.Controllers
             return Ok(loan);
         }
 
+        [HttpGet("overview")]
+        public async Task<IActionResult> GetOverview(
+            [FromQuery] int? year, [FromQuery] int? month, CancellationToken ct)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+            var today = DateTime.UtcNow;
+            var selectedYear = year ?? today.Year;
+            var selectedMonth = month ?? today.Month;
+            if (selectedYear is < 2000 or > 2100 || selectedMonth is < 1 or > 12)
+                return BadRequest(new { message = "Indica un mes y un año válidos." });
+            return Ok(await _loanService.GetOverviewAsync(userId.Value, selectedYear, selectedMonth, ct));
+        }
+
+        [HttpPost("archive")]
+        public async Task<IActionResult> SetArchived(
+            [FromBody] SetLoansArchivedDto dto, CancellationToken ct)
+        {
+            var userId = GetCurrentUserId();
+            if (userId is null) return Unauthorized();
+            if (dto.LoanIds is not { Length: > 0 and <= 1000 } || dto.LoanIds.Any(id => id == Guid.Empty))
+                return BadRequest(new { message = "Selecciona los préstamos que quieres archivar o recuperar." });
+            var changed = await _loanService.SetArchivedAsync(
+                userId.Value, dto.LoanIds.Distinct().ToArray(), dto.Archived, ct);
+            return changed ? NoContent() :
+                NotFound(new { message = "Algún préstamo ya no está disponible. Actualiza la lista." });
+        }
+
         [HttpPost]
         public async Task<IActionResult> CreateLoan([FromBody] LoanDto loan)
         {

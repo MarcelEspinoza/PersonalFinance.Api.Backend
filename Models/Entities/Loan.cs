@@ -19,6 +19,7 @@ namespace PersonalFinance.Api.Models.Entities
         public DateTimeOffset? DueDate { get; set; }
 
         public string Status { get; set; } = "active";
+        public DateTimeOffset? ArchivedAt { get; set; }
 
         // Solo para bancarios
         [Column(TypeName = "decimal(5,2)")]
