@@ -97,7 +97,7 @@ namespace PersonalFinance.Api.Services
                 item.NextDate is { } date && date.Year == year && date.Month == month;
             var payable = items.Where(item => item.Direction == "out").ToList();
             var missingDates = payable.Count(item => item.CompletionDate is null ||
-                item.NextDate is null || item.NextAmount is null || item.NextDate < today);
+                item.NextDate is null || item.NextAmount is not > 0m || item.NextDate < today);
             var lastDate = payable.Count > 0 && missingDates == 0
                 ? payable.Max(item => item.CompletionDate) : null;
             var archived = loans.Where(loan => loan.ArchivedAt.HasValue).ToList();

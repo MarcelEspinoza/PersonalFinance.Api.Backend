@@ -17,5 +17,5 @@
 
 - [x] 4.1 Build, lint, inspect strict specifications, and preview synthetic cases without tests.
 - [x] 4.2 Obtain explicit permission for publication and its one-time final-review exception.
-- [ ] 4.3 Commit and publish scoped changes, verify deployments, and apply only the authorized archival snapshot.
-- [ ] 4.4 Verify archival preservation and leave all payments and imports unchanged.
+- [x] 4.3 Commit and publish scoped changes, verify deployments, and apply only the authorized archival snapshot.
+- [x] 4.4 Verify archival preservation and leave all payments and imports unchanged.
