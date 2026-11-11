@@ -10,8 +10,8 @@ namespace PersonalFinance.Api.Data.Configuration
             builder.Entity<GoogleCalendarConnection>(entity =>
             {
                 entity.HasKey(item => item.UserId);
-                entity.Property(item => item.AccessToken).HasMaxLength(8192);
-                entity.Property(item => item.RefreshToken).HasMaxLength(8192);
+                entity.Property(item => item.AccessToken).HasMaxLength(8192).HasColumnType("text");
+                entity.Property(item => item.RefreshToken).HasMaxLength(8192).HasColumnType("text");
                 entity.Property(item => item.TaskListId).HasMaxLength(1024);
                 entity.Property(item => item.LastError).HasMaxLength(500);
             });

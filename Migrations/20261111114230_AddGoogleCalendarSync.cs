@@ -11,25 +11,17 @@ namespace PersonalFinance.Api.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.CreateTable(
-                name: "GoogleCalendarAuthorizations",
-                columns: table => new
-                {
-                    StateHash = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false)
-                        .Annotation("MySql:CharSet", "utf8mb4"),
-                    UserId = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
-                    ConnectionGeneration = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
-                    CodeVerifier = table.Column<string>(type: "varchar(1024)", maxLength: 1024, nullable: false)
-                        .Annotation("MySql:CharSet", "utf8mb4"),
-                    ReturnPath = table.Column<string>(type: "varchar(30)", maxLength: 30, nullable: false)
-                        .Annotation("MySql:CharSet", "utf8mb4"),
-                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_GoogleCalendarAuthorizations", x => x.StateHash);
-                })
-                .Annotation("MySql:CharSet", "utf8mb4");
+            migrationBuilder.Sql("""
+                CREATE TABLE IF NOT EXISTS `GoogleCalendarAuthorizations` (
+                    `StateHash` varchar(64) CHARACTER SET utf8mb4 NOT NULL,
+                    `UserId` char(36) COLLATE ascii_general_ci NOT NULL,
+                    `ConnectionGeneration` char(36) COLLATE ascii_general_ci NOT NULL,
+                    `CodeVerifier` varchar(1024) CHARACTER SET utf8mb4 NOT NULL,
+                    `ReturnPath` varchar(30) CHARACTER SET utf8mb4 NOT NULL,
+                    `ExpiresAt` datetime(6) NOT NULL,
+                    CONSTRAINT `PK_GoogleCalendarAuthorizations` PRIMARY KEY (`StateHash`)
+                ) CHARACTER SET=utf8mb4;
+                """);
 
             migrationBuilder.CreateTable(
                 name: "GoogleCalendarConnections",
@@ -37,9 +29,9 @@ namespace PersonalFinance.Api.Migrations
                 {
                     UserId = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
                     Generation = table.Column<Guid>(type: "char(36)", nullable: false, collation: "ascii_general_ci"),
-                    AccessToken = table.Column<string>(type: "varchar(8192)", maxLength: 8192, nullable: true)
+                    AccessToken = table.Column<string>(type: "text", maxLength: 8192, nullable: true)
                         .Annotation("MySql:CharSet", "utf8mb4"),
-                    RefreshToken = table.Column<string>(type: "varchar(8192)", maxLength: 8192, nullable: true)
+                    RefreshToken = table.Column<string>(type: "text", maxLength: 8192, nullable: true)
                         .Annotation("MySql:CharSet", "utf8mb4"),
                     TaskListId = table.Column<string>(type: "varchar(1024)", maxLength: 1024, nullable: true)
                         .Annotation("MySql:CharSet", "utf8mb4"),

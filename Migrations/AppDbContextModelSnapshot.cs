@@ -533,7 +533,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.Property<string>("AccessToken")
                         .HasMaxLength(8192)
-                        .HasColumnType("varchar(8192)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("AccessTokenExpiresAt")
                         .HasColumnType("datetime(6)");
@@ -565,7 +565,7 @@ namespace PersonalFinance.Api.Migrations
 
                     b.Property<string>("RefreshToken")
                         .HasMaxLength(8192)
-                        .HasColumnType("varchar(8192)");
+                        .HasColumnType("text");
 
                     b.Property<DateTime?>("RetryAt")
                         .HasColumnType("datetime(6)");
