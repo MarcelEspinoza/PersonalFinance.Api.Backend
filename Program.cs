@@ -183,6 +183,13 @@ builder.Services.AddScoped<PersonalFinance.Api.Features.Settlements.ISettlementS
 builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.IReminderService,
     PersonalFinance.Api.Features.Reminders.ReminderService>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Zeus.ZeusService>();
+builder.Services.AddSingleton<PersonalFinance.Api.Features.Calendar.GoogleCalendarSettings>();
+builder.Services.AddSingleton<PersonalFinance.Api.Features.Calendar.GoogleCalendarTokenProtector>();
+builder.Services.AddHttpClient<PersonalFinance.Api.Features.Calendar.GoogleCalendarClient>(
+    client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddScoped<PersonalFinance.Api.Features.Calendar.GoogleCalendarProjection>();
+builder.Services.AddScoped<PersonalFinance.Api.Features.Calendar.GoogleCalendarService>();
+builder.Services.AddHostedService<PersonalFinance.Api.Features.Calendar.GoogleCalendarWorker>();
 builder.Services.AddScoped<PersonalFinance.Api.Features.Reminders.ReminderEmailDispatcher>();
 // Reminder emails; turn off with Reminders:EmailJobEnabled=false.
 builder.Services.AddHostedService<PersonalFinance.Api.Features.Reminders.ReminderEmailJob>();

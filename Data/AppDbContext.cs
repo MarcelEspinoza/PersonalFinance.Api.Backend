@@ -31,6 +31,9 @@ namespace PersonalFinance.Api.Data
         public DbSet<ZeusHourPass> ZeusHourPasses => Set<ZeusHourPass>();
         public DbSet<ZeusHourUsage> ZeusHourUsages => Set<ZeusHourUsage>();
         public DbSet<ZeusCareStay> ZeusCareStays => Set<ZeusCareStay>();
+        public DbSet<GoogleCalendarConnection> GoogleCalendarConnections => Set<GoogleCalendarConnection>();
+        public DbSet<GoogleCalendarAuthorization> GoogleCalendarAuthorizations => Set<GoogleCalendarAuthorization>();
+        public DbSet<GoogleSyncItem> GoogleSyncItems => Set<GoogleSyncItem>();
 
         // Modelo de dominio nuevo (ledger). Convive con el anterior hasta que
         // se porten controladores y servicios. Se expone vía IAppDbContext
@@ -203,6 +206,7 @@ namespace PersonalFinance.Api.Data
                 .HasIndex(b => new { b.UserId, b.CategoryId });
 
             modelBuilder.ApplyLedgerModel();
+            modelBuilder.ApplyGoogleCalendar();
             modelBuilder.Entity<ZeusHourPass>(entity =>
             {
                 entity.ToTable("ZeusHourPasses");

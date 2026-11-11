@@ -493,6 +493,146 @@ namespace PersonalFinance.Api.Migrations
                     b.ToTable("FinancialCommitments");
                 });
 
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.GoogleCalendarAuthorization", b =>
+                {
+                    b.Property<string>("StateHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("CodeVerifier")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("varchar(1024)");
+
+                    b.Property<Guid>("ConnectionGeneration")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ReturnPath")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("StateHash");
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("GoogleCalendarAuthorizations");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.GoogleCalendarConnection", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("AccessToken")
+                        .HasMaxLength(8192)
+                        .HasColumnType("varchar(8192)");
+
+                    b.Property<DateTime?>("AccessTokenExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ConnectedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("char(36)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<DateTime?>("LastSyncedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<DateTime?>("LeaseUntil")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("NeedsReconnect")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("RefreshToken")
+                        .HasMaxLength(8192)
+                        .HasColumnType("varchar(8192)");
+
+                    b.Property<DateTime?>("RetryAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("TaskListId")
+                        .HasMaxLength(1024)
+                        .HasColumnType("varchar(1024)");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("GoogleCalendarConnections");
+                });
+
+            modelBuilder.Entity("PersonalFinance.Api.Models.Entities.GoogleSyncItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("char(36)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DesiredHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<bool>("NeedsSync")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Payload")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("RemoteId")
+                        .HasMaxLength(1024)
+                        .HasColumnType("varchar(1024)");
+
+                    b.Property<string>("ResourceKind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<DateTime>("RetryAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("char(36)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "SourceKey")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "NeedsSync", "RetryAt");
+
+                    b.ToTable("GoogleSyncItems");
+                });
+
             modelBuilder.Entity("PersonalFinance.Api.Models.Entities.Income", b =>
                 {
                     b.Property<int>("Id")
