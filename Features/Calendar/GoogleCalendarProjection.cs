@@ -22,6 +22,29 @@ namespace PersonalFinance.Api.Features.Calendar
                 desired[key] = Event(userId, key, $"Zeus · Guardería · {duration}", usage.Date,
                     usage.StartTime, usage.EndTime, usage.Note, connection.ZeusColorId);
             }
+            var stays = await db.ZeusCareStays.AsNoTracking()
+                .Where(item => item.UserId == userId && (item.Kind == "day" || item.Kind == "night"))
+                .ToListAsync(ct);
+            foreach (var stay in stays)
+            {
+                var key = "zeus-care:" + stay.Id.ToString("N");
+                if (stay.Provider == "daycare" && stay.Kind == "night")
+                {
+                    desired[key] = Event(userId, key, "Zeus · Guardería · Noches", stay.Date,
+                        new TimeOnly(21, 0), new TimeOnly(9, 0), null, connection.ZeusColorId,
+                        stay.Date.AddDays(stay.Nights));
+                }
+                else if (stay.Provider == "alessia" && stay.Kind == "night")
+                {
+                    desired[key] = Event(userId, key, "Zeus · Alessia · Noches", stay.Date,
+                        null, null, null, connection.ZeusColorId, stay.Date.AddDays(stay.Nights));
+                }
+                else if (stay.Provider == "alessia" && stay.Kind == "day")
+                {
+                    desired[key] = Event(userId, key, "Zeus · Alessia · Cuidado", stay.Date,
+                        stay.StartTime, stay.EndTime, null, connection.ZeusColorId);
+                }
+            }
             var pasanacos = await db.Pasanacos.AsNoTracking().Include(item => item.Participants)
                 .Where(item => item.UserId == userId).ToListAsync(ct);
             foreach (var pasanaco in pasanacos)
@@ -86,7 +109,7 @@ namespace PersonalFinance.Api.Features.Calendar
         }
 
         private string Event(Guid userId, string source, string title, DateOnly date,
-            TimeOnly? start, TimeOnly? end, string? note, int colorId)
+            TimeOnly? start, TimeOnly? end, string? note, int colorId, DateOnly? endDate = null)
         {
             object startValue;
             object endValue;
@@ -94,7 +117,7 @@ namespace PersonalFinance.Api.Features.Calendar
             {
                 var timeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZone);
                 var startsAt = LocalDateTime(date, start.Value, timeZone);
-                var endsAt = LocalDateTime(date, end.Value, timeZone);
+                var endsAt = LocalDateTime(endDate ?? date, end.Value, timeZone);
                 if (endsAt <= startsAt)
                     throw new InvalidOperationException("Calendar event end must follow its start.");
                 startValue = new { dateTime = startsAt, timeZone = settings.TimeZone };
@@ -103,7 +126,7 @@ namespace PersonalFinance.Api.Features.Calendar
             else
             {
                 startValue = new { date = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
-                endValue = new { date = date.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
+                endValue = new { date = (endDate ?? date.AddDays(1)).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
             }
             return JsonSerializer.Serialize(new
             {
