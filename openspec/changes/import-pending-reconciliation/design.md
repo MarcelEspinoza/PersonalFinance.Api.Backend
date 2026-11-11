@@ -18,6 +18,8 @@ The importer already matches nearby forecasts and exact settlement nets. Its ass
 - Keep ambiguous bank descriptions manual. Automatic reminder links are stored on the draft rows at upload time, so the user sees them and can unlink them; apply does not add hidden reminder links afterwards, which keeps an unlinked row unlinked. A generic Bizum (no meaningful identifier) is linked to a reminder only when exactly one open reminder in the same direction is covered by its amount within the 0.05 tolerance and no open forecast has the same amount; a bank text naming someone else is never linked automatically.
 - Require the exact remaining amount for every automatic forecast match, including recurring rules. The previous 0.5-to-2 amount ratio can mistake a partial payment for full payment. Differing amounts use the existing explicit link/allocation review instead.
 - Retain server validation of model actions. Show rejected-action reasons and malformed-response errors in the existing panel. Do not retry the model automatically or fabricate executable cards from prose.
+- Reuse one import category picker for groups, rows, splits and shared expenses. Preserve the native select and its required/disabled behavior; a nearby search button opens an existing accessible dialog with local, accent-insensitive filtering. Sort by category type and Spanish alphabetical name without changing category identifiers, amounts, allocations or API calls.
+- Share the existing text normalization with ledger search rather than duplicating its accent-folding behavior. Category search must not call the AI or change a selection before the user chooses a result.
 
 ## Risks / Trade-offs
 

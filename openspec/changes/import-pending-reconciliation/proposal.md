@@ -11,6 +11,7 @@ Imported payments and receipts can leave their existing forecasts or reminders o
 - Prioritize relevant pending items rather than the oldest items when constructing bounded AI context.
 - Surface rejected proposals and malformed responses in the existing assistant panel instead of silently losing action cards.
 - Preserve existing settlement matching, recurring forecasts, closed periods and already-paid entries.
+- Sort import category choices by type and Spanish alphabetical order, with local search in row, group, split and shared-expense selectors.
 
 ## Capabilities
 

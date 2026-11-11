@@ -28,3 +28,16 @@
 - EF reports no pending model changes after the additive migration. No database migration was applied.
 - Desktop/mobile previews used synthetic responses with every API request intercepted locally. Both obligation cards prepared the expected links; the row view displayed both links and their removal controls. No browser errors occurred.
 - No tests were written or run. No production records, paid AI calls, deployment, commits or pushes were performed.
+
+## 5. Ordered and searchable category selection
+
+- [x] 5.1 Add a shared, Spanish-sorted import category selector with local accent-insensitive search, preserving native selection behavior.
+- [x] 5.2 Reuse the selector for groups, rows, splits and shared expenses while retaining validation and category restrictions.
+- [x] 5.3 Build/type-check/lint the scoped change and preview synthetic local interactions without writing or running tests.
+- [x] 5.4 Present exact commit messages/files and obtain approval before publication.
+
+### Category picker validation
+
+- The frontend build and scoped ESLint passed. The repository-wide type check reported only the six known baseline diagnostics described above.
+- Synthetic desktop/mobile previews confirmed Spanish sorting, accent-insensitive and multi-token search, cancellation with focus restoration, required/disabled behavior, unchanged-selection handling and nested shared-expense dialogs.
+- No mobile horizontal overflow, browser errors or external requests occurred. No tests were written or run, and no live imports, balances, AI requests or Google connections were changed.

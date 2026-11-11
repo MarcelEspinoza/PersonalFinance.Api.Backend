@@ -52,3 +52,18 @@ The system SHALL persist a confirmed reminder or settlement link in the draft an
 #### Scenario: Settlement without an automatic bank-name match
 - **WHEN** the user explicitly links a receipt or payment to their own open settlement
 - **THEN** applying the import records the payment against that settlement once
+
+### Requirement: Ordered and searchable import categories
+Import category selectors SHALL display stable type/name ordering using Spanish alphabetical comparison and provide local case- and accent-insensitive search. Groups, individual rows, splits and shared expenses SHALL retain their existing category restrictions, selected values, clearing rules, required validation and disabled states.
+
+#### Scenario: Category is found without accents
+- **WHEN** the user searches for a category using a different letter case or omitting accents
+- **THEN** matching categories appear in the same order and selection uses the existing category identifier without an AI request
+
+#### Scenario: Search is canceled or has no matches
+- **WHEN** the user closes the search without choosing or the search matches no category
+- **THEN** the current category is unchanged and an empty result is explained visibly
+
+#### Scenario: Required or disabled category
+- **WHEN** a split or shared expense requires a category, or an import is busy or applied
+- **THEN** native required validation and existing category filters remain effective, and disabled selectors cannot change their selection
