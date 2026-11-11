@@ -123,7 +123,12 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid ConceptId { get; set; }
         public decimal Amount { get; set; }
         public Guid? CounterpartyId { get; set; }
+        public Guid? PlannedEntryId { get; set; }
+        public Guid? SettlementId { get; set; }
     }
+
+    public sealed record ImportSplitTargetDto(
+        Guid Id, string Kind, string Label, string Direction, decimal RemainingAmount, Guid? ConceptId);
 
     public sealed record ImportPersonOptionDto(Guid Id, string Name);
 

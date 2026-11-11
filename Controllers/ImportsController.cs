@@ -501,24 +501,26 @@ namespace PersonalFinance.Api.Controllers
             if (concepts.Count != conceptIds.Count || concepts.Any(item => item.Kind != expectedKind))
                 return BadRequest("Cada parte debe usar un concepto activo del mismo tipo que el movimiento.");
 
+            var parts = dto.Allocations.Select((allocation, index) => new ImportRowAllocation
+            {
+                UserId = userId.Value,
+                ImportRowId = row.Id,
+                ConceptId = allocation.ConceptId,
+                Amount = allocation.Amount,
+                SortOrder = index,
+                CounterpartyId = allocation.CounterpartyId,
+                PlannedEntryId = allocation.PlannedEntryId,
+                SettlementId = allocation.SettlementId
+            }).ToList();
+            var linkError = await ImportSplitLinks.ValidateReviewAsync(_db, userId.Value, row, parts, ct);
+            if (linkError is not null) return BadRequest(new { message = linkError });
+
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
-            for (var index = 0; index < dto.Allocations.Count; index++)
-            {
-                var allocation = dto.Allocations[index];
-                _db.ImportRowAllocations.Add(new ImportRowAllocation
-                {
-                    UserId = userId.Value,
-                    ImportRowId = row.Id,
-                    ConceptId = allocation.ConceptId,
-                    Amount = allocation.Amount,
-                    SortOrder = index
-                });
-            }
+            _db.ImportRowAllocations.AddRange(parts);
             row.ConfirmedConceptId = null;
             row.SuggestionSource = "split";
             row.SuggestionConfidence = 1m;
-            // A split row cannot be deducted from a planned entry.
             row.PlannedEntryId = null;
             row.PlannedAllocations.Clear();
 
@@ -531,7 +533,9 @@ namespace PersonalFinance.Api.Controllers
                 {
                     ConceptId = item.ConceptId,
                     Amount = item.Amount,
-                    CounterpartyId = item.CounterpartyId
+                    CounterpartyId = item.CounterpartyId,
+                    PlannedEntryId = item.PlannedEntryId,
+                    SettlementId = item.SettlementId
                 })
                 .ToListAsync(ct);
             return Ok(response);
@@ -1029,6 +1033,37 @@ namespace PersonalFinance.Api.Controllers
             });
         }
 
+        [HttpGet("{batchId:guid}/split-targets")]
+        public async Task<ActionResult<IReadOnlyList<ImportSplitTargetDto>>> GetSplitTargets(
+            Guid batchId, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var batch = await _db.ImportBatches.AsNoTracking()
+                .Include(item => item.Rows).ThenInclude(row => row.Allocations)
+                .Include(item => item.Rows).ThenInclude(row => row.PlannedAllocations)
+                .FirstOrDefaultAsync(item => item.Id == batchId && item.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict(new { message = "El lote ya no admite cambios." });
+            var planned = await LoadPlannedCandidatesAsync(userId.Value, batch, ct);
+            var settlements = await ImportObligationLinks.LoadOpenSettlementsAsync(_db, userId.Value, ct);
+            var names = await _db.Counterparties.AsNoTracking()
+                .Where(person => person.UserId == userId.Value)
+                .ToDictionaryAsync(person => person.Id, person => person.Name, ct);
+            var targets = planned.Select(entry => new ImportSplitTargetDto(
+                entry.Id, "planned",
+                $"{entry.ConceptName} · {entry.Description} · {entry.DueDate:dd/MM/yyyy}",
+                entry.Direction, entry.ForecastAmount, entry.ConceptId))
+                .Concat(settlements.Values.Select(settlement => new ImportSplitTargetDto(
+                    settlement.Id, "settlement",
+                    $"{names.GetValueOrDefault(settlement.CounterpartyId, "Sin nombre")} · {settlement.Title}",
+                    SettlementForecast.Remaining(settlement) > 0m ? "in" : "out",
+                    Math.Abs(SettlementForecast.Remaining(settlement)), null)))
+                .OrderBy(target => target.Label).ToList();
+            return Ok(targets);
+        }
+
         [HttpGet("{batchId:guid}/planned-candidates")]
         public async Task<ActionResult<IReadOnlyList<ImportPlannedCandidateDto>>> GetPlannedCandidates(
             Guid batchId, CancellationToken ct)
@@ -1227,7 +1262,8 @@ namespace PersonalFinance.Api.Controllers
 
             var from = batch.Rows.Min(row => row.ValueDate).AddDays(-ImportPlannedLinks.CandidateWindowDays);
             var to = batch.Rows.Max(row => row.ValueDate).AddDays(ImportPlannedLinks.CandidateWindowDays);
-            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedRows = batch.Rows.Concat(ImportSplitLinks.Project(batch.Rows).Select(link => link.Row))
+                .Where(ImportPlannedLinks.Deducts).ToList();
             var linkedIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
                 .Select(link => link.PlannedEntryId).Distinct().ToList();
             var searchAllDates = searchTerms is not null;
@@ -1277,7 +1313,7 @@ namespace PersonalFinance.Api.Controllers
                         Description = entry.Description,
                         LinkedAmount = linkedAmount,
                         RemainingAfterLinks = forecast - linkedAmount,
-                        LinkedRowIds = linked.Select(row => row.Id).ToList()
+                        LinkedRowIds = linked.Select(row => row.Id).Distinct().ToList()
                     };
                 })
                 .OrderByDescending(candidate => ImportPendingRelevance.Score(
@@ -1900,7 +1936,9 @@ namespace PersonalFinance.Api.Controllers
                 {
                     ConceptId = item.ConceptId,
                     Amount = item.Amount,
-                    CounterpartyId = item.CounterpartyId
+                    CounterpartyId = item.CounterpartyId,
+                    PlannedEntryId = item.PlannedEntryId,
+                    SettlementId = item.SettlementId
                 })
                 .ToList()
         };

@@ -1864,6 +1864,12 @@ namespace PersonalFinance.Api.Migrations
                     b.Property<Guid>("ImportRowId")
                         .HasColumnType("char(36)");
 
+                    b.Property<Guid?>("PlannedEntryId")
+                        .HasColumnType("char(36)");
+
+                    b.Property<Guid?>("SettlementId")
+                        .HasColumnType("char(36)");
+
                     b.Property<int>("SortOrder")
                         .HasColumnType("int");
 

@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using PersonalFinance.Api.Common.Interfaces;
+using PersonalFinance.Api.Data;
 using PersonalFinance.Api.Features.Settlements;
 using PersonalFinance.Domain.Ledger.Calculations;
 using PersonalFinance.Domain.Ledger.Entities;
@@ -62,10 +64,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             public int DayGap => Math.Abs(DueDate.DayNumber - Row.ValueDate.DayNumber);
         }
 
-        private readonly IAppDbContext _db;
+        private readonly AppDbContext _db;
         private readonly PeriodProvisioner _periods;
 
-        public ImportBatchApplicationService(IAppDbContext db, PeriodProvisioner periods)
+        public ImportBatchApplicationService(AppDbContext db, PeriodProvisioner periods)
         {
             _db = db;
             _periods = periods;
@@ -75,6 +77,17 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             Guid userId,
             Guid batchId,
             CancellationToken ct)
+        {
+            await using var transaction = _db.Database.CurrentTransaction is null
+                ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct) : null;
+            var result = await ApplyCoreAsync(userId, batchId, ct);
+            if (result.Success && transaction is not null)
+                await transaction.CommitAsync(ct);
+            return result;
+        }
+
+        private async Task<ImportApplicationResult> ApplyCoreAsync(
+            Guid userId, Guid batchId, CancellationToken ct)
         {
             var batch = await _db.ImportBatches
                 .Include(item => item.Rows)
@@ -93,9 +106,20 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             if (batch.Rows.Count == 0)
                 return new(false, 0, batchId, "El lote no contiene movimientos para aplicar.");
 
+            if (batch.Rows.Any(row => row.Status == ImportRowStatus.Pending &&
+                row.Allocations.Any(part => part.PlannedEntryId.HasValue || part.SettlementId.HasValue) &&
+                (ImportPlannedLinks.HasLink(row) || ImportObligationLinks.HasLink(row) ||
+                 row.PasanacoParticipantId is not null ||
+                 row.Allocations.Any(part => part.CounterpartyId.HasValue ||
+                     (part.PlannedEntryId.HasValue && part.SettlementId.HasValue)))))
+                return new(false, 0, batchId, "El reparto tiene vínculos incompatibles. Revisa cada parte.", Conflict: true);
+            var splitLinks = ImportSplitLinks.Project(batch.Rows).ToList();
+            var splitLinksByPart = splitLinks.ToDictionary(link => link.Part.Id, link => link.Row);
+            var effectiveRows = batch.Rows.Concat(splitLinks.Select(link => link.Row)).ToList();
+
             // Rows the user deducts from a planned entry: each one is booked as its own movement
             // and the planned entry is reduced (or closed) instead of being auto-matched.
-            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedRows = effectiveRows.Where(ImportPlannedLinks.Deducts).ToList();
             var linkedEntryIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
                 .Select(link => link.PlannedEntryId).ToHashSet();
             var plannedById = linkedEntryIds.Count == 0
@@ -108,7 +132,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var deductedRows = linkedRows
                 .Where(row => ImportPlannedLinks.IsValidLinks(row, plannedById))
                 .ToList();
-            foreach (var row in batch.Rows.Where(row => row.Status == ImportRowStatus.Pending && row.PlannedAllocations.Count > 0))
+            foreach (var row in effectiveRows.Where(row => row.Status == ImportRowStatus.Pending && row.PlannedAllocations.Count > 0))
             {
                 var error = ImportPlannedLinks.AllocationError(row, ImportPlannedLinks.Links(row).ToList(), plannedById);
                 if (error is not null) return new(false, 0, batchId, error, Conflict: true);
@@ -205,7 +229,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     .ToListAsync(ct))
                 .ToHashSet(StringComparer.Ordinal);
             var obligationValidation = await ImportObligationLinks.ValidateAsync(
-                _db, userId, batch.Rows.Where(row => !existingFingerprints.Contains(row.Fingerprint)), ct);
+                _db, userId, effectiveRows.Where(row => !existingFingerprints.Contains(row.Fingerprint)), ct);
             if (obligationValidation.Error is { } obligationError)
                 return new(false, 0, batchId, obligationError, Conflict: true);
             if (batch.Rows.Any(row => row.Status == ImportRowStatus.Pending && ImportObligationLinks.HasLink(row)
@@ -391,6 +415,25 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             Fingerprint = firstEntry ? row.Fingerprint : null
                         };
                         _db.LedgerEntries.Add(allocationEntry);
+                        if (isPaid && splitLinksByPart.TryGetValue(allocation.Id, out var linkedPart))
+                        {
+                            linkedPart.LedgerEntryId = allocationEntry.Id;
+                            if (allocation.PlannedEntryId is { } plannedId)
+                            {
+                                allocationEntry.Notes = $"Descontado del previsto «{PlannedName(plannedById[plannedId], concepts)}».";
+                                bookedDeductions.Add((plannedId, allocation.Amount));
+                                foreach (var stay in allocatedCareStays.Where(stay => stay.LedgerEntryId == plannedId))
+                                {
+                                    stay.LedgerEntryId = allocationEntry.Id;
+                                    stay.LedgerEntry = allocationEntry;
+                                }
+                            }
+                            if (allocation.SettlementId.HasValue)
+                            {
+                                linkedPart.Status = ImportRowStatus.Accepted;
+                                bookedObligations.Add(linkedPart);
+                            }
+                        }
                         if (allocation.CounterpartyId is { } personId)
                         {
                             allocationEntry.Notes = "Parte adelantada por un gasto compartido; pendiente de devolución.";
