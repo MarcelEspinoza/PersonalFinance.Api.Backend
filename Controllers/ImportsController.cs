@@ -1156,6 +1156,83 @@ namespace PersonalFinance.Api.Controllers
             return NoContent();
         }
 
+        [HttpPost("{batchId:guid}/rows/{rowId:guid}/planned-entry/increase")]
+        public async Task<IActionResult> IncreasePlannedEntryForRow(
+            Guid batchId, Guid rowId, [FromBody] IncreaseImportPlannedEntryDto dto, CancellationToken ct)
+        {
+            var userId = User.GetUserId();
+            if (userId is null) return Unauthorized();
+            var batch = await _db.ImportBatches
+                .Include(item => item.Rows).ThenInclude(item => item.Allocations)
+                .Include(item => item.Rows).ThenInclude(item => item.PlannedAllocations)
+                .FirstOrDefaultAsync(item => item.Id == batchId && item.UserId == userId.Value, ct);
+            if (batch is null) return NotFound();
+            if (batch.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
+                return Conflict(new { message = "El lote ya se ha aplicado o está descartado." });
+            var row = batch.Rows.FirstOrDefault(item => item.Id == rowId);
+            if (row is null) return NotFound();
+            if (row.Status != ImportRowStatus.Pending)
+                return Conflict(new { message = "El movimiento ya no está pendiente de importar." });
+            if (row.Amount == 0m || !ImportBatchApplicationService.EntersAsPaid(row))
+                return BadRequest(new { message = "Solo se puede aumentar un previsto para un movimiento que se registrará como pagado." });
+            if (row.Allocations.Count > 0)
+                return BadRequest(new { message = "Para usar varias categorías, divide el movimiento por categorías." });
+            if (ImportObligationLinks.HasLink(row))
+                return BadRequest(new { message = "Quita primero el vínculo con el recordatorio o la liquidación." });
+            if (string.IsNullOrWhiteSpace(dto.Reason))
+                return BadRequest(new { message = "Indica el motivo del aumento." });
+            var reason = dto.Reason.Trim();
+            if (dto.PlannedEntryId == Guid.Empty)
+                return BadRequest(new { message = "Selecciona un previsto." });
+
+            var planned = await _db.LedgerEntries
+                .Include(entry => entry.Period)
+                .Include(entry => entry.Concept)
+                .FirstOrDefaultAsync(entry => entry.Id == dto.PlannedEntryId && entry.UserId == userId.Value, ct);
+            if (planned is null || !ImportPlannedLinks.IsOpen(planned))
+                return Conflict(new { message = "El previsto ya no está disponible. Actualiza la revisión." });
+            if (planned.Concept is null || !planned.Concept.IsActive)
+                return BadRequest(new { message = "El previsto no tiene una categoría activa." });
+            if (planned.Period?.Status == PeriodStatus.Closed)
+                return BadRequest(new { message = "No se puede aumentar un previsto de un periodo cerrado." });
+            var linkError = ImportPlannedLinks.LinkError(row.Amount, false, planned.Direction);
+            if (linkError is not null) return BadRequest(new { message = linkError });
+            var rowConceptId = row.ConfirmedConceptId ?? row.SuggestedConceptId;
+            if (rowConceptId.HasValue && rowConceptId.Value != planned.ConceptId)
+                return BadRequest(new { message = "Para asignar importes a otra categoría, divide el movimiento por categorías." });
+
+            var otherRows = batch.Rows.Where(item => item.Id != row.Id && item.Status == ImportRowStatus.Pending).ToList();
+            var otherLinkedRows = otherRows
+                .Concat(ImportSplitLinks.Project(otherRows).Select(link => link.Row))
+                .Where(ImportPlannedLinks.Deducts);
+            var alreadyLinked = otherLinkedRows.SelectMany(ImportPlannedLinks.Links)
+                .Where(link => link.PlannedEntryId == planned.Id)
+                .Sum(link => link.Amount);
+            var requiredForecast = alreadyLinked + Math.Abs(row.Amount);
+            if (requiredForecast <= Math.Abs(planned.ForecastAmount) + ImportPlannedLinks.CoverTolerance)
+                return Conflict(new { message = "El previsto ya tiene saldo suficiente. Actualiza la revisión y vincúlalo directamente." });
+
+            var notes = ImportPlannedLinks.AppendNote(
+                planned.Notes, $"Aumento desde importación: {reason}");
+            planned.ForecastAmount = requiredForecast;
+            var careError = await ImportPlannedLinks.CareAllocationErrorAsync(
+                _db, userId.Value, new[] { (planned.Id, requiredForecast) },
+                new Dictionary<Guid, LedgerEntry> { [planned.Id] = planned }, ct);
+            if (careError is not null) return BadRequest(new { message = careError });
+            planned.Notes = notes;
+            planned.UpdatedAt = DateTime.UtcNow;
+            row.PlannedEntryId = planned.Id;
+            row.PlannedAllocations.Clear();
+            if (row.ConfirmedConceptId is null)
+            {
+                row.ConfirmedConceptId = planned.ConceptId;
+                row.SuggestionSource = "manual";
+                row.SuggestionConfidence = 1m;
+            }
+            await _db.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
         [HttpPut("{batchId:guid}/rows/{rowId:guid}/planned-allocations")]
         public async Task<IActionResult> SetRowPlannedAllocations(
             Guid batchId, Guid rowId, [FromBody] SetImportRowPlannedAllocationsDto dto, CancellationToken ct)

@@ -98,6 +98,16 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
         public Guid? PlannedEntryId { get; set; }
     }
 
+    public sealed class IncreaseImportPlannedEntryDto
+    {
+        [Required]
+        public Guid PlannedEntryId { get; set; }
+
+        [Required]
+        [StringLength(450)]
+        public string Reason { get; set; } = string.Empty;
+    }
+
     public sealed class SetImportRowObligationDto
     {
         public Guid? ReminderId { get; set; }
