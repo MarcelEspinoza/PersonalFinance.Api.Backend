@@ -22,8 +22,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
         /// <summary>Split rows cannot be deducted from a planned entry.</summary>
         public bool IsSplit { get; init; }
-        public Guid? SharedExpenseCounterpartyId { get; init; }
-        public decimal? SharedExpenseAmount { get; init; }
+        public IReadOnlyList<ImportChatSharedExpensePart> SharedExpenseParts { get; init; } = Array.Empty<ImportChatSharedExpensePart>();
         public string? PasanacoParticipantId { get; init; }
         public DateOnly? PasanacoQuotaMonth { get; init; }
     }
@@ -33,6 +32,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
     public sealed record ImportChatLoanContext(string Kind, string Name, decimal Amount, string? Detail);
     public sealed record ImportChatLedgerContext(string Date, string Direction, string Status, decimal Amount, string? Concept, string? Description);
     public sealed record ImportChatPersonContext(Guid Id, string Name);
+    public sealed record ImportChatSharedExpensePart(Guid CounterpartyId, decimal Amount);
     public sealed record ImportChatObligationContext(
         Guid Id, string Title, string Direction, DateOnly DueDate, decimal Amount,
         string? Repeat, decimal LinkedAmount, IReadOnlyList<Guid> LinkedRowIds)
@@ -293,8 +293,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     amount = r.Amount,
                     description = Masked(r.Description, 200),
                     currentConcept = Masked(r.CurrentConcept, MaxNameLength),
-                    sharedExpenseCounterpartyId = r.SharedExpenseCounterpartyId,
-                    sharedExpenseAmount = r.SharedExpenseAmount,
+                    sharedExpenseParts = r.SharedExpenseParts.Select(part => new
+                    {
+                        counterpartyId = part.CounterpartyId,
+                        amount = part.Amount
+                    }),
                     plannedEntryId = r.PlannedEntryId,
                     reminderId = r.ReminderId,
                     settlementId = r.SettlementId,
@@ -418,6 +421,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 - Sí puedes proponer "share_expense": UNA fila de gasto en "rowIds",
                   "conceptId" de la categoría de su parte, "counterpartyId" de PERSONAS
                   y "amount" con la parte que le deben (positiva y menor que el pago).
+                  Esta acción es para una persona. Si el usuario quiere repartirlo entre
+                  varias, indícale que abra «Compartir gasto» en esa fila.
                   Ejemplo: pagó 30 € en un bar y la mitad era de su mamá: 15 € son
                   gasto propio en Restaurantes y 15 € adelantados que ella le debe.
                   Al confirmar se prepara el reparto; al aplicar el lote se registra
@@ -430,11 +435,11 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                   que la deuda ya está cancelada sólo por cambiar la categoría.
                 - No necesitas una fecha de devolución para registrar la deuda.
                   Pregunta la fecha sólo si quiere además un recordatorio.
-                - Usa únicamente una persona de la lista. Si falta, indica que puede
-                  añadirla en Liquidaciones. No inventes su identificador.
-                - Si la fila tiene "sharedExpenseCounterpartyId", el reparto ya está
-                  preparado. No lo borres con "set_row_concept" ni crees otra deuda.
-                  Propón otro "share_expense" sólo si pide corregir el reparto.
+                - Usa únicamente personas de la lista. Si falta alguna, indica que puede
+                  añadirla en Liquidaciones. No inventes identificadores.
+                - Si "sharedExpenseParts" no está vacío, el reparto ya está preparado.
+                  No lo borres con "set_row_concept" ni propongas otro "share_expense".
+                  Para editarlo, indica que abra el reparto de la fila.
                 - No recuerdes un reparto compartido como regla para futuros pagos.
                 - Si el pago está vinculado a un previsto, primero propón quitar ese
                   vínculo; después podrás proponer el gasto compartido.
@@ -797,6 +802,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                             {
                                 var ids = ReadGuids(item, "rowIds").Distinct().ToList();
                                 if (ids.Count != 1 || !rowsById.TryGetValue(ids[0], out var row) || row.Amount >= 0m ||
+                                    row.SharedExpenseParts.Count > 0 ||
                                     row.PlannedEntryId is not null || row.PlannedAllocations.Count > 0 ||
                                     row.ReminderId is not null || row.SettlementId is not null ||
                                     ReadGuid(item, "conceptId") is not { } conceptId ||
@@ -913,7 +919,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                     // repite, vale la primera.
                     var conceptRowIds = ReadGuids(item, "rowIds")
                         .Where(id => rowsById.TryGetValue(id, out var row) &&
-                            row.SharedExpenseCounterpartyId is null && usedRows.Add(id))
+                            row.SharedExpenseParts.Count == 0 && usedRows.Add(id))
                         .ToList();
                     if (conceptRowIds.Count == 0) continue;
 

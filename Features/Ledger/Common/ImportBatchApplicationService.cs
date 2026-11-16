@@ -368,13 +368,19 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 if (isSplit)
                 {
                     var sharedParts = row.Allocations.Where(part => part.CounterpartyId.HasValue).ToList();
-                    if (sharedParts.Count > 0 && (sharedParts.Count != 1 || row.Allocations.Count != 2 ||
+                    var isSharedExpense = sharedParts.Count > 0;
+                    var ownParts = row.Allocations.Where(part => !part.CounterpartyId.HasValue).ToList();
+                    if (isSharedExpense && (ownParts.Count != 1 ||
+                        sharedParts.Select(part => part.CounterpartyId).Distinct().Count() != sharedParts.Count ||
                         row.Amount >= 0m || !isPaid || !concepts.TryGetValue(sharedParts[0].ConceptId, out var advanceConcept) ||
+                        sharedParts.Any(part => part.ConceptId != advanceConcept.Id) ||
                         advanceConcept.Kind != ConceptKind.Transfer || advanceConcept.Name != SharedExpenseImport.ConceptName ||
                         mirrorAccountByConcept.ContainsKey(advanceConcept.Id)))
                         return new(false, 0, batchId, "El reparto compartido ya no es válido. Vuelve a revisarlo.", Conflict: true);
-                    if (row.Allocations.Count is < 2 or > 3 ||
-                        row.Allocations.Select(allocation => allocation.ConceptId).Distinct().Count() != row.Allocations.Count ||
+                    if (row.Allocations.Count < 2 ||
+                        (!isSharedExpense && (row.Allocations.Count > 3 ||
+                            row.Allocations.Select(allocation => allocation.ConceptId).Distinct().Count() != row.Allocations.Count)) ||
+                        (isSharedExpense && row.Allocations.Count != sharedParts.Count + 1) ||
                         row.Allocations.Sum(allocation => allocation.Amount) != amount ||
                         row.Allocations.Any(allocation =>
                             allocation.Amount <= 0m ||
