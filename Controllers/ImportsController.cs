@@ -1288,6 +1288,15 @@ namespace PersonalFinance.Api.Controllers
                 .ToDictionaryAsync(entry => entry.Id, ct);
             var error = ImportPlannedLinks.AllocationError(row, links, entries);
             if (error is not null) return BadRequest(new { message = error });
+            var increaseId = dto.IncreasePlannedEntryId;
+            var increaseReason = dto.IncreaseReason?.Trim();
+            if (increaseId.HasValue)
+            {
+                if (!ids.Contains(increaseId.Value))
+                    return BadRequest(new { message = "El previsto a aumentar debe formar parte del reparto." });
+                if (string.IsNullOrEmpty(increaseReason))
+                    return BadRequest(new { message = "Indica el motivo del aumento." });
+            }
             var siblings = await _db.ImportRows.AsNoTracking()
                 .Include(item => item.PlannedAllocations)
                 .Include(item => item.Allocations)
@@ -1298,8 +1307,14 @@ namespace PersonalFinance.Api.Controllers
             {
                 var otherAmount = siblings.Where(ImportPlannedLinks.Deducts).SelectMany(ImportPlannedLinks.Links)
                     .Where(other => other.PlannedEntryId == link.PlannedEntryId).Sum(other => other.Amount);
-                if (link.Amount + otherAmount > entries[link.PlannedEntryId].ForecastAmount + ImportPlannedLinks.CoverTolerance)
-                    return BadRequest(new { message = "El reparto supera lo pendiente de un previsto. Revisa los importes." });
+                var entry = entries[link.PlannedEntryId];
+                var required = link.Amount + otherAmount;
+                if (required <= entry.ForecastAmount + ImportPlannedLinks.CoverTolerance) continue;
+                if (link.PlannedEntryId != increaseId)
+                    return BadRequest(new { message = "El reparto supera lo pendiente de un previsto. Revisa los importes o aumenta uno de ellos indicando el motivo." });
+                entry.ForecastAmount = required;
+                entry.Notes = ImportPlannedLinks.AppendNote(entry.Notes, $"Aumento desde importación: {increaseReason}");
+                entry.UpdatedAt = DateTime.UtcNow;
             }
             error = await ImportPlannedLinks.CareAllocationErrorAsync(_db, userId.Value, links, entries, ct);
             if (error is not null) return BadRequest(new { message = error });

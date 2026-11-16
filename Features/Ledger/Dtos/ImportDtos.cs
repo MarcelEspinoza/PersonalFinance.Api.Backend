@@ -126,6 +126,11 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     public sealed class SetImportRowPlannedAllocationsDto
     {
         public IReadOnlyList<ImportPlannedAllocationDto> Allocations { get; set; } = Array.Empty<ImportPlannedAllocationDto>();
+
+        public Guid? IncreasePlannedEntryId { get; set; }
+
+        [StringLength(450)]
+        public string? IncreaseReason { get; set; }
     }
 
     public sealed class ImportRowAllocationDto
