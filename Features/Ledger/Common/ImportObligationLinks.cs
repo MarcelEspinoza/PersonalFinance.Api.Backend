@@ -94,7 +94,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 var remaining = SettlementForecast.Remaining(settlement);
                 if (group.Any(row => (row.Amount > 0m) != (remaining > 0m)))
                     return new(reminders, settlements, "La liquidación y el movimiento no tienen la misma dirección.");
-                error = AmountError(group.Sum(row => row.Amount), remaining > 0m, Math.Abs(remaining));
+                var total = group.Sum(row => row.Amount);
+                error = settlement.IsExpenseReimbursement && remaining > 0m
+                    ? null
+                    : AmountError(total, remaining > 0m, Math.Abs(remaining));
                 if (error is not null) return new(reminders, settlements, error);
             }
             return new(reminders, settlements, null);
@@ -167,6 +170,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             foreach (var group in booked.Where(row => row.SettlementId.HasValue).GroupBy(row => row.SettlementId!.Value))
             {
                 var settlement = validation.Settlements[group.Key];
+                var previousStatus = settlement.Status;
                 foreach (var row in group)
                 {
                     var entry = db.LedgerEntries.Local.Single(entry => entry.Id == row.LedgerEntryId);
@@ -176,6 +180,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         new(entry.Id, row.RawDescription, row.Amount, row.ValueDate), now);
                     settlementPayments++;
                 }
+                if (SettlementForecast.Remaining(settlement) != 0m && settlement.Status == SettlementStatus.Closed)
+                    settlement.Status = previousStatus;
                 await SettlementEntryCoverage.RefreshAsync(db, settlement, ct);
             }
             return settlementPayments;

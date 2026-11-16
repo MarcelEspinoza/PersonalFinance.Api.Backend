@@ -1083,7 +1083,7 @@ namespace PersonalFinance.Api.Controllers
                     settlement.Id, "settlement",
                     $"{names.GetValueOrDefault(settlement.CounterpartyId, "Sin nombre")} · {settlement.Title}",
                     SettlementForecast.Remaining(settlement) > 0m ? "in" : "out",
-                    Math.Abs(SettlementForecast.Remaining(settlement)), null)))
+                    Math.Abs(SettlementForecast.Remaining(settlement)), null, settlement.IsExpenseReimbursement)))
                 .OrderBy(target => target.Label).ToList();
             return Ok(targets);
         }
@@ -1420,7 +1420,8 @@ namespace PersonalFinance.Api.Controllers
                 await _db.SaveChangesAsync(ct);
                 return NoContent();
             }
-            var validation = await ImportObligationLinks.ValidateAsync(_db, userId.Value, batch.Rows, ct);
+            var effectiveRows = batch.Rows.Concat(ImportSplitLinks.Project(batch.Rows).Select(link => link.Row));
+            var validation = await ImportObligationLinks.ValidateAsync(_db, userId.Value, effectiveRows, ct);
             if (validation.Error is { } error) return BadRequest(new { message = error });
             await _db.SaveChangesAsync(ct);
             return NoContent();

@@ -145,7 +145,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     }
 
     public sealed record ImportSplitTargetDto(
-        Guid Id, string Kind, string Label, string Direction, decimal RemainingAmount, Guid? ConceptId);
+        Guid Id, string Kind, string Label, string Direction, decimal RemainingAmount, Guid? ConceptId,
+        bool IsExpenseReimbursement = false);
 
     public sealed record ImportPersonOptionDto(Guid Id, string Name);
 
