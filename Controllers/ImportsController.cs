@@ -358,14 +358,14 @@ namespace PersonalFinance.Api.Controllers
             if (row.Amount >= 0m || !ImportBatchApplicationService.EntersAsPaid(row) ||
                 shares.Count == 0 ||
                 shares.Select(share => share.CounterpartyId).Distinct().Count() != shares.Count)
-                return BadRequest(new { message = "Cada devolución debe ser positiva y tener hasta dos decimales; el total debe ser menor que el pago y las personas no se pueden repetir." });
+                return BadRequest(new { message = "Cada devolución debe ser positiva y tener hasta dos decimales; el total no puede superar el pago y las personas no se pueden repetir." });
             var bankAmount = Math.Abs(row.Amount);
             decimal amountOwed = 0m;
             foreach (var share in shares)
             {
                 if (share.Amount <= 0m || decimal.Round(share.Amount, 2) != share.Amount ||
-                    share.Amount >= bankAmount - amountOwed)
-                    return BadRequest(new { message = "Cada devolución debe ser positiva y tener hasta dos decimales; el total debe ser menor que el pago y las personas no se pueden repetir." });
+                    share.Amount > bankAmount - amountOwed)
+                    return BadRequest(new { message = "Cada devolución debe ser positiva y tener hasta dos decimales; el total no puede superar el pago y las personas no se pueden repetir." });
                 amountOwed += share.Amount;
             }
             if (ImportPlannedLinks.HasLink(row))
@@ -383,21 +383,22 @@ namespace PersonalFinance.Api.Controllers
             var advance = await PersonalFinance.Api.Features.Settlements.SharedExpenseImport.GetOrCreateConceptAsync(_db, userId.Value, ct);
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
-            var allocations = new List<ImportRowAllocation>
+            var allocations = new List<ImportRowAllocation>();
+            if (amountOwed < bankAmount)
             {
-                new()
+                allocations.Add(new ImportRowAllocation
                 {
                     UserId = userId.Value, ImportRowId = row.Id, ConceptId = dto.ConceptId,
                     Amount = bankAmount - amountOwed, SortOrder = 0
-                }
-            };
+                });
+            }
             allocations.AddRange(shares.Select((share, index) => new ImportRowAllocation
             {
                 UserId = userId.Value, ImportRowId = row.Id, ConceptId = advance.Id,
                 Amount = share.Amount, SortOrder = index + 1, CounterpartyId = share.CounterpartyId
             }));
             _db.ImportRowAllocations.AddRange(allocations);
-            row.ConfirmedConceptId = null;
+            row.ConfirmedConceptId = amountOwed == bankAmount ? dto.ConceptId : null;
             row.SuggestionSource = "shared";
             row.SuggestionConfidence = 1m;
             await _db.SaveChangesAsync(ct);
@@ -416,7 +417,8 @@ namespace PersonalFinance.Api.Controllers
             if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
                 return Conflict(new { message = "El gasto ya se ha aplicado; no puedes quitar este reparto desde la importación." });
             if (!row.Allocations.Any(part => part.CounterpartyId.HasValue)) return NoContent();
-            row.ConfirmedConceptId = row.Allocations.Single(part => part.CounterpartyId is null).ConceptId;
+            row.ConfirmedConceptId = row.Allocations.SingleOrDefault(part => part.CounterpartyId is null)?.ConceptId
+                ?? row.ConfirmedConceptId;
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
             row.PlannedEntryId = null;

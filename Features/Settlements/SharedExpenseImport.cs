@@ -45,8 +45,8 @@ namespace PersonalFinance.Api.Features.Settlements
         {
             if (advance.UserId != userId || advance.Status != EntryStatus.Paid || !advance.IsTransfer ||
                 advance.Direction != EntryDirection.Out || advance.ActualAmount is not { } amount ||
-                amount <= 0m || amount >= fullAmount)
-                throw new BusinessRuleException("El adelanto debe ser una parte de un gasto pagado.");
+                amount <= 0m || amount > fullAmount)
+                throw new BusinessRuleException("El adelanto debe ser un importe positivo que no supere el gasto pagado.");
             var start = new DateOnly(advance.DueDate.Year, advance.DueDate.Month, 1);
             var title = $"Gastos compartidos {start:MM/yyyy}";
             var settlement = db.Settlements.Local.Where(item =>
