@@ -129,6 +129,8 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
 
         public Guid? IncreasePlannedEntryId { get; set; }
 
+        public Guid? RefundCounterpartyId { get; set; }
+
         [StringLength(450)]
         public string? IncreaseReason { get; set; }
     }

@@ -410,6 +410,7 @@ namespace PersonalFinance.Api.Controllers
             var userId = User.GetUserId();
             if (userId is null) return Unauthorized();
             var row = await _db.ImportRows.Include(item => item.Batch).Include(item => item.Allocations)
+                .Include(item => item.PlannedAllocations)
                 .FirstOrDefaultAsync(item => item.UserId == userId.Value && item.BatchId == batchId && item.Id == rowId, ct);
             if (row is null) return NotFound();
             if (row.Status != ImportRowStatus.Pending || row.Batch?.Status is ImportBatchStatus.Applied or ImportBatchStatus.Discarded)
@@ -418,6 +419,8 @@ namespace PersonalFinance.Api.Controllers
             row.ConfirmedConceptId = row.Allocations.Single(part => part.CounterpartyId is null).ConceptId;
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
+            row.PlannedEntryId = null;
+            row.PlannedAllocations.Clear();
             row.SuggestionSource = "manual";
             await _db.SaveChangesAsync(ct);
             return NoContent();
@@ -1130,6 +1133,7 @@ namespace PersonalFinance.Api.Controllers
 
             if (dto?.PlannedEntryId is not { } plannedEntryId)
             {
+                ClearPlannedRefund(row);
                 row.PlannedEntryId = null;
                 row.PlannedAllocations.Clear();
                 await _db.SaveChangesAsync(ct);
@@ -1161,6 +1165,7 @@ namespace PersonalFinance.Api.Controllers
             if (planned.IsTransfer)
                 return BadRequest(new { message = "Ese previsto es un traspaso; no se puede descontar de él." });
 
+            ClearPlannedRefund(row);
             var error = ImportPlannedLinks.LinkError(row.Amount, row.Allocations.Count > 0, planned.Direction);
             if (error is not null) return BadRequest(new { message = error });
 
@@ -1196,6 +1201,7 @@ namespace PersonalFinance.Api.Controllers
                 return Conflict(new { message = "El movimiento ya no está pendiente de importar." });
             if (row.Amount == 0m || !ImportBatchApplicationService.EntersAsPaid(row))
                 return BadRequest(new { message = "Solo se puede aumentar un previsto para un movimiento que se registrará como pagado." });
+            ClearPlannedRefund(row);
             if (row.Allocations.Count > 0)
                 return BadRequest(new { message = "Para usar varias categorías, divide el movimiento por categorías." });
             if (ImportObligationLinks.HasLink(row))
@@ -1273,6 +1279,7 @@ namespace PersonalFinance.Api.Controllers
             var links = dto.Allocations.Select(link => (link.PlannedEntryId, link.Amount)).ToList();
             if (links.Count == 0)
             {
+                ClearPlannedRefund(row);
                 row.PlannedEntryId = null;
                 row.PlannedAllocations.Clear();
                 await _db.SaveChangesAsync(ct);
@@ -1281,12 +1288,35 @@ namespace PersonalFinance.Api.Controllers
             var ids = links.Select(link => link.PlannedEntryId).ToList();
             if (ImportObligationLinks.HasLink(row))
                 return BadRequest(new { message = "Quita primero el vínculo con el recordatorio o la liquidación." });
+            var bankAmount = Math.Abs(row.Amount);
+            var refundPersonId = dto.RefundCounterpartyId;
+            var refundAmount = refundPersonId.HasValue ? bankAmount - links.Sum(link => link.Amount) : 0m;
+            if (refundPersonId.HasValue)
+            {
+                if (row.Amount >= 0m)
+                    return BadRequest(new { message = "Solo puedes dejar una devolución pendiente en un gasto." });
+                if (row.Allocations.Count > 0 && !ImportSplitLinks.HasPlannedRefund(row))
+                    return BadRequest(new { message = "Quita primero la división o el reparto compartido de este movimiento." });
+                if (refundAmount <= 0m)
+                    return BadRequest(new { message = "Para dejar una devolución pendiente, el reparto entre previstos debe ser menor que el pago." });
+                if (!await _db.Counterparties.AnyAsync(person => person.Id == refundPersonId.Value &&
+                    person.UserId == userId.Value && person.IsActive, ct))
+                    return BadRequest(new { message = "La persona o comercio no existe o no está activo. Puedes añadirlo en Liquidaciones." });
+            }
+            var plannedRow = refundPersonId.HasValue || ImportSplitLinks.HasPlannedRefund(row)
+                ? new ImportRow
+                {
+                    Amount = Math.Sign(row.Amount) * (bankAmount - refundAmount),
+                    ClassifiedStatus = row.ClassifiedStatus,
+                    Status = row.Status
+                }
+                : row;
             var entries = await _db.LedgerEntries
                 .Include(entry => entry.Concept)
                 .Include(entry => entry.Period)
                 .Where(entry => entry.UserId == userId.Value && ids.Contains(entry.Id))
                 .ToDictionaryAsync(entry => entry.Id, ct);
-            var error = ImportPlannedLinks.AllocationError(row, links, entries);
+            var error = ImportPlannedLinks.AllocationError(plannedRow, links, entries);
             if (error is not null) return BadRequest(new { message = error });
             var increaseId = dto.IncreasePlannedEntryId;
             var increaseReason = dto.IncreaseReason?.Trim();
@@ -1303,9 +1333,11 @@ namespace PersonalFinance.Api.Controllers
                 .Where(item => item.BatchId == batchId && item.UserId == userId.Value &&
                     item.Id != rowId && item.Status == ImportRowStatus.Pending)
                 .ToListAsync(ct);
+            var siblingLinks = siblings.Concat(ImportSplitLinks.Project(siblings).Select(link => link.Row))
+                .Where(ImportPlannedLinks.Deducts).SelectMany(ImportPlannedLinks.Links).ToList();
             foreach (var link in links)
             {
-                var otherAmount = siblings.Where(ImportPlannedLinks.Deducts).SelectMany(ImportPlannedLinks.Links)
+                var otherAmount = siblingLinks
                     .Where(other => other.PlannedEntryId == link.PlannedEntryId).Sum(other => other.Amount);
                 var entry = entries[link.PlannedEntryId];
                 var required = link.Amount + otherAmount;
@@ -1318,6 +1350,7 @@ namespace PersonalFinance.Api.Controllers
             }
             error = await ImportPlannedLinks.CareAllocationErrorAsync(_db, userId.Value, links, entries, ct);
             if (error is not null) return BadRequest(new { message = error });
+            ClearPlannedRefund(row);
             row.PlannedEntryId = null;
             row.PlannedAllocations.Clear();
             foreach (var link in links)
@@ -1327,11 +1360,40 @@ namespace PersonalFinance.Api.Controllers
                     PlannedEntryId = link.PlannedEntryId,
                     Amount = link.Amount
                 });
-            row.ConfirmedConceptId = entries[links[0].PlannedEntryId].ConceptId;
-            row.SuggestionSource = "manual";
+            var plannedConceptId = entries[links[0].PlannedEntryId].ConceptId;
+            if (refundPersonId.HasValue)
+            {
+                var advance = await PersonalFinance.Api.Features.Settlements.SharedExpenseImport.GetOrCreateConceptAsync(_db, userId.Value, ct);
+                _db.ImportRowAllocations.AddRange(
+                    new ImportRowAllocation
+                    {
+                        UserId = userId.Value, ImportRowId = row.Id, ConceptId = plannedConceptId,
+                        Amount = bankAmount - refundAmount, SortOrder = 0
+                    },
+                    new ImportRowAllocation
+                    {
+                        UserId = userId.Value, ImportRowId = row.Id, ConceptId = advance.Id,
+                        Amount = refundAmount, SortOrder = 1, CounterpartyId = refundPersonId.Value
+                    });
+                row.ConfirmedConceptId = null;
+                row.SuggestionSource = "shared";
+            }
+            else
+            {
+                row.ConfirmedConceptId = plannedConceptId;
+                row.SuggestionSource = "manual";
+            }
             row.SuggestionConfidence = 1m;
             await _db.SaveChangesAsync(ct);
             return NoContent();
+        }
+
+        private void ClearPlannedRefund(ImportRow row)
+        {
+            if (!ImportSplitLinks.HasPlannedRefund(row)) return;
+            row.ConfirmedConceptId = row.Allocations.Single(part => part.CounterpartyId is null).ConceptId;
+            _db.ImportRowAllocations.RemoveRange(row.Allocations);
+            row.Allocations.Clear();
         }
 
         [HttpPut("{batchId:guid}/rows/{rowId:guid}/obligation")]

@@ -295,7 +295,7 @@ namespace PersonalFinance.Api.Features.Ledger.Common
 
             // Rows the user deducts from a planned entry («previsto»): they are booked apart and the
             // planned entry is reduced, so the forecast warnings below don't apply to them.
-            var linkedRows = rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedRows = rows.Select(ImportSplitLinks.PlannedView).Where(ImportPlannedLinks.Deducts).ToList();
             var linkedIds = linkedRows.SelectMany(ImportPlannedLinks.Links)
                 .Select(link => link.PlannedEntryId).Distinct().ToList();
             var plannedById = linkedIds.Count == 0
@@ -310,7 +310,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                 .GroupBy(link => link.PlannedEntryId)
                 .ToDictionary(group => group.Key, group => group.Sum(link => link.Amount));
             var invalidAllocations = new HashSet<Guid>();
-            foreach (var row in rows.Where(row => row.PlannedAllocations.Count > 0 && row.Status == ImportRowStatus.Pending))
+            foreach (var row in rows.Where(row => row.PlannedAllocations.Count > 0 && row.Status == ImportRowStatus.Pending)
+                .Select(ImportSplitLinks.PlannedView))
             {
                 var links = ImportPlannedLinks.Links(row).ToList();
                 var error = ImportPlannedLinks.AllocationError(row, links, plannedById);

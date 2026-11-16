@@ -12,9 +12,21 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         public static IEnumerable<ImportSplitLink> Project(IEnumerable<ImportRow> rows) =>
             rows.SelectMany(row => Project(row, row.Allocations));
 
+        /// <summary>A payment spread over planned entries whose remainder someone has to give back.</summary>
+        public static bool HasPlannedRefund(ImportRow row) =>
+            row.PlannedAllocations.Count > 0 && row.Allocations.Any(part => part.CounterpartyId.HasValue);
+
+        /// <summary>The row that deducts from planned entries: the own part when a refund is pending.</summary>
+        public static ImportRow PlannedView(ImportRow row) =>
+            HasPlannedRefund(row) ? Project(row, row.Allocations).Single(link => link.Part.CounterpartyId is null).Row : row;
+
         public static IEnumerable<ImportSplitLink> Project(
-            ImportRow row, IEnumerable<ImportRowAllocation> parts) =>
-            parts.Where(part => part.PlannedEntryId.HasValue || part.SettlementId.HasValue)
+            ImportRow row, IEnumerable<ImportRowAllocation> parts)
+        {
+            var partList = parts.ToList();
+            var plannedRefund = row.PlannedAllocations.Count > 0 && partList.Any(part => part.CounterpartyId.HasValue);
+            bool OwnPlannedPart(ImportRowAllocation part) => plannedRefund && part.CounterpartyId is null;
+            return partList.Where(part => part.PlannedEntryId.HasValue || part.SettlementId.HasValue || OwnPlannedPart(part))
                 .Select(part => new ImportSplitLink(part, new ImportRow
                 {
                     Id = row.Id,
@@ -36,8 +48,15 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                         {
                             new() { PlannedEntryId = plannedId, Amount = part.Amount }
                         }
-                        : new List<ImportRowPlannedAllocation>()
+                        : OwnPlannedPart(part)
+                            ? row.PlannedAllocations.Select(link => new ImportRowPlannedAllocation
+                            {
+                                PlannedEntryId = link.PlannedEntryId,
+                                Amount = link.Amount
+                            }).ToList()
+                            : new List<ImportRowPlannedAllocation>()
                 }));
+        }
 
         public static async Task<string?> ValidateReviewAsync(
             IAppDbContext db, Guid userId, ImportRow row,

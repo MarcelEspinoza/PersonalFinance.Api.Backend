@@ -132,7 +132,8 @@ namespace PersonalFinance.Api.Features.Ledger.Common
             var deductedRows = linkedRows
                 .Where(row => ImportPlannedLinks.IsValidLinks(row, plannedById))
                 .ToList();
-            foreach (var row in effectiveRows.Where(row => row.Status == ImportRowStatus.Pending && row.PlannedAllocations.Count > 0))
+            foreach (var row in effectiveRows.Where(row => row.Status == ImportRowStatus.Pending &&
+                row.PlannedAllocations.Count > 0 && row.Allocations.Count == 0))
             {
                 var error = ImportPlannedLinks.AllocationError(row, ImportPlannedLinks.Links(row).ToList(), plannedById);
                 if (error is not null) return new(false, 0, batchId, error, Conflict: true);
@@ -434,6 +435,18 @@ namespace PersonalFinance.Api.Features.Ledger.Common
                                     stay.LedgerEntry = allocationEntry;
                                 }
                             }
+                            else if (deductedRows.Contains(linkedPart))
+                            {
+                                var links = ImportPlannedLinks.Links(linkedPart).ToList();
+                                allocationEntry.Notes = ImportPlannedLinks.AppendNote(null, "Repartido entre " + string.Join("; ", links.Select(link =>
+                                    $"«{PlannedName(plannedById[link.PlannedEntryId], concepts)}» ({plannedById[link.PlannedEntryId].DueDate:dd/MM/yyyy}): {ImportPlannedLinks.Money(link.Amount)}")) + ".");
+                                bookedDeductions.AddRange(links);
+                                foreach (var stay in allocatedCareStays.Where(stay => links.Any(link => link.PlannedEntryId == stay.LedgerEntryId)))
+                                {
+                                    stay.LedgerEntryId = allocationEntry.Id;
+                                    stay.LedgerEntry = allocationEntry;
+                                }
+                            }
                             if (allocation.SettlementId.HasValue)
                             {
                                 linkedPart.Status = ImportRowStatus.Accepted;
@@ -715,7 +728,10 @@ namespace PersonalFinance.Api.Features.Ledger.Common
         private async Task<(HashSet<Guid> RowIds, HashSet<Guid> EntryIds)> FindValidLinksAsync(
             Guid userId, ImportBatch batch, CancellationToken ct)
         {
-            var linkedRows = batch.Rows.Where(ImportPlannedLinks.Deducts).ToList();
+            var linkedRows = batch.Rows
+                .Concat(ImportSplitLinks.Project(batch.Rows).Select(link => link.Row))
+                .Where(ImportPlannedLinks.Deducts)
+                .ToList();
             if (linkedRows.Count == 0) return (new HashSet<Guid>(), new HashSet<Guid>());
 
             var ids = linkedRows.SelectMany(ImportPlannedLinks.Links)
