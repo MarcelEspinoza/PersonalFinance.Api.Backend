@@ -368,8 +368,6 @@ namespace PersonalFinance.Api.Controllers
                     return BadRequest(new { message = "Cada devolución debe ser positiva y tener hasta dos decimales; el total no puede superar el pago y las personas no se pueden repetir." });
                 amountOwed += share.Amount;
             }
-            if (ImportPlannedLinks.HasLink(row))
-                return BadRequest(new { message = "Quita el vínculo con los previstos antes de compartir este gasto." });
             if (ImportObligationLinks.HasLink(row))
                 return BadRequest(new { message = "Quita el vínculo con el recordatorio o la liquidación antes de compartir este gasto." });
             var personIds = shares.Select(share => share.CounterpartyId).ToHashSet();
@@ -380,9 +378,31 @@ namespace PersonalFinance.Api.Controllers
                 concept.Id == dto.ConceptId && concept.UserId == userId.Value && concept.IsActive &&
                 concept.Kind == ConceptKind.Expense, ct))
                 return BadRequest(new { message = "Elige la categoría de tu parte del gasto." });
+            var ownAmount = bankAmount - amountOwed;
+            if (dto.PlannedEntryId.HasValue)
+            {
+                if (ownAmount <= 0m)
+                    return BadRequest(new { message = "Solo puedes descontar de un previsto la parte que cuenta como tu gasto." });
+                var linkError = await ImportSplitLinks.ValidateReviewAsync(_db, userId.Value, row,
+                    new[]
+                    {
+                        new ImportRowAllocation
+                        {
+                            ConceptId = dto.ConceptId, Amount = ownAmount, PlannedEntryId = dto.PlannedEntryId
+                        }
+                    }, ct);
+                if (linkError is not null) return BadRequest(new { message = linkError });
+            }
             var advance = await PersonalFinance.Api.Features.Settlements.SharedExpenseImport.GetOrCreateConceptAsync(_db, userId.Value, ct);
             _db.ImportRowAllocations.RemoveRange(row.Allocations);
             row.Allocations.Clear();
+            row.PlannedEntryId = null;
+            row.PlannedAllocations.Clear();
+            if (dto.PlannedEntryId is { } plannedEntryId)
+                _db.ImportRowPlannedAllocations.Add(new ImportRowPlannedAllocation
+                {
+                    ImportRowId = row.Id, PlannedEntryId = plannedEntryId, Amount = ownAmount
+                });
             var allocations = new List<ImportRowAllocation>();
             if (amountOwed < bankAmount)
             {
@@ -1135,7 +1155,6 @@ namespace PersonalFinance.Api.Controllers
 
             if (dto?.PlannedEntryId is not { } plannedEntryId)
             {
-                ClearPlannedRefund(row);
                 row.PlannedEntryId = null;
                 row.PlannedAllocations.Clear();
                 await _db.SaveChangesAsync(ct);
@@ -1281,7 +1300,6 @@ namespace PersonalFinance.Api.Controllers
             var links = dto.Allocations.Select(link => (link.PlannedEntryId, link.Amount)).ToList();
             if (links.Count == 0)
             {
-                ClearPlannedRefund(row);
                 row.PlannedEntryId = null;
                 row.PlannedAllocations.Clear();
                 await _db.SaveChangesAsync(ct);

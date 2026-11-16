@@ -154,6 +154,7 @@ namespace PersonalFinance.Api.Features.Ledger.Dtos
     {
         public Guid CounterpartyId { get; set; }
         public Guid ConceptId { get; set; }
+        public Guid? PlannedEntryId { get; set; }
         public decimal Amount { get; set; }
         public IReadOnlyList<ShareImportPartDto> Shares { get; set; } = Array.Empty<ShareImportPartDto>();
         public bool ReplaceExisting { get; set; }
